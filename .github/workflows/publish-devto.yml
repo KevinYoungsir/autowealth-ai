@@ -1,0 +1,314 @@
+# ============================================================================
+# AutoWealth AI - 自动交叉发布 Dev.to 文章工作流
+# ============================================================================
+# 触发条件：创建新的 GitHub Release 时自动触发
+# 功能：
+#   1. 从 Release 和 CHANGELOG.md 中提取版本更新信息
+#   2. 读取 docs/marketing/juejin_post.md 作为内容模板（转换为英文版）
+#   3. 使用 Dev.to API 创建技术文章
+#   4. 文章包含项目介绍、核心功能、版本更新
+#
+# 所需 Secrets:
+#   - DEVTO_API_KEY: Dev.to API Key (从 https://dev.to/settings/account 获取)
+# ============================================================================
+
+name: Publish Dev.to
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  devto:
+    name: Cross-post to Dev.to
+    runs-on: ubuntu-latest
+    if: ${{ !github.event.release.draft && !github.event.release.prerelease }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Extract Release Info
+        id: release_info
+        run: |
+          python3 << 'PYEOF'
+          import json
+          import os
+
+          event_path = os.environ.get('GITHUB_EVENT_PATH', '')
+          with open(event_path, 'r', encoding='utf-8') as f:
+              event = json.load(f)
+
+          release = event.get('release', {})
+          tag_name = release.get('tag_name', '')
+          body = release.get('body', '')
+          html_url = release.get('html_url', '')
+          version = tag_name.lstrip('v')
+
+          with open('release_info.env', 'w', encoding='utf-8') as f:
+              f.write(f"VERSION={version}\n")
+              f.write(f"TAG_NAME={tag_name}\n")
+              f.write(f"RELEASE_URL={html_url}\n")
+              f.write(f"RELEASE_BODY={body}\n")
+
+          print(f"Version: {version}")
+          print(f"Release URL: {html_url}")
+          PYEOF
+
+      - name: Load Release Info
+        id: info
+        run: |
+          source release_info.env
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "url=$RELEASE_URL" >> $GITHUB_OUTPUT
+
+      - name: Generate Dev.to Article
+        id: article
+        run: |
+          python3 << 'PYEOF'
+          import os
+          import re
+          import json
+
+          version = os.environ.get('VERSION', '')
+          release_url = os.environ.get('RELEASE_URL', '')
+          release_body = os.environ.get('RELEASE_BODY', '')
+
+          # ====== 读取掘金文章模板作为参考 ======
+          juejin_content = ""
+          if os.path.exists('docs/marketing/juejin_post.md'):
+              with open('docs/marketing/juejin_post.md', 'r', encoding='utf-8') as f:
+                  juejin_content = f.read()
+
+          # ====== 构建英文版 Dev.to 文章 ======
+          article_title = f"AutoWealth AI v{version}: Building a Multi-Agent Investment Analysis Engine with Python"
+
+          article_body = f"""# AutoWealth AI v{version}: Building a Multi-Agent Investment Analysis Engine with Python
+
+> An open-source, multi-agent system that analyzes stocks from technical, fundamental, and sentiment perspectives using Python.
+
+![Python](https://img.shields.io/badge/Python-3.9%2B-blue)
+![License](https://img.shields.io/badge/License-MIT-green)
+![Stars](https://img.shields.io/badge/Stars-GitHub-yellow)
+
+## Introduction
+
+I'd like to share **AutoWealth AI** -- an open-source, multi-agent investment analysis engine built entirely in Python. Instead of relying on a single model or strategy, AutoWealth AI uses three specialized AI agents that analyze stocks from different perspectives, then combines their signals through a weighted voting mechanism.
+
+**GitHub Repository**: [Jsoned/autowealth-ai](https://github.com/Jsoned/autowealth-ai)
+
+## Architecture
+
+The core innovation is the **multi-agent collaborative decision-making** system. I've abstracted a complete investment research team into three specialized agents:
+
+```
++--------------------------------------------------+
+|                  AutoWealth Engine                 |
++--------------------------------------------------+
+|  +------------+ +------------+ +------------+   |
+|  | Technical  | |Fundamental | | Sentiment  |   |
+|  | Analyst    | | Analyst    | | Analyst    |   |
+|  | Agent (35%)| | Agent (35%)| | Agent (30%)|   |
+|  +------+-----+ +------+-----+ +------+-----+   |
+|         +---------------+---------------+        |
+|                         |                        |
+|            +------------+------------+           |
+|            |  Agent Coordinator      |           |
+|            |  (Weighted Voting)       |           |
+|            +------------+------------+           |
++--------------------------------------------------+
+```
+
+### The Three Agents
+
+**1. Technical Analyst Agent (35% weight)**
+Analyzes price action using 12+ technical indicators: MACD, RSI, Bollinger Bands, KDJ, OBV, ATR, DMI (+DI/-DI/ADX), CCI, Williams %R, PSY, and moving average systems.
+
+**2. Fundamental Analyst Agent (35% weight)**
+Evaluates valuation metrics including P/E ratio, P/B ratio, dividend yield, and growth trends to assess intrinsic value.
+
+**3. Sentiment Analyst Agent (30% weight)**
+Assesses market sentiment through price momentum, volume trends, and volatility patterns, plus social media sentiment from Twitter, Weibo, and Reddit.
+
+## Key Features
+
+### Machine Learning Predictions
+- **Random Forest** and **MLP Neural Network** models for price prediction
+- 18-dimensional feature engineering (MA, RSI, MACD, Bollinger position, volatility, momentum)
+- Model persistence with pickle serialization
+- Full evaluation metrics (MSE, MAE, R-squared)
+
+### Real-time Alert System
+- 5 alert rules: price breakout, price breakdown, price change %, volume anomaly, indicator crossover
+- Dynamic alert management (add/remove/query rules)
+- Multi-channel notifications (console, webhook for DingTalk/Feishu/Slack)
+- Alert severity levels (info/warning/critical)
+
+### Social Sentiment Analysis
+- Multi-platform coverage: Twitter/X, Weibo, Reddit
+- 360+ financial domain sentiment words (Chinese + English)
+- Dictionary-based text sentiment analysis (zero external NLP dependency)
+- Weighted cross-platform sentiment scoring
+
+### Backtesting System
+- Strategy validation with historical data
+- Performance metrics: total return, Sharpe ratio, max drawdown, win rate
+- Visual equity curve and trade markers
+
+### Cross-Platform Mobile App
+- Built with Flutter for iOS + Android
+- Dark tech theme matching the web interface
+- 5 main screens: Analysis, Batch, Portfolio, Market, Dashboard
+- Interactive charts with fl_chart
+
+## What's New in v{version}
+
+{release_body if release_body else f"Check out the [full release notes]({release_url}) for details on what's new in this version."}
+
+## Quick Start
+
+```bash
+# Install
+pip install autowealth-ai
+
+# Or clone and install
+git clone https://github.com/Jsoned/autowealth-ai.git
+cd autowealth-ai
+pip install -e .
+
+# Run analysis
+python -m autowealth --ticker AAPL
+
+# Launch web UI
+streamlit run examples/app.py
+
+# Start API server
+uvicorn autowealth.api.server:app --host 0.0.0.0 --port 8000
+```
+
+## Tech Stack
+
+| Component | Technology |
+|-----------|-----------|
+| Core Engine | Python 3.9+ |
+| Data Sources | Yahoo Finance, akshare (East Money), Binance |
+| ML Models | scikit-learn (Random Forest, MLP) |
+| Web UI | Streamlit + Plotly |
+| API | FastAPI + Uvicorn |
+| Mobile | Flutter (Dart) |
+| Testing | pytest + coverage |
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change.
+
+- [Contributing Guide](https://github.com/Jsoned/autowealth-ai/blob/main/CONTRIBUTING.md)
+- [Code of Conduct](https://github.com/Jsoned/autowealth-ai/blob/main/CODE_OF_CONDUCT.md)
+
+## Links
+
+- **GitHub**: [https://github.com/Jsoned/autowealth-ai]({release_url})
+- **Documentation**: [README.md](https://github.com/Jsoned/autowealth-ai/blob/main/README.md)
+- **Issues**: [GitHub Issues](https://github.com/Jsoned/autowealth-ai/issues)
+
+---
+
+*AutoWealth AI is open-source under the MIT License. Built with Python, powered by multi-agent AI.*
+"""
+
+          # 写入文章文件
+          with open('devto_article.md', 'w', encoding='utf-8') as f:
+              f.write(article_body)
+
+          # 同时写入标题供后续步骤使用
+          with open('article_meta.env', 'w', encoding='utf-8') as f:
+              f.write(f"ARTICLE_TITLE={article_title}\n")
+
+          print(f"Article generated: {len(article_body)} characters")
+          print(f"Title: {article_title}")
+          PYEOF
+
+      - name: Publish to Dev.to
+        env:
+          DEVTO_API_KEY: ${{ secrets.DEVTO_API_KEY }}
+        run: |
+          # 读取文章元数据
+          source article_meta.env
+
+          # 使用 curl 调用 Dev.to API
+          # Dev.to API 文档: https://developers.forem.com/api/v1#tag/articles/operation/createArticle
+
+          # 构建请求体（需要转义 JSON 中的特殊字符）
+          ARTICLE_TITLE=$(python3 -c "
+          import json
+          title = '''${ARTICLE_TITLE}'''
+          print(json.dumps(title))
+          ")
+
+          # 读取文章内容并转义
+          ARTICLE_BODY_JSON=$(python3 -c "
+          import json
+          with open('devto_article.md', 'r', encoding='utf-8') as f:
+              content = f.read()
+          print(json.dumps(content))
+          ")
+
+          # 构建完整 JSON payload
+          PAYLOAD=$(python3 -c "
+          import json
+
+          with open('devto_article.md', 'r', encoding='utf-8') as f:
+              body_markdown = f.read()
+
+          payload = {
+              'article': {
+                  'title': '''${ARTICLE_TITLE}''',
+                  'body_markdown': body_markdown,
+                  'published': True,
+                  'series': 'AutoWealth AI Releases',
+                  'tags': ['python', 'ai', 'machinelearning', 'opensource', 'finance'],
+                  'canonical_url': '${{ steps.info.outputs.url }}'
+              }
+          }
+          print(json.dumps(payload))
+          ")
+
+          echo "Publishing to Dev.to..."
+          echo "Title: ${ARTICLE_TITLE}"
+
+          HTTP_RESPONSE=$(curl -s -w "\\n%{http_code}" -X POST \
+              "https://dev.to/api/articles" \
+              -H "api-key: ${DEVTO_API_KEY}" \
+              -H "Content-Type: application/json" \
+              -d "$PAYLOAD")
+
+          # 分离响应体和状态码
+          HTTP_CODE=$(echo "$HTTP_RESPONSE" | tail -n1)
+          RESPONSE_BODY=$(echo "$HTTP_RESPONSE" | sed '$d')
+
+          if [ "$HTTP_CODE" -eq 201 ] || [ "$HTTP_CODE" -eq 200 ]; then
+              ARTICLE_URL=$(echo "$RESPONSE_BODY" | python3 -c "import sys, json; print(json.load(sys.stdin).get('url', 'unknown'))" 2>/dev/null || echo "unknown")
+              ARTICLE_ID=$(echo "$RESPONSE_BODY" | python3 -c "import sys, json; print(json.load(sys.stdin).get('id', 'unknown'))" 2>/dev/null || echo "unknown")
+              echo "SUCCESS: Article published to Dev.to!"
+              echo "  Article ID: ${ARTICLE_ID}"
+              echo "  URL: ${ARTICLE_URL}"
+          else
+              echo "ERROR: Failed to publish to Dev.to (HTTP ${HTTP_CODE})"
+              echo "Response: ${RESPONSE_BODY}"
+              exit 1
+          fi
+
+      - name: Dev.to Summary
+        if: always()
+        run: |
+          echo "===== Dev.to Publish Summary ====="
+          echo "Version: ${{ steps.info.outputs.version }}"
+          echo "=================================="
