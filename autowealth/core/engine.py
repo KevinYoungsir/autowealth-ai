@@ -1,5 +1,5 @@
 """
-AutoWealth AI 涓诲紩鎿?- 鏁村悎鎵€鏈夋ā鍧楃殑缁熶竴鎺ュ彛
+AutoWealth AI 主引擎 - 整合所有模块的统一接口
 """
 import logging
 from typing import Any, Dict, List, Optional
@@ -18,27 +18,29 @@ logger = logging.getLogger(__name__)
 
 class AutoWealthEngine:
     """
-    AutoWealth AI 涓诲紩鎿?
-    鏁村悎鏁版嵁鑾峰彇銆佹妧鏈垎鏋愩€佸熀鏈潰鍒嗘瀽銆佸鏅鸿兘浣撳喅绛栫瓑鍔熻兘
-    鎻愪緵绠€鍗曟槗鐢ㄧ殑鎶曡祫鍒嗘瀽鎺ュ彛
+    AutoWealth AI 主引擎
+
+    整合数据获取、技术分析、基本面分析、多智能体决策等功能
+    提供简单易用的投资分析接口
     """
 
     def __init__(self):
         self.settings = get_settings()
         self.logger = logging.getLogger("autowealth.engine")
 
-        # 鍒濆鍖栨牳蹇冪粍浠?        self.data_fetcher = DataFetcher()
+        # 初始化核心组件
+        self.data_fetcher = DataFetcher()
         self.technical_analyzer = TechnicalAnalyzer()
         self.fundamental_analyzer = FundamentalAnalyzer()
 
-        # 鍒濆鍖栨櫤鑳戒綋绯荤粺
+        # 初始化智能体系统
         self.coordinator = AgentCoordinator()
         self._register_default_agents()
 
-        self.logger.info("AutoWealth AI 寮曟搸鍒濆鍖栧畬鎴?)
+        self.logger.info("AutoWealth AI 引擎初始化完成")
 
     def _register_default_agents(self):
-        """娉ㄥ唽榛樿鐨勬櫤鑳戒綋"""
+        """注册默认的智能体"""
         self.coordinator.register_agent(TechnicalAgent(), weight=0.35)
         self.coordinator.register_agent(FundamentalAgent(), weight=0.35)
         self.coordinator.register_agent(SentimentAgent(), weight=0.30)
@@ -51,15 +53,18 @@ class AutoWealthEngine:
         include_sentiment: bool = True,
     ) -> Dict[str, Any]:
         """
-        缁煎悎鍒嗘瀽鑲＄エ
+        综合分析股票
 
         Args:
-            symbol: 鑲＄エ浠ｇ爜 (濡? AAPL, 600519.SS)
-            include_technical: 鏄惁鍖呭惈鎶€鏈垎鏋?            include_fundamental: 鏄惁鍖呭惈鍩烘湰闈㈠垎鏋?            include_sentiment: 鏄惁鍖呭惈鎯呯华鍒嗘瀽
+            symbol: 股票代码 (如: AAPL, 600519.SS)
+            include_technical: 是否包含技术分析
+            include_fundamental: 是否包含基本面分析
+            include_sentiment: 是否包含情绪分析
 
         Returns:
-            鍖呭惈瀹屾暣鍒嗘瀽缁撴灉鐨勫瓧鍏?        """
-        self.logger.info(f"寮€濮嬪垎鏋? {symbol}")
+            包含完整分析结果的字典
+        """
+        self.logger.info(f"开始分析: {symbol}")
 
         result = {
             "symbol": symbol,
@@ -68,28 +73,28 @@ class AutoWealthEngine:
         }
 
         try:
-            # 1. 鑾峰彇鏁版嵁
-            self.logger.info(f"鑾峰彇 {symbol} 鐨勬暟鎹?..")
+            # 1. 获取数据
+            self.logger.info(f"获取 {symbol} 的数据...")
             historical_data = self.data_fetcher.get_stock_data(symbol, period="1y")
             stock_info = self.data_fetcher.get_stock_info(symbol)
 
             if historical_data.empty:
-                raise ValueError(f"鏃犳硶鑾峰彇 {symbol} 鐨勬暟鎹?)
+                raise ValueError(f"无法获取 {symbol} 的数据")
 
-            # 2. 鍑嗗鍒嗘瀽鏁版嵁
+            # 2. 准备分析数据
             analysis_data = {
                 "historical_data": historical_data,
                 "stock_info": stock_info,
             }
 
-            # 3. 鎵ц鍒嗘瀽
+            # 3. 执行分析
             if any([include_technical, include_fundamental, include_sentiment]):
                 analysis_result = self.coordinator.analyze(symbol, analysis_data)
                 result["decision"] = analysis_result["final_decision"]
                 result["individual_signals"] = analysis_result["individual_signals"]
                 result["summary"] = analysis_result["analysis_summary"]
 
-            # 4. 娣诲姞璇︾粏鍒嗘瀽鏁版嵁
+            # 4. 添加详细分析数据
             if include_technical:
                 result["technical_analysis"] = self.technical_analyzer.full_analysis(historical_data).iloc[-10:].to_dict()
 
@@ -100,35 +105,35 @@ class AutoWealthEngine:
 
             result["stock_info"] = stock_info
             result["success"] = True
-            self.logger.info(f"{symbol} 鍒嗘瀽瀹屾垚")
+            self.logger.info(f"{symbol} 分析完成")
 
         except Exception as e:
-            self.logger.error(f"鍒嗘瀽 {symbol} 澶辫触: {e}")
+            self.logger.error(f"分析 {symbol} 失败: {e}")
             result["error"] = str(e)
 
         return result
 
     def analyze_batch(self, symbols: List[str]) -> Dict[str, Any]:
         """
-        鎵归噺鍒嗘瀽澶氬彧鑲＄エ
+        批量分析多只股票
 
         Args:
-            symbols: 鑲＄エ浠ｇ爜鍒楄〃
+            symbols: 股票代码列表
 
         Returns:
-            鍖呭惈鎵€鏈夊垎鏋愮粨鏋滅殑瀛楀吀
+            包含所有分析结果的字典
         """
-        self.logger.info(f"寮€濮嬫壒閲忓垎鏋?{len(symbols)} 鍙偂绁?..")
+        self.logger.info(f"开始批量分析 {len(symbols)} 只股票...")
 
         results = {}
         for symbol in symbols:
             try:
                 results[symbol] = self.analyze(symbol)
             except Exception as e:
-                self.logger.error(f"鍒嗘瀽 {symbol} 澶辫触: {e}")
+                self.logger.error(f"分析 {symbol} 失败: {e}")
                 results[symbol] = {"symbol": symbol, "success": False, "error": str(e)}
 
-        # 鎺掑簭鐢熸垚鎺ㄨ崘鍒楄〃
+        # 排序生成推荐列表
         buy_signals = []
         sell_signals = []
         hold_signals = []
@@ -143,7 +148,7 @@ class AutoWealthEngine:
                 else:
                     hold_signals.append((symbol, decision["confidence"]))
 
-        # 鎸夌疆淇″害鎺掑簭
+        # 按置信度排序
         buy_signals.sort(key=lambda x: x[1], reverse=True)
         sell_signals.sort(key=lambda x: x[1], reverse=True)
         hold_signals.sort(key=lambda x: x[1], reverse=True)
@@ -165,8 +170,8 @@ class AutoWealthEngine:
         }
 
     def get_market_overview(self) -> Dict[str, Any]:
-        """鑾峰彇甯傚満姒傝"""
-        self.logger.info("鑾峰彇甯傚満姒傝...")
+        """获取市场概览"""
+        self.logger.info("获取市场概览...")
 
         try:
             indices = self.data_fetcher.get_market_indices("global")
@@ -187,20 +192,20 @@ class AutoWealthEngine:
             return {"success": True, "indices": overview}
 
         except Exception as e:
-            self.logger.error(f"鑾峰彇甯傚満姒傝澶辫触: {e}")
+            self.logger.error(f"获取市场概览失败: {e}")
             return {"success": False, "error": str(e)}
 
     def get_portfolio_analysis(self, holdings: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
-        鍒嗘瀽鎶曡祫缁勫悎
+        分析投资组合
 
         Args:
-            holdings: 鎸佷粨鍒楄〃锛屾瘡椤瑰寘鍚?symbol 鍜?quantity
+            holdings: 持仓列表，每项包含 symbol 和 quantity
 
         Returns:
-            鎶曡祫缁勫悎鍒嗘瀽缁撴灉
+            投资组合分析结果
         """
-        self.logger.info(f"鍒嗘瀽鎶曡祫缁勫悎锛屽叡 {len(holdings)} 鍙偂绁?..")
+        self.logger.info(f"分析投资组合，共 {len(holdings)} 只股票...")
 
         analysis_results = []
         total_value = 0
@@ -214,8 +219,15 @@ class AutoWealthEngine:
             try:
                 result = self.analyze(symbol)
                 if result.get("success"):
-                    current_price = result["stock_info"].get("market_cap", 0)
-                    # 璁＄畻鎸佷粨浠峰€硷紙绠€鍖栫増锛?                    holding_value = quantity * current_price
+                    # 从历史数据获取最新收盘价作为当前价格
+                    hist = result.get("stock_info", {})
+                    if "historical_data" in analysis_data:
+                        current_price = analysis_data["historical_data"]["Close"].iloc[-1]
+                    else:
+                        current_price = hist.get("current_price", hist.get("regularMarketPrice", 0))
+                    if current_price == 0:
+                        current_price = hist.get("previous_close", 0)
+                    holding_value = quantity * current_price
                     gain_loss = (current_price - cost_basis) * quantity if cost_basis > 0 else 0
 
                     total_value += holding_value
@@ -232,7 +244,7 @@ class AutoWealthEngine:
                     })
 
             except Exception as e:
-                self.logger.error(f"鍒嗘瀽鎸佷粨 {symbol} 澶辫触: {e}")
+                self.logger.error(f"分析持仓 {symbol} 失败: {e}")
 
         return {
             "holdings": analysis_results,
@@ -242,14 +254,14 @@ class AutoWealthEngine:
         }
 
 
-# 渚挎嵎鍑芥暟
+# 便捷函数
 def quick_analyze(symbol: str) -> Dict[str, Any]:
-    """蹇€熷垎鏋愬崟鍙偂绁?""
+    """快速分析单只股票"""
     engine = AutoWealthEngine()
     return engine.analyze(symbol)
 
 
 def batch_analyze(symbols: List[str]) -> Dict[str, Any]:
-    """鎵归噺鍒嗘瀽澶氬彧鑲＄エ"""
+    """批量分析多只股票"""
     engine = AutoWealthEngine()
     return engine.analyze_batch(symbols)
