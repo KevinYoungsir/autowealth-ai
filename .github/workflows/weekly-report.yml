@@ -1,0 +1,521 @@
+# ============================================================================
+# AutoWealth AI - 每周自动报告工作流
+# ============================================================================
+# 触发条件：每周一 UTC 0:00（cron 定时任务）
+# 功能：
+#   1. 收集上周的 Star 数、Issue 数、PR 数
+#   2. 与前一周数据对比计算增量
+#   3. 生成周报摘要
+#   4. 发送到 Discord/Slack（如果配置了 webhook）
+#   5. 创建 GitHub Issue 作为周报存档
+#
+# 所需 Secrets（可选）:
+#   - DISCORD_WEBHOOK_URL: Discord 频道 Webhook URL
+#   - SLACK_WEBHOOK_URL: Slack 频道 Webhook URL
+# ============================================================================
+
+name: Weekly Report
+
+on:
+  # 每周一 UTC 0:00 执行（即北京时间周一 8:00）
+  schedule:
+    - cron: '0 0 * * 1'
+
+  # 允许手动触发
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write  # 创建 Issue 需要写权限
+
+jobs:
+  weekly-report:
+    name: Generate Weekly Report
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Collect Repository Metrics
+        id: metrics
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 << 'PYEOF'
+          import requests
+          import os
+          import json
+          from datetime import datetime, timedelta
+
+          GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN', '')
+          REPO = "Jsoned/autowealth-ai"
+          HEADERS = {
+              'Accept': 'application/vnd.github.v3+json',
+              'Authorization': f'token {GITHUB_TOKEN}',
+          }
+
+          # ====== 计算日期范围 ======
+          today = datetime.utcnow()
+          week_ago = today - timedelta(days=7)
+          two_weeks_ago = today - timedelta(days=14)
+
+          since_str = week_ago.strftime('%Y-%m-%dT%H:%M:%SZ')
+              two_weeks_since_str = two_weeks_ago.strftime('%Y-%m-%dT%H:%M:%SZ')
+
+          print(f"Report period: {week_ago.strftime('%Y-%m-%d')} to {today.strftime('%Y-%m-%d')}")
+
+          # ====== 获取仓库基本信息 ======
+          repo_response = requests.get(
+              f"https://api.github.com/repos/{REPO}",
+              headers=HEADERS,
+              timeout=30
+          )
+          repo_data = repo_response.json() if repo_response.status_code == 200 else {}
+
+          current_stars = repo_data.get('stargazers_count', 0)
+          current_forks = repo_data.get('forks_count', 0)
+          current_watchers = repo_data.get('watchers_count', 0)
+          current_open_issues = repo_data.get('open_issues_count', 0)
+
+          # ====== 获取上周新增的 Star ======
+          # GitHub API 没有直接的"某时间段新增 star"接口
+          # 使用 stargazers 列表按时间排序来估算
+          # 由于 API 限制，我们获取最近的 stargazers 并统计上周的
+          stargazers_response = requests.get(
+              f"https://api.github.com/repos/{REPO}/stargazers",
+              headers={**HEADERS, 'Accept': 'application/vnd.github.v3.star+json'},
+              params={'per_page': 100},
+              timeout=30
+          )
+
+          new_stars_this_week = 0
+          if stargazers_response.status_code == 200:
+              stargazers = stargazers_response.json()
+              for sg in stargazers:
+                  starred_at = sg.get('starred_at', '')
+                  if starred_at >= since_str:
+                      new_stars_this_week += 1
+
+          # ====== 获取上周新增的 Fork ======
+          forks_response = requests.get(
+              f"https://api.github.com/repos/{REPO}/forks",
+              headers=HEADERS,
+              params={'per_page': 100, 'sort': 'newest'},
+              timeout=30
+          )
+
+          new_forks_this_week = 0
+          if forks_response.status_code == 200:
+              forks = forks_response.json()
+              for fork in forks:
+                  created_at = fork.get('created_at', '')
+                  if created_at >= since_str:
+                      new_forks_this_week += 1
+
+          # ====== 获取上周的 Issues ======
+          issues_response = requests.get(
+              f"https://api.github.com/repos/{REPO}/issues",
+              headers=HEADERS,
+              params={
+                  'state': 'all',
+                  'since': since_str,
+                  'per_page': 100,
+              },
+              timeout=30
+          )
+
+          new_issues = 0
+          closed_issues = 0
+          if issues_response.status_code == 200:
+              issues = issues_response.json()
+              for issue in issues:
+                  # 跳过 PR（PR 在 GitHub API 中也算 issue）
+                  if 'pull_request' in issue:
+                      continue
+                  created_at = issue.get('created_at', '')
+                  closed_at = issue.get('closed_at', '')
+                  if created_at >= since_str:
+                      new_issues += 1
+                  if closed_at and closed_at >= since_str:
+                      closed_issues += 1
+
+          # ====== 获取上周的 PR ======
+          pulls_response = requests.get(
+              f"https://api.github.com/repos/{REPO}/pulls",
+              headers=HEADERS,
+              params={
+                  'state': 'all',
+                  'sort': 'updated',
+                  'direction': 'desc',
+                  'per_page': 100,
+              },
+              timeout=30
+          )
+
+          new_prs = 0
+          merged_prs = 0
+          if pulls_response.status_code == 200:
+              pulls = pulls_response.json()
+              for pr in pulls:
+                  created_at = pr.get('created_at', '')
+                  merged_at = pr.get('merged_at', '')
+                  if created_at >= since_str:
+                      new_prs += 1
+                  if merged_at and merged_at >= since_str:
+                      merged_prs += 1
+
+          # ====== 获取上周的 Contributors ======
+          contributors_response = requests.get(
+              f"https://api.github.com/repos/{REPO}/contributors",
+              headers=HEADERS,
+              params={'per_page': 100},
+              timeout=30
+          )
+
+          total_contributors = 0
+          if contributors_response.status_code == 200:
+              total_contributors = len(contributors_response.json())
+
+          # ====== 生成报告 ======
+          report_date = today.strftime('%Y-%m-%d')
+          week_label = f"{week_ago.strftime('%m/%d')} - {today.strftime('%m/%d')}"
+
+          report = f"""# 📊 AutoWealth AI Weekly Report
+
+**Period**: {week_label}
+**Generated**: {today.strftime('%Y-%m-%d %H:%M UTC')}
+
+---
+
+## Overview
+
+| Metric | Current | This Week | Change |
+|--------|---------|-----------|--------|
+| ⭐ Stars | {current_stars} | +{new_stars_this_week} | {'📈' if new_stars_this_week > 0 else '➡️'} |
+| 🍴 Forks | {current_forks} | +{new_forks_this_week} | {'📈' if new_forks_this_week > 0 else '➡️'} |
+| 👀 Watchers | {current_watchers} | - | - |
+| 📋 Open Issues | {current_open_issues} | +{new_issues} opened, {closed_issues} closed | {'📉' if closed_issues > new_issues else '📈'} |
+| 🔀 Pull Requests | - | +{new_prs} opened, {merged_prs} merged | {'✅' if merged_prs > 0 else '➡️'} |
+| 👥 Contributors | {total_contributors} | - | - |
+
+## Highlights
+
+"""
+
+          # 添加亮点
+          highlights = []
+          if new_stars_this_week > 0:
+              highlights.append(f"- Gained **{new_stars_this_week}** new stars this week")
+          if new_forks_this_week > 0:
+              highlights.append(f"- **{new_forks_this_week}** new forks created")
+          if merged_prs > 0:
+              highlights.append(f"- **{merged_prs}** pull requests merged")
+          if closed_issues > 0:
+              highlights.append(f"- **{closed_issues}** issues closed")
+
+          if not highlights:
+              highlights.append("- Steady growth this week. Keep sharing the project!")
+
+          report += '\n'.join(highlights)
+
+          report += f"""
+
+## Milestones
+
+"""
+
+          # 里程碑进度
+          milestones = [100, 500, 1000, 5000, 10000]
+          next_milestone = None
+          for m in milestones:
+              if current_stars < m:
+                  next_milestone = m
+                  progress = (current_stars / m) * 100
+                  bar_length = 20
+                  filled = int(bar_length * progress / 100)
+                  bar = '█' * filled + '░' * (bar_length - filled)
+                  report += f"- Next milestone: **{m} stars** ({bar} {progress:.1f}%)\n"
+                  break
+
+          if not next_milestone:
+              report += "- All planned milestones achieved! 🎉\n"
+
+          report += f"""
+---
+
+*Report generated automatically by [Weekly Report Workflow](https://github.com/Jsoned/autowealth-ai/blob/main/.github/workflows/weekly-report.yml)*
+
+*Repository: https://github.com/Jsoned/autowealth-ai*
+"""
+
+          # 保存报告
+          with open('weekly_report.md', 'w', encoding='utf-8') as f:
+              f.write(report)
+
+          # 保存指标供后续步骤使用
+          with open('metrics.env', 'w') as f:
+              f.write(f"CURRENT_STARS={current_stars}\n")
+              f.write(f"NEW_STARS={new_stars_this_week}\n")
+              f.write(f"CURRENT_FORKS={current_forks}\n")
+              f.write(f"NEW_FORKS={new_forks_this_week}\n")
+              f.write(f"NEW_ISSUES={new_issues}\n")
+              f.write(f"CLOSED_ISSUES={closed_issues}\n")
+              f.write(f"NEW_PRS={new_prs}\n")
+              f.write(f"MERGED_PRS={merged_prs}\n")
+              f.write(f"TOTAL_CONTRIBUTORS={total_contributors}\n")
+              f.write(f"REPORT_DATE={report_date}\n")
+              f.write(f"WEEK_LABEL={week_label}\n")
+
+          print("Weekly report generated successfully!")
+          print(f"Stars: {current_stars} (+{new_stars_this_week})")
+          print(f"Forks: {current_forks} (+{new_forks_this_week})")
+          PYEOF
+
+      - name: Display Report
+        run: |
+          echo "===== Weekly Report ====="
+          cat weekly_report.md
+          echo "=========================="
+
+      - name: Send to Discord
+        if: ${{ secrets.DISCORD_WEBHOOK_URL != '' }}
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          python3 << 'PYEOF'
+          import requests
+          import os
+
+          webhook_url = os.environ.get('DISCORD_WEBHOOK_URL', '')
+          if not webhook_url:
+              print("Discord webhook not configured, skipping...")
+              exit(0)
+
+          # 读取指标
+          metrics = {}
+          if os.path.exists('metrics.env'):
+              with open('metrics.env', 'r') as f:
+                  for line in f:
+                      if '=' in line:
+                          k, v = line.strip().split('=', 1)
+                          metrics[k] = v
+
+          week_label = metrics.get('WEEK_LABEL', '')
+          stars = metrics.get('CURRENT_STARS', '0')
+          new_stars = metrics.get('NEW_STARS', '0')
+          forks = metrics.get('CURRENT_FORKS', '0')
+          new_forks = metrics.get('NEW_FORKS', '0')
+          new_issues = metrics.get('NEW_ISSUES', '0')
+          closed_issues = metrics.get('CLOSED_ISSUES', '0')
+          merged_prs = metrics.get('MERGED_PRS', '0')
+
+          embed = {
+              'title': f'📊 AutoWealth AI Weekly Report ({week_label})',
+              'description': (
+                  f"**⭐ Stars**: {stars} (+{new_stars})\n"
+                  f"**🍴 Forks**: {forks} (+{new_forks})\n"
+                  f"**📋 Issues**: +{new_issues} opened, {closed_issues} closed\n"
+                  f"**🔀 Merged PRs**: {merged_prs}"
+              ),
+              'color': 0x3498DB,  # 蓝色
+              'footer': {
+                  'text': 'AutoWealth AI Weekly Report',
+              },
+          }
+
+          payload = {
+              'username': 'AutoWealth AI Reporter',
+              'embeds': [embed],
+          }
+
+          response = requests.post(
+              webhook_url,
+              json=payload,
+              headers={'Content-Type': 'application/json'},
+              timeout=30
+          )
+
+          if response.status_code in [200, 204]:
+              print("SUCCESS: Weekly report sent to Discord!")
+          else:
+              print(f"WARNING: Discord notification failed: {response.status_code}")
+          PYEOF
+
+      - name: Send to Slack
+        if: ${{ secrets.SLACK_WEBHOOK_URL != '' }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          python3 << 'PYEOF'
+          import requests
+          import os
+
+          webhook_url = os.environ.get('SLACK_WEBHOOK_URL', '')
+          if not webhook_url:
+              print("Slack webhook not configured, skipping...")
+              exit(0)
+
+          # 读取指标
+          metrics = {}
+          if os.path.exists('metrics.env'):
+              with open('metrics.env', 'r') as f:
+                  for line in f:
+                      if '=' in line:
+                          k, v = line.strip().split('=', 1)
+                          metrics[k] = v
+
+          week_label = metrics.get('WEEK_LABEL', '')
+          stars = metrics.get('CURRENT_STARS', '0')
+          new_stars = metrics.get('NEW_STARS', '0')
+          forks = metrics.get('CURRENT_FORKS', '0')
+          new_forks = metrics.get('NEW_FORKS', '0')
+          new_issues = metrics.get('NEW_ISSUES', '0')
+          closed_issues = metrics.get('CLOSED_ISSUES', '0')
+          merged_prs = metrics.get('MERGED_PRS', '0')
+
+          blocks = [
+              {
+                  "type": "header",
+                  "text": {
+                      "type": "plain_text",
+                      "text": f"📊 Weekly Report ({week_label})"
+                  }
+              },
+              {
+                  "type": "section",
+                  "text": {
+                      "type": "mrkdwn",
+                      "text": (
+                          f"*AutoWealth AI Weekly Stats*\n\n"
+                          f"⭐ *Stars*: {stars} (+{new_stars})\n"
+                          f"🍴 *Forks*: {forks} (+{new_forks})\n"
+                          f"📋 *Issues*: +{new_issues} opened, {closed_issues} closed\n"
+                          f"🔀 *Merged PRs*: {merged_prs}"
+                      )
+                  }
+              },
+              {
+                  "type": "actions",
+                  "elements": [
+                      {
+                          "type": "button",
+                          "text": {"type": "plain_text", "text": "View Repository"},
+                          "url": "https://github.com/Jsoned/autowealth-ai"
+                      }
+                  ]
+              }
+          ]
+
+          payload = {'blocks': blocks}
+
+          response = requests.post(
+              webhook_url,
+              json=payload,
+              headers={'Content-Type': 'application/json'},
+              timeout=30
+          )
+
+          if response.status_code == 200:
+              print("SUCCESS: Weekly report sent to Slack!")
+          else:
+              print(f"WARNING: Slack notification failed: {response.status_code}")
+          PYEOF
+
+      - name: Create GitHub Issue for Archive
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 << 'PYEOF'
+          import requests
+          import os
+
+          GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN', '')
+          REPO = "Jsoned/autowealth-ai"
+
+          # 读取报告
+          with open('weekly_report.md', 'r', encoding='utf-8') as f:
+              report_body = f.read()
+
+          # 读取指标
+          metrics = {}
+          if os.path.exists('metrics.env'):
+              with open('metrics.env', 'r') as f:
+                  for line in f:
+                      if '=' in line:
+                          k, v = line.strip().split('=', 1)
+                          metrics[k] = v
+
+          report_date = metrics.get('REPORT_DATE', '')
+          week_label = metrics.get('WEEK_LABEL', '')
+          stars = metrics.get('CURRENT_STARS', '0')
+
+          issue_title = f"📊 Weekly Report: {week_label} (⭐{stars} Stars)"
+
+          headers = {
+              'Accept': 'application/vnd.github.v3+json',
+              'Authorization': f'token {GITHUB_TOKEN}',
+          }
+
+          payload = {
+              'title': issue_title,
+              'body': report_body,
+              'labels': ['weekly-report', 'automated'],
+          }
+
+          response = requests.post(
+              f"https://api.github.com/repos/{REPO}/issues",
+              headers=headers,
+              json=payload,
+              timeout=30
+          )
+
+          if response.status_code == 201:
+              issue_url = response.json().get('html_url', '')
+              print(f"SUCCESS: Weekly report issue created: {issue_url}")
+          else:
+              print(f"ERROR: Failed to create issue: {response.status_code}")
+              print(response.text)
+
+              # 尝试创建标签（如果不存在）
+              labels_response = requests.get(
+                  f"https://api.github.com/repos/{REPO}/labels",
+                  headers=headers,
+                  timeout=30
+              )
+              if labels_response.status_code == 200:
+                  existing_labels = [l['name'] for l in labels_response.json()]
+                  missing_labels = []
+                  for label in ['weekly-report', 'automated']:
+                      if label not in existing_labels:
+                          missing_labels.append(label)
+
+                  for label in missing_labels:
+                      color = '0075ca' if label == 'weekly-report' else 'c5def5'
+                      requests.post(
+                          f"https://api.github.com/repos/{REPO}/labels",
+                          headers=headers,
+                          json={'name': label, 'color': color},
+                          timeout=30
+                      )
+                      print(f"Created label: {label}")
+          PYEOF
+
+      - name: Report Summary
+        if: always()
+        run: |
+          echo "===== Weekly Report Summary ====="
+          if [ -f metrics.env ]; then
+              source metrics.env
+              echo "Period: $WEEK_LABEL"
+              echo "Stars: $CURRENT_STARS (+$NEW_STARS)"
+              echo "Forks: $CURRENT_FORKS (+$NEW_FORKS)"
+              echo "Issues: +$NEW_ISSUES opened, $CLOSED_ISSUES closed"
+              echo "Merged PRs: $MERGED_PRS"
+          fi
+          echo "================================"
