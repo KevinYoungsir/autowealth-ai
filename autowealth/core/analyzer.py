@@ -94,6 +94,94 @@ class TechnicalAnalyzer:
         df["Volume_Ratio"] = df["Volume"] / df["Volume_MA20"]
         return df
 
+    @staticmethod
+    def calculate_obv(data: pd.DataFrame) -> pd.DataFrame:
+        """计算OBV能量潮指标"""
+        df = data.copy()
+        close_diff = df["Close"].diff()
+        obv = pd.Series(0, index=df.index)
+        obv.iloc[0] = df["Volume"].iloc[0]
+        for i in range(1, len(df)):
+            if close_diff.iloc[i] > 0:
+                obv.iloc[i] = obv.iloc[i - 1] + df["Volume"].iloc[i]
+            elif close_diff.iloc[i] < 0:
+                obv.iloc[i] = obv.iloc[i - 1] - df["Volume"].iloc[i]
+            else:
+                obv.iloc[i] = obv.iloc[i - 1]
+        df["OBV"] = obv
+        return df
+
+    @staticmethod
+    def calculate_atr(data: pd.DataFrame, period: int = 14) -> pd.DataFrame:
+        """计算ATR真实波幅"""
+        df = data.copy()
+        high_low = df["High"] - df["Low"]
+        high_close = (df["High"] - df["Close"].shift()).abs()
+        low_close = (df["Low"] - df["Close"].shift()).abs()
+        tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+        df["TR"] = tr
+        df[f"ATR{period}"] = tr.rolling(window=period).mean()
+        return df
+
+    @staticmethod
+    def calculate_dmi(data: pd.DataFrame, period: int = 14) -> pd.DataFrame:
+        """计算DMI趋向指标（+DI, -DI, ADX）"""
+        df = data.copy()
+        high_diff = df["High"].diff()
+        low_diff = -df["Low"].diff()
+
+        plus_dm = ((high_diff > low_diff) & (high_diff > 0)) * high_diff
+        minus_dm = ((low_diff > high_diff) & (low_diff > 0)) * low_diff
+
+        tr = pd.concat([
+            df["High"] - df["Low"],
+            (df["High"] - df["Close"].shift()).abs(),
+            (df["Low"] - df["Close"].shift()).abs(),
+        ], axis=1).max(axis=1)
+
+        atr = tr.rolling(window=period).mean()
+        atr = atr.replace(0, 1e-10)
+
+        plus_di = 100 * plus_dm.rolling(window=period).mean() / atr
+        minus_di = 100 * minus_dm.rolling(window=period).mean() / atr
+
+        dx = (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, 1e-10) * 100
+        adx = dx.rolling(window=period).mean()
+
+        df["+DI"] = plus_di
+        df["-DI"] = minus_di
+        df["ADX"] = adx
+        return df
+
+    @staticmethod
+    def calculate_cci(data: pd.DataFrame, period: int = 20) -> pd.DataFrame:
+        """计算CCI顺势指标"""
+        df = data.copy()
+        tp = (df["High"] + df["Low"] + df["Close"]) / 3
+        ma_tp = tp.rolling(window=period).mean()
+        md = tp.rolling(window=period).apply(lambda x: np.abs(x - x.mean()).mean(), raw=True)
+        md = md.replace(0, 1e-10)
+        df[f"CCI{period}"] = (tp - ma_tp) / (0.015 * md)
+        return df
+
+    @staticmethod
+    def calculate_wr(data: pd.DataFrame, period: int = 14) -> pd.DataFrame:
+        """计算WR威廉指标"""
+        df = data.copy()
+        highest_high = df["High"].rolling(window=period).max()
+        lowest_low = df["Low"].rolling(window=period).min()
+        price_range = (highest_high - lowest_low).replace(0, 1e-10)
+        df[f"WR{period}"] = (highest_high - df["Close"]) / price_range * -100
+        return df
+
+    @staticmethod
+    def calculate_psy(data: pd.DataFrame, period: int = 12) -> pd.DataFrame:
+        """计算PSY心理线"""
+        df = data.copy()
+        up_days = (df["Close"].diff() > 0).rolling(window=period).sum()
+        df[f"PSY{period}"] = up_days / period * 100
+        return df
+
     @classmethod
     def full_analysis(cls, data: pd.DataFrame) -> pd.DataFrame:
         """执行完整的技术分析"""
@@ -105,6 +193,12 @@ class TechnicalAnalyzer:
         df = cls.calculate_bollinger_bands(df)
         df = cls.calculate_kdj(df)
         df = cls.calculate_volume_indicators(df)
+        df = cls.calculate_obv(df)
+        df = cls.calculate_atr(df)
+        df = cls.calculate_dmi(df)
+        df = cls.calculate_cci(df)
+        df = cls.calculate_wr(df)
+        df = cls.calculate_psy(df)
         return df
 
 
