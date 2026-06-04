@@ -1,0 +1,448 @@
+# ============================================================================
+# AutoWealth AI - 社区通知工作流
+# ============================================================================
+# 触发条件：
+#   1. Star 数达到里程碑（100/500/1000/5000）时触发
+#   2. 创建新 Release 时触发
+# 功能：
+#   1. 检查当前 Star 数量是否达到里程碑
+#   2. 发送 Discord Webhook 通知（如果配置了）
+#   3. 发送 Slack Webhook 通知（如果配置了）
+#   4. 通知模板包含里程碑信息、感谢语、项目链接
+#
+# 所需 Secrets（可选，至少配置一个）:
+#   - DISCORD_WEBHOOK_URL: Discord 频道 Webhook URL
+#   - SLACK_WEBHOOK_URL: Slack 频道 Webhook URL
+# ============================================================================
+
+name: Community Notify
+
+on:
+  # Star 里程碑触发
+  watch:
+    types: [started]
+
+  # 新 Release 触发
+  release:
+    types: [published]
+
+  # 允许手动触发
+  workflow_dispatch:
+    inputs:
+      notify_type:
+        description: 'Notification type (milestone or release)'
+        required: false
+        default: 'milestone'
+        type: choice
+        options:
+          - milestone
+          - release
+          - custom
+      custom_message:
+        description: 'Custom message (for custom type)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  check-and-notify:
+    name: Check Milestones & Notify
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Determine Trigger Type
+        id: trigger
+        run: |
+          # 判断触发来源
+          if [ "${{ github.event_name }}" = "watch" ]; then
+              echo "type=star" >> $GITHUB_OUTPUT
+              echo "Trigger: Star event"
+          elif [ "${{ github.event_name }}" = "release" ]; then
+              echo "type=release" >> $GITHUB_OUTPUT
+              echo "Trigger: Release event"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+              echo "type=${{ github.event.inputs.notify_type }}" >> $GITHUB_OUTPUT
+              echo "Trigger: Manual dispatch"
+          else
+              echo "type=unknown" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check Star Count & Milestones
+        id: milestones
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 << 'PYEOF'
+          import requests
+          import os
+
+          # 获取仓库 Star 数
+          repo = "Jsoned/autowealth-ai"
+          api_url = f"https://api.github.com/repos/{repo}"
+
+          headers = {
+              'Accept': 'application/vnd.github.v3+json',
+              'Authorization': f'token {os.environ.get("GITHUB_TOKEN", "")}',
+          }
+
+          response = requests.get(api_url, headers=headers, timeout=30)
+
+          if response.status_code == 200:
+              data = response.json()
+              star_count = data.get('stargazers_count', 0)
+              forks_count = data.get('forks_count', 0)
+              open_issues = data.get('open_issues_count', 0)
+
+              print(f"Stars: {star_count}")
+              print(f"Forks: {forks_count}")
+              print(f"Open Issues: {open_issues}")
+
+              # 定义里程碑
+              milestones = [100, 500, 1000, 5000, 10000]
+
+              # 检查是否达到某个里程碑
+              reached_milestone = None
+              for m in milestones:
+                  if star_count == m:
+                      reached_milestone = m
+                      break
+                  elif star_count > m:
+                      # 检查是否刚好跨过这个里程碑（star_count-1 < m <= star_count）
+                      # 由于 watch 事件每次只增加1，所以 star_count == m 即为触发
+                      pass
+
+              # 写入环境变量
+              with open('milestone_info.env', 'w') as f:
+                  f.write(f"STAR_COUNT={star_count}\n")
+                  f.write(f"FORKS_COUNT={forks_count}\n")
+                  f.write(f"OPEN_ISSUES={open_issues}\n")
+                  f.write(f"MILESTONE={reached_milestone if reached_milestone else ''}\n")
+
+              if reached_milestone:
+                  print(f"MILESTONE REACHED: {reached_milestone} stars!")
+              else:
+                  print(f"No milestone reached at {star_count} stars")
+          else:
+              print(f"ERROR: Failed to fetch repo info: {response.status_code}")
+              # 写入默认值
+              with open('milestone_info.env', 'w') as f:
+                  f.write("STAR_COUNT=0\n")
+                  f.write("FORKS_COUNT=0\n")
+                  f.write("OPEN_ISSUES=0\n")
+                  f.write("MILESTONE=\n")
+          PYEOF
+
+      - name: Load Milestone Info
+        id: info
+        run: |
+          source milestone_info.env
+          echo "star_count=$STAR_COUNT" >> $GITHUB_OUTPUT
+          echo "forks_count=$FORKS_COUNT" >> $GITHUB_OUTPUT
+          echo "milestone=$MILESTONE" >> $GITHUB_OUTPUT
+
+      - name: Extract Release Info (if applicable)
+        id: release
+        if: ${{ steps.trigger.outputs.type == 'release' }}
+        run: |
+          python3 << 'PYEOF'
+          import json
+          import os
+
+          event_path = os.environ.get('GITHUB_EVENT_PATH', '')
+          with open(event_path, 'r', encoding='utf-8') as f:
+              event = json.load(f)
+
+          release = event.get('release', {})
+          tag_name = release.get('tag_name', '')
+          html_url = release.get('html_url', '')
+          version = tag_name.lstrip('v')
+
+          with open('release_info.env', 'w') as f:
+              f.write(f"VERSION={version}\n")
+              f.write(f"RELEASE_URL={html_url}\n")
+
+          print(f"Release version: {version}")
+          PYEOF
+
+      - name: Send Discord Notification
+        if: ${{ (steps.info.outputs.milestone != '' || steps.trigger.outputs.type == 'release') && secrets.DISCORD_WEBHOOK_URL != '' }}
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          python3 << 'PYEOF'
+          import requests
+          import os
+          import json
+
+          webhook_url = os.environ.get('DISCORD_WEBHOOK_URL', '')
+          if not webhook_url:
+              print("Discord webhook URL not configured, skipping...")
+              exit(0)
+
+          # 读取里程碑和 Release 信息
+          milestone_info = {}
+          if os.path.exists('milestone_info.env'):
+              with open('milestone_info.env', 'r') as f:
+                  for line in f:
+                      if '=' in line:
+                          k, v = line.strip().split('=', 1)
+                          milestone_info[k] = v
+
+          release_info = {}
+          if os.path.exists('release_info.env'):
+              with open('release_info.env', 'r') as f:
+                  for line in f:
+                      if '=' in line:
+                          k, v = line.strip().split('=', 1)
+                          release_info[k] = v
+
+          star_count = milestone_info.get('STAR_COUNT', '0')
+          milestone = milestone_info.get('MILESTONE', '')
+          trigger_type = os.environ.get('TRIGGER_TYPE', 'milestone')
+
+          # 构建通知内容
+          if milestone:
+              # Star 里程碑通知
+              embed = {
+                  'title': f'🎉 AutoWealth AI reached {milestone} Stars!',
+                  'description': (
+                      f"Thank you to all {star_count} stargazers for your support!\n\n"
+                      f"AutoWealth AI continues to grow as an open-source multi-agent "
+                      f"investment analysis engine. We're grateful for every star, fork, "
+                      f"and contribution!\n\n"
+                      f"**Repository**: https://github.com/Jsoned/autowealth-ai\n"
+                      f"**Stars**: ⭐ {star_count}\n"
+                      f"**Forks**: 🍴 {milestone_info.get('FORKS_COUNT', '0')}"
+                  ),
+                  'color': 0xFFD700,  # 金色
+                  'fields': [
+                      {
+                          'name': 'Next Milestone',
+                          'value': _get_next_milestone(int(milestone)),
+                          'inline': True,
+                      },
+                      {
+                          'name': 'How to Help',
+                          'value': 'Star the repo, contribute code, or share with friends!',
+                          'inline': True,
+                      },
+                  ],
+                  'footer': {
+                      'text': 'AutoWealth AI - Open Source Multi-Agent Investment Engine',
+                  },
+                  'timestamp': _get_timestamp(),
+              }
+          else:
+              # Release 通知
+              version = release_info.get('VERSION', 'unknown')
+              release_url = release_info.get('RELEASE_URL', '')
+              embed = {
+                  'title': f'🚀 AutoWealth AI v{version} Released!',
+                  'description': (
+                      f"A new version of AutoWealth AI is now available!\n\n"
+                      f"**Version**: v{version}\n"
+                      f"**Release Notes**: {release_url}\n\n"
+                      f"Check out the latest features and improvements."
+                  ),
+                  'color': 0x00FF00,  # 绿色
+                  'footer': {
+                      'text': 'AutoWealth AI - Open Source Multi-Agent Investment Engine',
+                  },
+                  'timestamp': _get_timestamp(),
+              }
+
+          payload = {
+              'username': 'AutoWealth AI Bot',
+              'avatar_url': 'https://github.com/Jsoned/autowealth-ai/raw/main/docs/logo.jpg',
+              'embeds': [embed],
+          }
+
+          response = requests.post(
+              webhook_url,
+              json=payload,
+              headers={'Content-Type': 'application/json'},
+              timeout=30
+          )
+
+          if response.status_code in [200, 204]:
+              print("SUCCESS: Discord notification sent!")
+          else:
+              print(f"WARNING: Discord notification failed: {response.status_code}")
+              print(response.text)
+
+          # ====== 辅助函数 ======
+          def _get_next_milestone(current):
+              milestones = [100, 500, 1000, 5000, 10000, 50000]
+              for m in milestones:
+                  if m > current:
+                      return f"⭐ {m} stars"
+              return "∞"
+
+          def _get_timestamp():
+              from datetime import datetime, timezone
+              return datetime.now(timezone.utc).isoformat()
+          PYEOF
+        env:
+          TRIGGER_TYPE: ${{ steps.trigger.outputs.type }}
+
+      - name: Send Slack Notification
+        if: ${{ (steps.info.outputs.milestone != '' || steps.trigger.outputs.type == 'release') && secrets.SLACK_WEBHOOK_URL != '' }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          python3 << 'PYEOF'
+          import requests
+          import os
+          import json
+
+          webhook_url = os.environ.get('SLACK_WEBHOOK_URL', '')
+          if not webhook_url:
+              print("Slack webhook URL not configured, skipping...")
+              exit(0)
+
+          # 读取信息
+          milestone_info = {}
+          if os.path.exists('milestone_info.env'):
+              with open('milestone_info.env', 'r') as f:
+                  for line in f:
+                      if '=' in line:
+                          k, v = line.strip().split('=', 1)
+                          milestone_info[k] = v
+
+          release_info = {}
+          if os.path.exists('release_info.env'):
+              with open('release_info.env', 'r') as f:
+                  for line in f:
+                      if '=' in line:
+                          k, v = line.strip().split('=', 1)
+                          release_info[k] = v
+
+          star_count = milestone_info.get('STAR_COUNT', '0')
+          milestone = milestone_info.get('MILESTONE', '')
+
+          # 构建 Slack Block Kit 消息
+          if milestone:
+              blocks = [
+                  {
+                      "type": "header",
+                      "text": {
+                          "type": "plain_text",
+                          "text": f"🎉 AutoWealth AI reached {milestone} Stars!"
+                      }
+                  },
+                  {
+                      "type": "section",
+                      "text": {
+                          "type": "mrkdwn",
+                          "text": (
+                              f"Thank you to all *{star_count}* stargazers! "
+                              f"AutoWealth AI continues to grow as an open-source "
+                              f"multi-agent investment analysis engine.\n\n"
+                              f"*⭐ Stars*: {star_count} | "
+                              f"*🍴 Forks*: {milestone_info.get('FORKS_COUNT', '0')} | "
+                              f"*📋 Issues*: {milestone_info.get('OPEN_ISSUES', '0')}"
+                          )
+                      }
+                  },
+                  {
+                      "type": "actions",
+                      "elements": [
+                          {
+                              "type": "button",
+                              "text": {
+                                  "type": "plain_text",
+                                  "text": "GitHub Repository"
+                              },
+                              "url": "https://github.com/Jsoned/autowealth-ai"
+                          }
+                      ]
+                  },
+                  {
+                      "type": "context",
+                      "elements": [
+                          {
+                              "type": "mrkdwn",
+                              "text": "AutoWealth AI - Open Source Multi-Agent Investment Engine"
+                          }
+                      ]
+                  }
+              ]
+          else:
+              version = release_info.get('VERSION', 'unknown')
+              release_url = release_info.get('RELEASE_URL', '')
+              blocks = [
+                  {
+                      "type": "header",
+                      "text": {
+                          "type": "plain_text",
+                          "text": f"🚀 AutoWealth AI v{version} Released!"
+                      }
+                  },
+                  {
+                      "type": "section",
+                      "text": {
+                          "type": "mrkdwn",
+                          "text": (
+                              f"A new version of AutoWealth AI is now available!\n\n"
+                              f"*Version*: v{version}\n"
+                              f"*Release Notes*: <{release_url}|View on GitHub>"
+                          )
+                      }
+                  },
+                  {
+                      "type": "actions",
+                      "elements": [
+                          {
+                              "type": "button",
+                              "text": {
+                                  "type": "plain_text",
+                                  "text": "View Release"
+                              },
+                              "url": release_url
+                          },
+                          {
+                              "type": "button",
+                              "text": {
+                                  "type": "plain_text",
+                                  "text": "GitHub Repository"
+                              },
+                              "url": "https://github.com/Jsoned/autowealth-ai"
+                          }
+                      ]
+                  }
+              ]
+
+          payload = {'blocks': blocks}
+
+          response = requests.post(
+              webhook_url,
+              json=payload,
+              headers={'Content-Type': 'application/json'},
+              timeout=30
+          )
+
+          if response.status_code == 200:
+              print("SUCCESS: Slack notification sent!")
+          else:
+              print(f"WARNING: Slack notification failed: {response.status_code}")
+              print(response.text)
+          PYEOF
+
+      - name: Notification Summary
+        if: always()
+        run: |
+          echo "===== Community Notification Summary ====="
+          echo "Trigger Type: ${{ steps.trigger.outputs.type }}"
+          echo "Star Count: ${{ steps.info.outputs.star_count }}"
+          echo "Milestone Reached: ${{ steps.info.outputs.milestone || 'None' }}"
+          echo "=========================================="
