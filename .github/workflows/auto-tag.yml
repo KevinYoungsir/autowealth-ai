@@ -1,0 +1,154 @@
+# ============================================================================
+# AutoWealth AI - 自动打 Tag 工作流
+# ============================================================================
+# 触发条件：push 到 main 分支且 CHANGELOG.md 有变更时
+# 功能：
+#   1. 检测 CHANGELOG.md 的变更
+#   2. 从 CHANGELOG.md 中提取最新版本号
+#   3. 自动创建 git tag（v{version}）
+#   4. 推送 tag 到远程仓库，触发 release 工作流
+#
+# 注意：此工作流会自动创建 tag 并触发 release.yml，
+#       请确保 CHANGELOG.md 中的版本号已正确更新。
+# ============================================================================
+
+name: Auto Tag
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'CHANGELOG.md'  # 仅在 CHANGELOG.md 有变更时触发
+
+permissions:
+  contents: write  # 需要 push tag 的权限
+
+jobs:
+  tag:
+    name: Create Tag from CHANGELOG
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 获取完整历史
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Extract Version from CHANGELOG
+        id: version
+        run: |
+          python3 << 'PYEOF'
+          import re
+          import os
+          import subprocess
+
+          # 读取 CHANGELOG.md
+          with open('CHANGELOG.md', 'r', encoding='utf-8') as f:
+              content = f.read()
+
+          # 匹配最新版本号: ## [x.x.x] - YYYY-MM-DD
+          # 查找第一个版本段落
+          pattern = r'## \[(\d+\.\d+\.\d+)\]'
+          matches = re.findall(pattern, content)
+
+          if not matches:
+              print("ERROR: No version found in CHANGELOG.md")
+              print("Expected format: ## [x.x.x] - YYYY-MM-DD")
+              exit(1)
+
+          latest_version = matches[0]
+          tag_name = f"v{latest_version}"
+
+          print(f"Latest version in CHANGELOG: {latest_version}")
+          print(f"Tag to create: {tag_name}")
+
+          # 检查 tag 是否已存在
+          result = subprocess.run(
+              ['git', 'tag', '-l', tag_name],
+              capture_output=True,
+              text=True
+          )
+
+          if result.stdout.strip() == tag_name:
+              print(f"Tag {tag_name} already exists, skipping...")
+              with open('version_info.env', 'w') as f:
+                  f.write(f"VERSION={latest_version}\n")
+                  f.write(f"TAG={tag_name}\n")
+                  f.write(f"SHOULD_CREATE=false\n")
+          else:
+              print(f"Tag {tag_name} does not exist, will create...")
+              with open('version_info.env', 'w') as f:
+                  f.write(f"VERSION={latest_version}\n")
+                  f.write(f"TAG={tag_name}\n")
+                  f.write(f"SHOULD_CREATE=true\n")
+          PYEOF
+
+      - name: Load Version Info
+        id: info
+        run: |
+          source version_info.env
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "should_create=$SHOULD_CREATE" >> $GITHUB_OUTPUT
+
+      - name: Verify CHANGELOG Changes
+        id: changelog_check
+        if: ${{ steps.info.outputs.should_create == 'true' }}
+        run: |
+          # 获取变更的文件列表
+          CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD)
+
+          # 检查 CHANGELOG.md 是否在变更列表中
+          if echo "$CHANGED_FILES" | grep -q "CHANGELOG.md"; then
+              echo "CHANGELOG.md was modified in the latest commit"
+              echo "changed=true" >> $GITHUB_OUTPUT
+
+              # 显示变更内容摘要
+              echo "===== CHANGELOG.md Changes ====="
+              git diff HEAD~1 HEAD -- CHANGELOG.md | head -50
+              echo "================================"
+          else
+              echo "CHANGELOG.md was not modified in the latest commit"
+              echo "changed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create and Push Tag
+        if: ${{ steps.info.outputs.should_create == 'true' && steps.changelog_check.outputs.changed == 'true' }}
+        run: |
+          TAG="${{ steps.info.outputs.tag }}"
+          VERSION="${{ steps.info.outputs.version }}"
+
+          echo "Creating tag: ${TAG}"
+
+          # 配置 Git 用户信息（使用 GitHub Actions Bot）
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # 创建带注释的 tag
+          git tag -a "${TAG}" -m "Release ${TAG}
+
+          Auto-generated tag from CHANGELOG.md version ${VERSION}
+
+          See CHANGELOG.md for details."
+
+          # 推送 tag 到远程仓库
+          git push origin "${TAG}"
+
+          echo "Tag ${TAG} created and pushed successfully!"
+          echo "This will trigger the release workflow."
+
+      - name: Tag Summary
+        if: always()
+        run: |
+          echo "===== Auto Tag Summary ====="
+          echo "Version: ${{ steps.info.outputs.version }}"
+          echo "Tag: ${{ steps.info.outputs.tag }}"
+          echo "Created: ${{ steps.info.outputs.should_create }}"
+          echo "============================="
