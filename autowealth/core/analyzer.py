@@ -1,5 +1,6 @@
 """
-鏁版嵁鍒嗘瀽妯″潡 - 璐熻矗鎶€鏈寚鏍囪绠楀拰鍩烘湰闈㈠垎鏋?"""
+数据分析模块 - 负责技术指标计算和基本面分析
+"""
 import logging
 from typing import Dict, List, Optional, Tuple
 
@@ -10,11 +11,11 @@ logger = logging.getLogger(__name__)
 
 
 class TechnicalAnalyzer:
-    """鎶€鏈垎鏋愬櫒"""
+    """技术分析器"""
 
     @staticmethod
     def calculate_ma(data: pd.DataFrame, periods: List[int] = [5, 10, 20, 60]) -> pd.DataFrame:
-        """璁＄畻绉诲姩骞冲潎绾?""
+        """计算移动平均线"""
         df = data.copy()
         for period in periods:
             df[f"MA{period}"] = df["Close"].rolling(window=period).mean()
@@ -22,7 +23,7 @@ class TechnicalAnalyzer:
 
     @staticmethod
     def calculate_ema(data: pd.DataFrame, periods: List[int] = [12, 26]) -> pd.DataFrame:
-        """璁＄畻鎸囨暟绉诲姩骞冲潎绾?""
+        """计算指数移动平均线"""
         df = data.copy()
         for period in periods:
             df[f"EMA{period}"] = df["Close"].ewm(span=period, adjust=False).mean()
@@ -32,7 +33,7 @@ class TechnicalAnalyzer:
     def calculate_macd(
         data: pd.DataFrame, fast: int = 12, slow: int = 26, signal: int = 9
     ) -> pd.DataFrame:
-        """璁＄畻MACD鎸囨爣"""
+        """计算MACD指标"""
         df = data.copy()
         ema_fast = df["Close"].ewm(span=fast, adjust=False).mean()
         ema_slow = df["Close"].ewm(span=slow, adjust=False).mean()
@@ -44,14 +45,14 @@ class TechnicalAnalyzer:
 
     @staticmethod
     def calculate_rsi(data: pd.DataFrame, period: int = 14) -> pd.DataFrame:
-        """璁＄畻RSI鎸囨爣"""
+        """计算RSI指标"""
         df = data.copy()
         delta = df["Close"].diff()
 
         gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
 
-        rs = gain / loss
+        rs = gain / loss.replace(0, 1e-10)
         df["RSI"] = 100 - (100 / (1 + rs))
         return df
 
@@ -59,7 +60,7 @@ class TechnicalAnalyzer:
     def calculate_bollinger_bands(
         data: pd.DataFrame, period: int = 20, std_dev: float = 2.0
     ) -> pd.DataFrame:
-        """璁＄畻甯冩灄甯?""
+        """计算布林带"""
         df = data.copy()
         df["BB_Middle"] = df["Close"].rolling(window=period).mean()
         bb_std = df["Close"].rolling(window=period).std()
@@ -71,11 +72,13 @@ class TechnicalAnalyzer:
 
     @staticmethod
     def calculate_kdj(data: pd.DataFrame, n: int = 9, m1: int = 3, m2: int = 3) -> pd.DataFrame:
-        """璁＄畻KDJ鎸囨爣"""
+        """计算KDJ指标"""
         df = data.copy()
         low_list = df["Low"].rolling(window=n, min_periods=n).min()
         high_list = df["High"].rolling(window=n, min_periods=n).max()
-        rsv = (df["Close"] - low_list) / (high_list - low_list) * 100
+        price_range = high_list - low_list
+        price_range = price_range.replace(0, 1e-10)
+        rsv = (df["Close"] - low_list) / price_range * 100
 
         df["K"] = rsv.ewm(com=m1 - 1, adjust=False).mean()
         df["D"] = df["K"].ewm(com=m2 - 1, adjust=False).mean()
@@ -84,7 +87,7 @@ class TechnicalAnalyzer:
 
     @staticmethod
     def calculate_volume_indicators(data: pd.DataFrame) -> pd.DataFrame:
-        """璁＄畻鎴愪氦閲忔寚鏍?""
+        """计算成交量指标"""
         df = data.copy()
         df["Volume_MA5"] = df["Volume"].rolling(window=5).mean()
         df["Volume_MA20"] = df["Volume"].rolling(window=20).mean()
@@ -93,7 +96,7 @@ class TechnicalAnalyzer:
 
     @classmethod
     def full_analysis(cls, data: pd.DataFrame) -> pd.DataFrame:
-        """鎵ц瀹屾暣鐨勬妧鏈垎鏋?""
+        """执行完整的技术分析"""
         df = data.copy()
         df = cls.calculate_ma(df)
         df = cls.calculate_ema(df)
@@ -106,16 +109,16 @@ class TechnicalAnalyzer:
 
 
 class FundamentalAnalyzer:
-    """鍩烘湰闈㈠垎鏋愬櫒"""
+    """基本面分析器"""
 
     @staticmethod
     def analyze_valuation(stock_info: Dict) -> Dict[str, float]:
-        """鍒嗘瀽浼板€兼按骞?""
+        """分析估值水平"""
         pe = stock_info.get("pe_ratio", 0)
         pb = stock_info.get("pb_ratio", 0)
         dividend_yield = stock_info.get("dividend_yield", 0) or 0
 
-        # 绠€鍗曠殑浼板€艰瘎鍒?(0-100)
+        # 简单的估值评分 (0-100)
         pe_score = max(0, min(100, 100 - pe * 2)) if pe > 0 else 50
         pb_score = max(0, min(100, 100 - pb * 15)) if pb > 0 else 50
         dividend_score = min(100, dividend_yield * 1000)
@@ -132,11 +135,11 @@ class FundamentalAnalyzer:
 
     @staticmethod
     def analyze_growth(historical_data: pd.DataFrame) -> Dict[str, float]:
-        """鍒嗘瀽鎴愰暱鎬?""
+        """分析成长性"""
         if len(historical_data) < 60:
             return {"growth_score": 50, "trend": "unknown"}
 
-        # 璁＄畻浠锋牸瓒嬪娍
+        # 计算价格趋势
         recent_price = historical_data["Close"].iloc[-1]
         price_1m_ago = historical_data["Close"].iloc[-20] if len(historical_data) >= 20 else historical_data["Close"].iloc[0]
         price_3m_ago = historical_data["Close"].iloc[-60] if len(historical_data) >= 60 else historical_data["Close"].iloc[0]
@@ -144,7 +147,7 @@ class FundamentalAnalyzer:
         return_1m = (recent_price - price_1m_ago) / price_1m_ago * 100
         return_3m = (recent_price - price_3m_ago) / price_3m_ago * 100
 
-        # 瓒嬪娍鍒ゆ柇
+        # 趋势判断
         if return_1m > 5 and return_3m > 10:
             trend = "strong_uptrend"
         elif return_1m > 0:
@@ -156,7 +159,8 @@ class FundamentalAnalyzer:
         else:
             trend = "sideways"
 
-        # 鎴愰暱鎬ц瘎鍒?        growth_score = max(0, min(100, 50 + return_3m * 2))
+        # 成长性评分
+        growth_score = max(0, min(100, 50 + return_3m * 2))
 
         return {
             "return_1m": return_1m,
@@ -169,7 +173,7 @@ class FundamentalAnalyzer:
     def full_fundamental_analysis(
         cls, stock_info: Dict, historical_data: pd.DataFrame
     ) -> Dict:
-        """鎵ц瀹屾暣鐨勫熀鏈潰鍒嗘瀽"""
+        """执行完整的基本面分析"""
         valuation = cls.analyze_valuation(stock_info)
         growth = cls.analyze_growth(historical_data)
 
