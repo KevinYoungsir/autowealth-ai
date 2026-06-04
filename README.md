@@ -1,8 +1,12 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Jsoned/autowealth-ai/main/docs/logo.jpg" alt="AutoWealth AI Logo" width="200">
+</p>
+
 # 🤖 AutoWealth AI
 
 > 基于多智能体的个人财富管理与投资决策引擎
 
-[![GitHub Stars](https://img.shields.io/github/stars/autowealth/autowealth-ai?style=social)](https://github.com/autowealth/autowealth-ai/stargazers)
+[![GitHub Stars](https://img.shields.io/github/stars/Jsoned/autowealth-ai?style=social)](https://github.com/Jsoned/autowealth-ai/stargazers)
 [![License](https://img.shields.io/github/license/autowealth/autowealth-ai)](https://github.com/autowealth/autowealth-ai/blob/main/LICENSE)
 [![Python](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/)
 
