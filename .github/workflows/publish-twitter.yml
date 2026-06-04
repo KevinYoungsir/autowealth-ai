@@ -1,0 +1,196 @@
+# ============================================================================
+# AutoWealth AI - 自动发布 Twitter 推文工作流
+# ============================================================================
+# 触发条件：创建新的 GitHub Release 时自动触发
+# 功能：
+#   1. 从 Release 中提取版本号和描述信息
+#   2. 使用 Twitter API v2 发布推文
+#   3. 推文包含版本号、核心功能列表和 GitHub 链接
+#
+# 所需 Secrets:
+#   - TWITTER_API_KEY: Twitter API Key (Consumer Key)
+#   - TWITTER_API_SECRET: Twitter API Secret (Consumer Secret)
+#   - TWITTER_ACCESS_TOKEN: Twitter Access Token
+#   - TWITTER_ACCESS_SECRET: Twitter Access Token Secret
+# ============================================================================
+
+name: Publish Twitter
+
+on:
+  release:
+    types: [published]  # 仅在 Release 正式发布时触发（不包括 draft/prerelease）
+
+permissions:
+  contents: read
+
+jobs:
+  tweet:
+    name: Publish Tweet
+    runs-on: ubuntu-latest
+    # 仅在非草稿、非预发布时执行
+    if: ${{ !github.event.release.draft && !github.event.release.prerelease }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Extract Release Info
+        id: release_info
+        run: |
+          python3 << 'PYEOF'
+          import json
+          import os
+
+          # 从 GitHub 事件中获取 Release 信息
+          event_data = os.environ.get('GITHUB_EVENT_PATH', '')
+          with open(event_data, 'r', encoding='utf-8') as f:
+              event = json.load(f)
+
+          release = event.get('release', {})
+          tag_name = release.get('tag_name', '')
+          body = release.get('body', '')
+          html_url = release.get('html_url', '')
+
+          # 提取版本号
+          version = tag_name.lstrip('v')
+
+          # 写入环境变量文件供后续步骤使用
+          with open('release_info.env', 'w', encoding='utf-8') as f:
+              f.write(f"VERSION={version}\n")
+              f.write(f"TAG_NAME={tag_name}\n")
+              f.write(f"RELEASE_URL={html_url}\n")
+              f.write(f"BODY_LENGTH={len(body)}\n")
+
+          print(f"Version: {version}")
+          print(f"Tag: {tag_name}")
+          print(f"Release URL: {html_url}")
+          PYEOF
+
+      - name: Load Release Info
+        id: info
+        run: |
+          # 从文件加载变量
+          source release_info.env
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "url=$RELEASE_URL" >> $GITHUB_OUTPUT
+
+      - name: Generate and Send Tweet
+        env:
+          TWITTER_API_KEY: ${{ secrets.TWITTER_API_KEY }}
+          TWITTER_API_SECRET: ${{ secrets.TWITTER_API_SECRET }}
+          TWITTER_ACCESS_TOKEN: ${{ secrets.TWITTER_ACCESS_TOKEN }}
+          TWITTER_ACCESS_SECRET: ${{ secrets.TWITTER_ACCESS_SECRET }}
+        run: |
+          python3 << 'PYEOF'
+          import requests
+          import os
+          import base64
+
+          # ====== 配置 ======
+          API_KEY = os.environ.get('TWITTER_API_KEY', '')
+          API_SECRET = os.environ.get('TWITTER_API_SECRET', '')
+          ACCESS_TOKEN = os.environ.get('TWITTER_ACCESS_TOKEN', '')
+          ACCESS_SECRET = os.environ.get('TWITTER_ACCESS_SECRET', '')
+
+          # 从文件读取 Release 信息
+          version = os.environ.get('VERSION', '')
+          release_url = os.environ.get('RELEASE_URL', '')
+
+          # ====== 验证 Secrets ======
+          if not all([API_KEY, API_SECRET, ACCESS_TOKEN, ACCESS_SECRET]):
+              print("ERROR: Missing Twitter API credentials. Please configure the following secrets:")
+              print("  - TWITTER_API_KEY")
+              print("  - TWITTER_API_SECRET")
+              print("  - TWITTER_ACCESS_TOKEN")
+              print("  - TWITTER_ACCESS_SECRET")
+              exit(1)
+
+          # ====== Step 1: 获取 Bearer Token ======
+          # 使用 OAuth 1.0a 的 App-Only Auth 获取 Bearer Token
+          credentials = f"{API_KEY}:{API_SECRET}"
+          b64_credentials = base64.b64encode(credentials.encode('utf-8')).decode('utf-8')
+
+          auth_response = requests.post(
+              'https://api.twitter.com/oauth2/token',
+              headers={
+                  'Authorization': f'Basic {b64_credentials}',
+                  'Content-Type': 'application/x-www-form-urlencoded',
+              },
+              data={'grant_type': 'client_credentials'},
+              timeout=30
+          )
+
+          if auth_response.status_code != 200:
+              print(f"ERROR: Failed to get Bearer Token: {auth_response.status_code}")
+              print(auth_response.text)
+              exit(1)
+
+          bearer_token = auth_response.json().get('access_token', '')
+          print("Successfully obtained Bearer Token")
+
+          # ====== Step 2: 构建推文内容 ======
+          tweet_text = (
+              f"🚀 AutoWealth AI v{version} is out!\n\n"
+              f"✅ Multi-agent investment analysis engine\n"
+              f"✅ ML predictions (Random Forest + MLP)\n"
+              f"✅ Real-time alerts system\n"
+              f"✅ Social sentiment analysis\n"
+              f"✅ Flutter mobile app\n"
+              f"✅ Backtesting & portfolio optimization\n\n"
+              f"Open-source & free. Check it out 👇\n"
+              f"{release_url}\n\n"
+              f"#Python #AI #AlgoTrading #OpenSource"
+          )
+
+          # Twitter API v2 推文长度限制为 280 字符
+          if len(tweet_text) > 280:
+              # 精简版本
+              tweet_text = (
+                  f"🚀 AutoWealth AI v{version} is out!\n\n"
+                  f"Multi-agent AI investment analysis engine with ML predictions, "
+                  f"real-time alerts, sentiment analysis & mobile app.\n\n"
+                  f"{release_url}\n\n"
+                  f"#Python #AI #AlgoTrading"
+              )
+
+          print(f"Tweet length: {len(tweet_text)} characters")
+          print(f"Tweet content:\n{tweet_text}")
+
+          # ====== Step 3: 发布推文 ======
+          tweet_response = requests.post(
+              'https://api.twitter.com/2/tweets',
+              headers={
+                  'Authorization': f'Bearer {bearer_token}',
+                  'Content-Type': 'application/json',
+              },
+              json={'text': tweet_text},
+              timeout=30
+          )
+
+          if tweet_response.status_code == 201:
+              tweet_data = tweet_response.json()
+              tweet_id = tweet_data.get('data', {}).get('id', 'unknown')
+              print(f"SUCCESS: Tweet published! Tweet ID: {tweet_id}")
+          elif tweet_response.status_code == 403:
+              print(f"ERROR: Permission denied (403). Check that the app has 'Read and Write' permissions.")
+              print(tweet_response.text)
+              exit(1)
+          else:
+              print(f"ERROR: Failed to publish tweet: {tweet_response.status_code}")
+              print(tweet_response.text)
+              exit(1)
+          PYEOF
+
+      - name: Tweet Summary
+        if: always()
+        run: |
+          echo "===== Twitter Publish Summary ====="
+          echo "Version: ${{ steps.info.outputs.version }}"
+          echo "Release URL: ${{ steps.info.outputs.url }}"
+          echo "====================================="
