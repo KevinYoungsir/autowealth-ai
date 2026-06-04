@@ -1,0 +1,252 @@
+# ============================================================================
+# AutoWealth AI - 自动发布 Reddit 帖子工作流
+# ============================================================================
+# 触发条件：创建新的 GitHub Release 时自动触发
+# 功能：
+#   1. 从 Release 中提取版本号和描述信息
+#   2. 从 docs/marketing/reddit_post.md 读取帖子模板
+#   3. 动态替换模板中的版本信息
+#   4. 使用 Reddit API 发布到 r/Python, r/algotrading, r/opensource
+#
+# 所需 Secrets:
+#   - REDDIT_CLIENT_ID: Reddit App Client ID
+#   - REDDIT_CLIENT_SECRET: Reddit App Client Secret
+#   - REDDIT_USERNAME: Reddit 用户名
+#   - REDDIT_PASSWORD: Reddit 用户密码
+# ============================================================================
+
+name: Publish Reddit
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  reddit:
+    name: Publish to Reddit
+    runs-on: ubuntu-latest
+    if: ${{ !github.event.release.draft && !github.event.release.prerelease }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Extract Release Info
+        id: release_info
+        run: |
+          python3 << 'PYEOF'
+          import json
+          import os
+
+          event_path = os.environ.get('GITHUB_EVENT_PATH', '')
+          with open(event_path, 'r', encoding='utf-8') as f:
+              event = json.load(f)
+
+          release = event.get('release', {})
+          tag_name = release.get('tag_name', '')
+          body = release.get('body', '')
+          html_url = release.get('html_url', '')
+          version = tag_name.lstrip('v')
+
+          # 提取 CHANGELOG 中的关键更新（取前 500 字符作为摘要）
+          changelog_summary = body[:500] if body else ''
+
+          with open('release_info.env', 'w', encoding='utf-8') as f:
+              f.write(f"VERSION={version}\n")
+              f.write(f"TAG_NAME={tag_NAME}\n")
+              f.write(f"RELEASE_URL={html_url}\n")
+              f.write(f"CHANGELOG_SUMMARY={changelog_summary}\n")
+
+          print(f"Version: {version}")
+          print(f"Release URL: {html_url}")
+          PYEOF
+
+      - name: Load Release Info
+        id: info
+        run: |
+          source release_info.env
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "url=$RELEASE_URL" >> $GITHUB_OUTPUT
+
+      - name: Read Reddit Post Template
+        id: template
+        run: |
+          if [ -f "docs/marketing/reddit_post.md" ]; then
+              echo "Reddit post template found"
+              echo "template_exists=true" >> $GITHUB_OUTPUT
+          else
+              echo "WARNING: Reddit post template not found at docs/marketing/reddit_post.md"
+              echo "template_exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Publish to Reddit Subreddits
+        env:
+          REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
+          REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
+          REDDIT_USERNAME: ${{ secrets.REDDIT_USERNAME }}
+          REDDIT_PASSWORD: ${{ secrets.REDDIT_PASSWORD }}
+        run: |
+          python3 << 'PYEOF'
+          import requests
+          import os
+          import re
+          import time
+
+          # ====== 配置 ======
+          CLIENT_ID = os.environ.get('REDDIT_CLIENT_ID', '')
+          CLIENT_SECRET = os.environ.get('REDDIT_CLIENT_SECRET', '')
+          USERNAME = os.environ.get('REDDIT_USERNAME', '')
+          PASSWORD = os.environ.get('REDDIT_PASSWORD', '')
+
+          # 读取 Release 信息
+          version = os.environ.get('VERSION', '')
+          release_url = os.environ.get('RELEASE_URL', '')
+
+          # ====== 验证 Secrets ======
+          if not all([CLIENT_ID, CLIENT_SECRET, USERNAME, PASSWORD]):
+              print("ERROR: Missing Reddit API credentials. Please configure:")
+              print("  - REDDIT_CLIENT_ID")
+              print("  - REDDIT_CLIENT_SECRET")
+              print("  - REDDIT_USERNAME")
+              print("  - REDDIT_PASSWORD")
+              exit(1)
+
+          # ====== Step 1: Reddit 认证 ======
+          auth_data = {
+              'grant_type': 'password',
+              'username': USERNAME,
+              'password': PASSWORD,
+          }
+
+          auth_response = requests.post(
+              'https://www.reddit.com/api/v1/access_token',
+              auth=(CLIENT_ID, CLIENT_SECRET),
+              data=auth_data,
+              headers={'User-Agent': 'AutoWealth-AI-Bot/1.0'},
+              timeout=30
+          )
+
+          if auth_response.status_code != 200:
+              print(f"ERROR: Reddit authentication failed: {auth_response.status_code}")
+              print(auth_response.text)
+              exit(1)
+
+          access_token = auth_response.json().get('access_token', '')
+          print("Successfully authenticated with Reddit API")
+
+          # 通用请求头
+          headers = {
+              'Authorization': f'Bearer {access_token}',
+              'User-Agent': 'AutoWealth-AI-Bot/1.0',
+          }
+
+          # ====== Step 2: 读取帖子模板 ======
+          template_body = ""
+          if os.path.exists('docs/marketing/reddit_post.md'):
+              with open('docs/marketing/reddit_post.md', 'r', encoding='utf-8') as f:
+                  template_body = f.read()
+
+          # 如果模板存在，使用模板；否则使用默认内容
+          if template_body:
+              # 动态替换版本信息
+              post_body = template_body.replace('{{VERSION}}', version)
+              post_body = post_body.replace('{{RELEASE_URL}}', release_url)
+              post_body = post_body.replace('{{DATE}}', time.strftime('%Y-%m-%d'))
+          else:
+              post_body = (
+                  f"Hi everyone,\n\n"
+                  f"I'm excited to share **AutoWealth AI v{version}** -- "
+                  f"an open-source, multi-agent investment analysis engine built with Python.\n\n"
+                  f"### What's New in v{version}\n\n"
+                  f"Check out the full changelog: {release_url}\n\n"
+                  f"### Key Features\n\n"
+                  f"- **Multi-Agent Architecture**: Technical, Fundamental & Sentiment agents\n"
+                  f"- **ML Predictions**: Random Forest + MLP neural network\n"
+                  f"- **Real-time Alerts**: Price breakout, volume anomaly, indicator crossover\n"
+                  f"- **Social Sentiment**: Twitter, Weibo, Reddit analysis\n"
+                  f"- **Backtesting**: Strategy validation with historical data\n"
+                  f"- **Mobile App**: Flutter cross-platform support\n\n"
+                  f"GitHub: https://github.com/Jsoned/autowealth-ai\n\n"
+                  f"Feedback and contributions are welcome!"
+              )
+
+          # ====== Step 3: 定义各 Subreddit 的帖子配置 ======
+          subreddits = {
+              'Python': {
+                  'title': f'I built an open-source multi-agent AI engine that analyzes stocks from 3 different perspectives (v{version})',
+                  'flair': 'project',
+              },
+              'algotrading': {
+                  'title': f'Open-source multi-agent system for investment analysis - technical, fundamental & sentiment agents (v{version})',
+                  'flair': None,
+              },
+              'opensource': {
+                  'title': f'AutoWealth AI v{version}: A multi-agent investment analysis engine built with Python',
+                  'flair': None,
+              },
+          }
+
+          # ====== Step 4: 发布到各 Subreddit ======
+          results = {}
+          for subreddit, config in subreddits.items():
+              print(f"\n--- Publishing to r/{subreddit} ---")
+
+              submit_data = {
+                  'title': config['title'],
+                  'text': post_body,
+                  'sr': subreddit,
+                  'kind': 'self',
+                  'api_type': 'json',
+              }
+
+              submit_response = requests.post(
+                  f'https://oauth.reddit.com/api/submit',
+                  headers=headers,
+                  data=submit_data,
+                  timeout=30
+              )
+
+              if submit_response.status_code == 200:
+                  result = submit_response.json()
+                  if result.get('success', False):
+                      # 提取帖子 URL
+                      data = result.get('json', {}).get('data', {})
+                      post_url = data.get('url', data.get('link', 'URL not available'))
+                      results[subreddit] = {'status': 'success', 'url': post_url}
+                      print(f"SUCCESS: Posted to r/{subreddit}")
+                      print(f"  URL: {post_url}")
+                  else:
+                      errors = result.get('json', {}).get('errors', [])
+                      results[subreddit] = {'status': 'error', 'message': str(errors)}
+                      print(f"ERROR: Reddit returned errors: {errors}")
+              else:
+                  results[subreddit] = {'status': 'error', 'message': f'HTTP {submit_response.status_code}'}
+                  print(f"ERROR: Failed to post to r/{subreddit}: {submit_response.status_code}")
+                  print(submit_response.text)
+
+              # Reddit API 速率限制：每分钟最多 60 次请求
+              time.sleep(5)
+
+          # ====== Step 5: 输出汇总 ======
+          print("\n===== Reddit Publish Summary =====")
+          for subreddit, result in results.items():
+              status_icon = "✓" if result['status'] == 'success' else "✗"
+              print(f"  {status_icon} r/{subreddit}: {result.get('url', result.get('message', 'unknown'))}")
+          print("================================")
+          PYEOF
+
+      - name: Reddit Summary
+        if: always()
+        run: |
+          echo "===== Reddit Publish Summary ====="
+          echo "Version: ${{ steps.info.outputs.version }}"
+          echo "Subreddits: r/Python, r/algotrading, r/opensource"
+          echo "==================================="
