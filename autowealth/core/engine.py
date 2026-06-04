@@ -221,10 +221,7 @@ class AutoWealthEngine:
                 if result.get("success"):
                     # 从历史数据获取最新收盘价作为当前价格
                     hist = result.get("stock_info", {})
-                    if "historical_data" in analysis_data:
-                        current_price = analysis_data["historical_data"]["Close"].iloc[-1]
-                    else:
-                        current_price = hist.get("current_price", hist.get("regularMarketPrice", 0))
+                    current_price = hist.get("current_price", hist.get("regularMarketPrice", 0))
                     if current_price == 0:
                         current_price = hist.get("previous_close", 0)
                     holding_value = quantity * current_price
