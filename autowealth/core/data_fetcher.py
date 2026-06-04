@@ -14,13 +14,300 @@ from autowealth.config.settings import get_settings
 logger = logging.getLogger(__name__)
 
 
-class DataFetcher:
-    """金融数据获取器"""
+class EastMoneyDataSource:
+    """东方财富数据源（A股数据）"""
 
     def __init__(self):
+        try:
+            import akshare as ak
+            self.ak = ak
+        except ImportError:
+            raise ImportError("使用 EastMoneyDataSource 需要安装 akshare: pip install akshare")
+
+    def get_stock_data(self, symbol: str, period: str = "1y", interval: str = "1d") -> pd.DataFrame:
+        """
+        获取A股股票数据
+
+        Args:
+            symbol: A股代码 (如: 600519, 000001)
+            period: 时间周期 (1y, 2y, 5y, 10y, ytd, max)
+            interval: 时间间隔 (1d, 1wk, 1mo)
+
+        Returns:
+            DataFrame包含OHLCV数据
+        """
+        try:
+            logger.info(f"从东方财富获取A股数据: {symbol}")
+
+            # 去除可能的后缀
+            clean_symbol = symbol.replace(".SS", "").replace(".SZ", "").replace(".BJ", "")
+
+            # 判断市场并添加前缀
+            if clean_symbol.startswith("6"):
+                stock_code = f"sh{clean_symbol}"
+            elif clean_symbol.startswith("0") or clean_symbol.startswith("3"):
+                stock_code = f"sz{clean_symbol}"
+            elif clean_symbol.startswith("8") or clean_symbol.startswith("4"):
+                stock_code = f"bj{clean_symbol}"
+            else:
+                stock_code = clean_symbol
+
+            # 使用akshare获取历史数据
+            df = self.ak.stock_zh_a_hist(
+                symbol=clean_symbol,
+                period="daily",
+                start_date=(datetime.now() - self._parse_period(period)).strftime("%Y%m%d"),
+                end_date=datetime.now().strftime("%Y%m%d"),
+                adjust="qfq"  # 前复权
+            )
+
+            if df.empty:
+                raise ValueError(f"无法获取 {symbol} 的数据")
+
+            # 标准化列名以匹配 yfinance 格式
+            df = df.rename(columns={
+                "日期": "Date",
+                "开盘": "Open",
+                "收盘": "Close",
+                "最高": "High",
+                "最低": "Low",
+                "成交量": "Volume",
+            })
+            df["Date"] = pd.to_datetime(df["Date"])
+            df = df.set_index("Date")
+
+            # 保留标准OHLCV列
+            std_cols = ["Open", "High", "Low", "Close", "Volume"]
+            available_cols = [c for c in std_cols if c in df.columns]
+            df = df[available_cols]
+
+            return df
+
+        except Exception as e:
+            logger.error(f"从东方财富获取 {symbol} 数据失败: {e}")
+            raise
+
+    def get_stock_info(self, symbol: str) -> Dict:
+        """
+        获取A股基本信息
+
+        Args:
+            symbol: A股代码
+
+        Returns:
+            股票信息字典
+        """
+        try:
+            clean_symbol = symbol.replace(".SS", "").replace(".SZ", "").replace(".BJ", "")
+
+            # 获取个股信息
+            stock_info = self.ak.stock_individual_info_em(symbol=clean_symbol)
+
+            if stock_info.empty:
+                return {"symbol": symbol, "error": "未找到股票信息"}
+
+            # 转换为字典
+            info_dict = dict(zip(stock_info["item"], stock_info["value"]))
+
+            return {
+                "symbol": symbol,
+                "name": info_dict.get("股票简称", "N/A"),
+                "sector": info_dict.get("所属行业", "N/A"),
+                "industry": info_dict.get("所属行业", "N/A"),
+                "market_cap": info_dict.get("总市值", 0),
+                "pe_ratio": info_dict.get("市盈率", 0),
+                "pb_ratio": info_dict.get("市净率", 0),
+                "dividend_yield": 0,  # akshare 此接口不直接提供
+                "fifty_two_week_high": info_dict.get("52周最高价", 0),
+                "fifty_two_week_low": info_dict.get("52周最低价", 0),
+                "average_volume": 0,
+                "website": "N/A",
+                "description": info_dict.get("公司简介", "N/A"),
+            }
+
+        except Exception as e:
+            logger.error(f"获取 {symbol} 信息失败: {e}")
+            return {"symbol": symbol, "error": str(e)}
+
+    @staticmethod
+    def _parse_period(period: str) -> timedelta:
+        """解析周期字符串为timedelta"""
+        mapping = {
+            "1d": timedelta(days=1),
+            "5d": timedelta(days=5),
+            "1mo": timedelta(days=30),
+            "3mo": timedelta(days=90),
+            "6mo": timedelta(days=180),
+            "1y": timedelta(days=365),
+            "2y": timedelta(days=730),
+            "5y": timedelta(days=1825),
+            "10y": timedelta(days=3650),
+            "ytd": timedelta(days=datetime.now().timetuple().tm_yday),
+            "max": timedelta(days=3650),
+        }
+        return mapping.get(period, timedelta(days=365))
+
+
+class BinanceDataSource:
+    """币安加密货币数据源"""
+
+    def __init__(self):
+        try:
+            import requests
+            self.requests = requests
+        except ImportError:
+            raise ImportError("使用 BinanceDataSource 需要安装 requests: pip install requests")
+        self.base_url = "https://api.binance.com"
+
+    def get_crypto_data(self, symbol: str, interval: str = "1d", limit: int = 500) -> pd.DataFrame:
+        """
+        获取加密货币K线数据
+
+        Args:
+            symbol: 交易对 (如: BTCUSDT, ETHUSDT)
+            interval: K线间隔 (1m, 3m, 5m, 15m, 30m, 1h, 2h, 4h, 6h, 8h, 12h, 1d, 3d, 1w, 1M)
+            limit: 返回条数，最大1000
+
+        Returns:
+            DataFrame包含OHLCV数据
+        """
+        try:
+            logger.info(f"从币安获取加密货币数据: {symbol}")
+
+            # 转换interval格式
+            interval_map = {
+                "1m": "1m", "2m": "3m", "5m": "5m", "15m": "15m", "30m": "30m",
+                "60m": "1h", "90m": "1h", "1h": "1h", "1d": "1d", "5d": "1w",
+                "1wk": "1w", "1mo": "1M", "3mo": "3M"
+            }
+            binance_interval = interval_map.get(interval, interval)
+
+            url = f"{self.base_url}/api/v3/klines"
+            params = {
+                "symbol": symbol.upper(),
+                "interval": binance_interval,
+                "limit": limit,
+            }
+
+            response = self.requests.get(url, params=params, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+
+            if not data:
+                raise ValueError(f"无法获取 {symbol} 的数据")
+
+            df = pd.DataFrame(data, columns=[
+                "Open time", "Open", "High", "Low", "Close", "Volume",
+                "Close time", "Quote asset volume", "Number of trades",
+                "Taker buy base asset volume", "Taker buy quote asset volume", "Ignore"
+            ])
+
+            df["Date"] = pd.to_datetime(df["Open time"], unit="ms")
+            df = df.set_index("Date")
+
+            # 转换数值类型
+            for col in ["Open", "High", "Low", "Close", "Volume"]:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+
+            df = df[["Open", "High", "Low", "Close", "Volume"]]
+            return df
+
+        except Exception as e:
+            logger.error(f"从币安获取 {symbol} 数据失败: {e}")
+            raise
+
+    def get_crypto_info(self, symbol: str) -> Dict:
+        """
+        获取加密货币信息
+
+        Args:
+            symbol: 交易对 (如: BTCUSDT)
+
+        Returns:
+            加密货币信息字典
+        """
+        try:
+            url = f"{self.base_url}/api/v3/ticker/24hr"
+            params = {"symbol": symbol.upper()}
+
+            response = self.requests.get(url, params=params, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+
+            return {
+                "symbol": symbol,
+                "name": symbol,
+                "sector": "Cryptocurrency",
+                "industry": "Cryptocurrency",
+                "market_cap": 0,
+                "pe_ratio": 0,
+                "pb_ratio": 0,
+                "dividend_yield": 0,
+                "fifty_two_week_high": float(data.get("highPrice", 0)),
+                "fifty_two_week_low": float(data.get("lowPrice", 0)),
+                "average_volume": float(data.get("volume", 0)),
+                "website": "https://www.binance.com",
+                "description": f"{symbol} 加密货币交易对",
+                "last_price": float(data.get("lastPrice", 0)),
+                "price_change_percent": float(data.get("priceChangePercent", 0)),
+                "weighted_avg_price": float(data.get("weightedAvgPrice", 0)),
+            }
+
+        except Exception as e:
+            logger.error(f"获取 {symbol} 信息失败: {e}")
+            return {"symbol": symbol, "error": str(e)}
+
+
+class DataFetcher:
+    """金融数据获取器 - 支持多数据源"""
+
+    def __init__(self, source: str = "yfinance"):
+        """
+        初始化数据获取器
+
+        Args:
+            source: 数据源 ('yfinance', 'eastmoney', 'binance')
+        """
         self.settings = get_settings()
         self.cache_dir = Path(self.settings.data_cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.source = source.lower()
+
+        # 初始化对应的数据源
+        self._eastmoney = None
+        self._binance = None
+
+    def _get_eastmoney(self) -> EastMoneyDataSource:
+        if self._eastmoney is None:
+            self._eastmoney = EastMoneyDataSource()
+        return self._eastmoney
+
+    def _get_binance(self) -> BinanceDataSource:
+        if self._binance is None:
+            self._binance = BinanceDataSource()
+        return self._binance
+
+    @staticmethod
+    def is_crypto_symbol(symbol: str) -> bool:
+        """
+        判断是否为加密货币symbol
+
+        Args:
+            symbol: 代码字符串
+
+        Returns:
+            是否为加密货币格式（如 BTCUSDT, ETHUSDT）
+        """
+        if not symbol or not isinstance(symbol, str):
+            return False
+        symbol_upper = symbol.upper()
+        # 常见加密货币交易对特征：以USDT、BUSD、BTC、ETH结尾，且长度>=6
+        crypto_suffixes = ("USDT", "BUSD", "BTC", "ETH", "USDC")
+        return (
+            symbol_upper.endswith(crypto_suffixes)
+            and len(symbol) >= 6
+            and "." not in symbol  # 排除股票格式如 AAPL, 600519.SS
+        )
 
     def get_stock_data(
         self,
@@ -33,14 +320,23 @@ class DataFetcher:
         获取股票数据
 
         Args:
-            symbol: 股票代码 (如: AAPL, 600519.SS)
-            period: 时间周期 (1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, 10y, ytd, max)
-            interval: 时间间隔 (1m, 2m, 5m, 15m, 30m, 60m, 90m, 1h, 1d, 5d, 1wk, 1mo, 3mo)
+            symbol: 股票代码 (如: AAPL, 600519.SS, BTCUSDT)
+            period: 时间周期
+            interval: 时间间隔
             use_cache: 是否使用缓存
 
         Returns:
             DataFrame包含OHLCV数据
         """
+        # 如果是加密货币，自动路由到币安
+        if self.is_crypto_symbol(symbol):
+            return self.get_crypto_data(symbol, interval=interval)
+
+        # 根据source选择数据源
+        if self.source == "eastmoney":
+            return self._get_eastmoney().get_stock_data(symbol, period=period, interval=interval)
+
+        # 默认使用 yfinance
         cache_file = self.cache_dir / f"{symbol}_{period}_{interval}.csv"
 
         # 检查缓存
@@ -67,6 +363,19 @@ class DataFetcher:
         except Exception as e:
             logger.error(f"获取 {symbol} 数据失败: {e}")
             raise
+
+    def get_crypto_data(self, symbol: str, interval: str = "1d") -> pd.DataFrame:
+        """
+        获取加密货币数据
+
+        Args:
+            symbol: 交易对 (如: BTCUSDT, ETHUSDT)
+            interval: K线间隔
+
+        Returns:
+            DataFrame包含OHLCV数据
+        """
+        return self._get_binance().get_crypto_data(symbol, interval=interval)
 
     def get_multiple_stocks(
         self,
@@ -126,6 +435,15 @@ class DataFetcher:
         Returns:
             股票信息字典
         """
+        # 如果是加密货币，使用币安接口
+        if self.is_crypto_symbol(symbol):
+            return self._get_binance().get_crypto_info(symbol)
+
+        # 根据source选择数据源
+        if self.source == "eastmoney":
+            return self._get_eastmoney().get_stock_info(symbol)
+
+        # 默认使用 yfinance
         try:
             ticker = yf.Ticker(symbol)
             info = ticker.info
