@@ -1,5 +1,6 @@
 """
-鍩虹鏅鸿兘浣撶被 - 鎵€鏈夋姇璧勬櫤鑳戒綋鐨勫熀绫?"""
+基础智能体类 - 所有投资智能体的基类
+"""
 import logging
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
@@ -10,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 class AgentSignal(BaseModel):
-    """鏅鸿兘浣撲俊鍙?""
+    """智能体信号"""
     agent_name: str
     signal_type: str  # buy, sell, hold, watch
     confidence: float  # 0-100
@@ -22,7 +23,7 @@ class AgentSignal(BaseModel):
 
 
 class BaseAgent(ABC):
-    """鍩虹鏅鸿兘浣?""
+    """基础智能体"""
 
     def __init__(self, name: str, description: str = ""):
         self.name = name
@@ -32,26 +33,27 @@ class BaseAgent(ABC):
     @abstractmethod
     def analyze(self, symbol: str, data: Dict[str, Any]) -> AgentSignal:
         """
-        鍒嗘瀽骞剁敓鎴愪氦鏄撲俊鍙?
+        分析并生成交易信号
+
         Args:
-            symbol: 鑲＄エ浠ｇ爜
-            data: 鍖呭惈鎵€鏈夌浉鍏虫暟鎹殑瀛楀吀
+            symbol: 股票代码
+            data: 包含所有相关数据的字典
 
         Returns:
-            AgentSignal瀵硅薄
+            AgentSignal对象
         """
         pass
 
     def validate_data(self, data: Dict[str, Any], required_keys: List[str]) -> bool:
-        """楠岃瘉鏁版嵁鏄惁鍖呭惈蹇呴渶鐨勯敭"""
+        """验证数据是否包含必需的键"""
         for key in required_keys:
             if key not in data or data[key] is None:
-                self.logger.warning(f"缂哄皯蹇呰鏁版嵁: {key}")
+                self.logger.warning(f"缺少必要数据: {key}")
                 return False
         return True
 
     def calculate_confidence(self, factors: List[float], weights: Optional[List[float]] = None) -> float:
-        """璁＄畻鍔犳潈缃俊搴?""
+        """计算加权置信度"""
         if not factors:
             return 50.0
 
@@ -59,7 +61,7 @@ class BaseAgent(ABC):
             weights = [1.0] * len(factors)
 
         if len(factors) != len(weights):
-            raise ValueError("鍥犵礌鍜屾潈閲嶆暟閲忎笉鍖归厤")
+            raise ValueError("因素和权重数量不匹配")
 
         weighted_sum = sum(f * w for f, w in zip(factors, weights))
         total_weight = sum(weights)
