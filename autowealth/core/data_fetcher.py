@@ -262,21 +262,30 @@ class BinanceDataSource:
 class DataFetcher:
     """金融数据获取器 - 支持多数据源"""
 
-    def __init__(self, source: str = "yfinance"):
+    def __init__(self, source: str = "auto", twelve_data_api_key: Optional[str] = None):
         """
         初始化数据获取器
 
         Args:
-            source: 数据源 ('yfinance', 'eastmoney', 'binance')
+            source: 数据源 ('auto', 'twelve_data', 'yfinance', 'eastmoney', 'binance')
+            twelve_data_api_key: Twelve Data API Key (免费获取: https://twelvedata.com/pricing)
         """
         self.settings = get_settings()
         self.cache_dir = Path(self.settings.data_cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.source = source.lower()
+        self.twelve_data_api_key = twelve_data_api_key
 
         # 初始化对应的数据源
         self._eastmoney = None
         self._binance = None
+        self._twelve_data = None
+
+    def _get_twelve_data(self):
+        if self._twelve_data is None:
+            from autowealth.core.twelve_data_source import TwelveDataSource
+            self._twelve_data = TwelveDataSource(api_key=self.twelve_data_api_key)
+        return self._twelve_data
 
     def _get_eastmoney(self) -> EastMoneyDataSource:
         if self._eastmoney is None:
@@ -364,39 +373,51 @@ class DataFetcher:
         if self.source == "eastmoney":
             return self._get_eastmoney().get_stock_data(symbol, period=period, interval=interval)
 
-        # 默认使用 yfinance
-        cache_file = self.cache_dir / f"{symbol}_{period}_{interval}.csv"
+        if self.source == "twelve_data":
+            return self._get_twelve_data().get_stock_data(symbol, period=period, interval=interval)
 
-        # 检查缓存
-        if use_cache and cache_file.exists():
-            cache_time = datetime.fromtimestamp(cache_file.stat().st_mtime)
-            if datetime.now() - cache_time < timedelta(hours=1):
-                logger.info(f"使用缓存数据: {symbol}")
-                return pd.read_csv(cache_file, index_col=0, parse_dates=True)
+        # auto模式: 优先尝试真实数据源，失败后用模拟数据
+        if self.source in ("auto", "yfinance"):
+            # 1. 优先尝试 Twelve Data (真实数据)
+            try:
+                logger.info(f"尝试从Twelve Data获取真实数据: {symbol}")
+                return self._get_twelve_data().get_stock_data(symbol, period=period, interval=interval)
+            except Exception as td_err:
+                logger.warning(f"Twelve Data失败: {td_err}")
 
-        try:
-            logger.info(f"获取股票数据: {symbol}")
+            # 2. 尝试 yfinance
+            cache_file = self.cache_dir / f"{symbol}_{period}_{interval}.csv"
+            if use_cache and cache_file.exists():
+                cache_time = datetime.fromtimestamp(cache_file.stat().st_mtime)
+                if datetime.now() - cache_time < timedelta(hours=1):
+                    logger.info(f"使用缓存数据: {symbol}")
+                    return pd.read_csv(cache_file, index_col=0, parse_dates=True)
 
-            def _do_fetch():
-                ticker = yf.Ticker(symbol)
-                return ticker.history(period=period, interval=interval)
+            try:
+                logger.info(f"尝试从Yahoo Finance获取数据: {symbol}")
 
-            data = self._fetch_with_retry(_do_fetch)
+                def _do_fetch():
+                    ticker = yf.Ticker(symbol)
+                    return ticker.history(period=period, interval=interval)
 
-            if data.empty:
-                raise ValueError(f"无法获取 {symbol} 的数据")
+                data = self._fetch_with_retry(_do_fetch)
 
-            # 保存缓存
-            if use_cache:
-                data.to_csv(cache_file)
+                if data.empty:
+                    raise ValueError(f"无法获取 {symbol} 的数据")
 
-            return data
+                if use_cache:
+                    data.to_csv(cache_file)
 
-        except Exception as e:
-            error_msg = str(e)
-            # 如果是限流错误，尝试使用demo数据作为fallback
-            if "Too Many Requests" in error_msg or "Rate limited" in error_msg or "429" in error_msg:
-                logger.warning(f"Yahoo Finance限流，使用模拟数据作为演示: {symbol}")
+                return data
+
+            except Exception as yf_err:
+                error_msg = str(yf_err)
+                # 3. 限流时用模拟数据
+                if "Too Many Requests" in error_msg or "Rate limited" in error_msg or "429" in error_msg:
+                    logger.warning(f"所有真实数据源限流，使用模拟数据: {symbol}")
+                else:
+                    logger.warning(f"Yahoo Finance失败: {yf_err}，使用模拟数据")
+
                 try:
                     from autowealth.core.demo_data import DemoDataGenerator
                     generator = DemoDataGenerator()
@@ -405,8 +426,11 @@ class DataFetcher:
                         return data
                 except ImportError:
                     pass
-            logger.error(f"获取 {symbol} 数据失败: {e}")
-            raise
+
+                logger.error(f"获取 {symbol} 数据失败: {yf_err}")
+                raise
+
+        raise ValueError(f"未知数据源: {self.source}")
 
     def get_crypto_data(self, symbol: str, interval: str = "1d") -> pd.DataFrame:
         """
@@ -504,30 +528,43 @@ class DataFetcher:
         if self.source == "eastmoney":
             return self._get_eastmoney().get_stock_info(symbol)
 
-        # 默认使用 yfinance
-        try:
-            ticker = yf.Ticker(symbol)
-            info = ticker.info
+        if self.source == "twelve_data":
+            return self._get_twelve_data().get_stock_info(symbol)
 
-            return {
-                "symbol": symbol,
-                "name": info.get("longName", "N/A"),
-                "sector": info.get("sector", "N/A"),
-                "industry": info.get("industry", "N/A"),
-                "market_cap": info.get("marketCap", 0),
-                "pe_ratio": info.get("trailingPE", 0),
-                "pb_ratio": info.get("priceToBook", 0),
-                "dividend_yield": info.get("dividendYield", 0),
-                "fifty_two_week_high": info.get("fiftyTwoWeekHigh", 0),
-                "fifty_two_week_low": info.get("fiftyTwoWeekLow", 0),
-                "average_volume": info.get("averageVolume", 0),
-                "website": info.get("website", "N/A"),
-                "description": info.get("longBusinessSummary", "N/A"),
-            }
+        # auto模式: 优先Twelve Data, 失败后用yfinance
+        if self.source in ("auto", "yfinance"):
+            # 1. 尝试 Twelve Data
+            try:
+                return self._get_twelve_data().get_stock_info(symbol)
+            except Exception as td_err:
+                logger.warning(f"Twelve Data info失败: {td_err}")
 
-        except Exception as e:
-            logger.error(f"获取 {symbol} 信息失败: {e}")
-            return {"symbol": symbol, "error": str(e)}
+            # 2. 尝试 yfinance
+            try:
+                ticker = yf.Ticker(symbol)
+                info = ticker.info
+
+                return {
+                    "symbol": symbol,
+                    "name": info.get("longName", "N/A"),
+                    "sector": info.get("sector", "N/A"),
+                    "industry": info.get("industry", "N/A"),
+                    "market_cap": info.get("marketCap", 0),
+                    "pe_ratio": info.get("trailingPE", 0),
+                    "pb_ratio": info.get("priceToBook", 0),
+                    "dividend_yield": info.get("dividendYield", 0),
+                    "fifty_two_week_high": info.get("fiftyTwoWeekHigh", 0),
+                    "fifty_two_week_low": info.get("fiftyTwoWeekLow", 0),
+                    "average_volume": info.get("averageVolume", 0),
+                    "website": info.get("website", "N/A"),
+                    "description": info.get("longBusinessSummary", "N/A"),
+                }
+
+            except Exception as e:
+                logger.error(f"获取 {symbol} 信息失败: {e}")
+                return {"symbol": symbol, "error": str(e)}
+
+        return {"symbol": symbol, "name": symbol}
 
     def clear_cache(self):
         """清除所有缓存数据"""
