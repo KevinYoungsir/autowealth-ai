@@ -2,6 +2,7 @@
 数据获取模块 - 负责从各种数据源获取金融数据
 """
 import logging
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -287,6 +288,33 @@ class DataFetcher:
             self._binance = BinanceDataSource()
         return self._binance
 
+    def _fetch_with_retry(self, func, max_retries=3, base_delay=2):
+        """带重试的数据获取
+
+        Args:
+            func: 无参数的可调用对象，执行实际数据获取
+            max_retries: 最大重试次数
+            base_delay: 基础延迟秒数，每次重试递增
+
+        Returns:
+            func() 的返回值
+
+        Raises:
+            最后一次尝试的异常
+        """
+        for attempt in range(max_retries):
+            try:
+                return func()
+            except Exception as e:
+                error_msg = str(e)
+                if "Too Many Requests" in error_msg or "Rate limited" in error_msg or "429" in error_msg:
+                    if attempt < max_retries - 1:
+                        delay = base_delay * (attempt + 1)
+                        logger.warning(f"请求被限流，{delay}秒后重试 (第{attempt + 1}/{max_retries}次)")
+                        time.sleep(delay)
+                        continue
+                raise
+
     @staticmethod
     def is_crypto_symbol(symbol: str) -> bool:
         """
@@ -348,8 +376,12 @@ class DataFetcher:
 
         try:
             logger.info(f"获取股票数据: {symbol}")
-            ticker = yf.Ticker(symbol)
-            data = ticker.history(period=period, interval=interval)
+
+            def _do_fetch():
+                ticker = yf.Ticker(symbol)
+                return ticker.history(period=period, interval=interval)
+
+            data = self._fetch_with_retry(_do_fetch)
 
             if data.empty:
                 raise ValueError(f"无法获取 {symbol} 的数据")
@@ -395,13 +427,16 @@ class DataFetcher:
             字典，key为股票代码，value为DataFrame
         """
         results = {}
-        for symbol in symbols:
+        for i, symbol in enumerate(symbols):
             try:
                 data = self.get_stock_data(symbol, period, interval)
                 results[symbol] = data
             except Exception as e:
                 logger.warning(f"跳过 {symbol}: {e}")
                 continue
+            # 每次请求之间等待2秒，避免触发Rate Limit
+            if i < len(symbols) - 1:
+                time.sleep(2)
 
         return results
 
@@ -423,7 +458,21 @@ class DataFetcher:
         }
 
         symbols = indices_map.get(region, indices_map["global"])
-        return self.get_multiple_stocks(symbols, period="6mo")
+
+        # 市场指数请求使用独立逻辑，每次请求之间等待3秒
+        results = {}
+        for i, symbol in enumerate(symbols):
+            try:
+                data = self.get_stock_data(symbol, period="6mo")
+                results[symbol] = data
+            except Exception as e:
+                logger.warning(f"跳过指数 {symbol}: {e}")
+                continue
+            # 每次请求之间等待3秒，避免触发Rate Limit
+            if i < len(symbols) - 1:
+                time.sleep(3)
+
+        return results
 
     def get_stock_info(self, symbol: str) -> Dict:
         """
