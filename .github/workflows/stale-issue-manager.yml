@@ -1,0 +1,24 @@
+name: Stale Issue Manager
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # 姣忓ぉ鍑屾櫒2鐐硅繍琛?  workflow_dispatch:
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/stale@v9
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          stale-issue-message: '杩欎釜 Issue 宸茬粡30澶╂病鏈夋椿鍔ㄤ簡銆傚鏋滈棶棰樺凡瑙ｅ喅锛岃鍏抽棴瀹冿紱濡傛灉浠嶆湁闂锛岃鐣欒█鏇存柊銆?
+          stale-pr-message: '杩欎釜 PR 宸茬粡30澶╂病鏈夋椿鍔ㄤ簡銆傝鏇存柊鎴栧叧闂畠銆?
+          stale-issue-label: 'stale'
+          stale-pr-label: 'stale'
+          days-before-stale: 30
+          days-before-close: 7
+          exempt-issue-labels: 'pinned,security,bug'
+          exempt-pr-labels: 'pinned,work-in-progress'
