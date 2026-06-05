@@ -384,8 +384,10 @@ st.markdown("""
 # 缓存引擎实例
 # ============================================================
 @st.cache_resource
-def get_engine():
+def get_engine(twelve_data_key=None):
     """获取 AutoWealthEngine 引擎实例，使用 st 缓存避免重复初始化"""
+    if twelve_data_key:
+        return AutoWealthEngine(data_source="auto", twelve_data_api_key=twelve_data_key)
     return AutoWealthEngine()
 
 
@@ -718,7 +720,40 @@ def render_sidebar():
         """, unsafe_allow_html=True)
         
         st.markdown("<hr style='margin: 1.5rem 0;'>", unsafe_allow_html=True)
-        
+
+        # 数据源配置
+        st.markdown("<div style='font-size: 0.75rem; color: rgba(255,255,255,0.4); text-transform: uppercase; letter-spacing: 2px; margin-bottom: 0.5rem;'>数据源配置</div>", unsafe_allow_html=True)
+
+        twelve_key = st.text_input(
+            "Twelve Data API Key",
+            value=st.session_state.get("twelve_data_key", ""),
+            type="password",
+            placeholder="输入API Key获取真实数据",
+            help="免费获取: https://twelvedata.com/pricing (每天800次免费调用)",
+        )
+        if twelve_key:
+            st.session_state["twelve_data_key"] = twelve_key
+
+        if not twelve_key:
+            st.markdown("""
+            <div style='background: rgba(255,165,0,0.08); border: 1px solid rgba(255,165,0,0.2); border-radius: 6px; padding: 0.5rem; margin-top: 0.5rem;'>
+                <div style='font-size: 0.7rem; color: rgba(255,165,0,0.8);'>
+                    ⚠️ 未配置API Key，使用模拟数据演示<br>
+                    <a href="https://twelvedata.com/pricing" target="_blank" style="color: #00d4ff;">免费注册获取真实数据 →</a>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown("""
+            <div style='background: rgba(0,245,160,0.08); border: 1px solid rgba(0,245,160,0.2); border-radius: 6px; padding: 0.5rem; margin-top: 0.5rem;'>
+                <div style='font-size: 0.7rem; color: #00f5a0;'>
+                    ✅ 已配置API Key，将获取真实数据
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        st.markdown("<hr style='margin: 1.5rem 0;'>", unsafe_allow_html=True)
+
         # 系统状态
         st.markdown("""
         <div style='background: rgba(0,245,160,0.05); border: 1px solid rgba(0,245,160,0.2); border-radius: 8px; padding: 0.75rem;'>
@@ -729,8 +764,8 @@ def render_sidebar():
             <div style='font-size: 0.7rem; color: rgba(255,255,255,0.3); margin-top: 0.25rem;'>所有智能体已就绪</div>
         </div>
         """, unsafe_allow_html=True)
-        
-        return page, (tech_weight, fund_weight, sent_weight)
+
+        return page, (tech_weight, fund_weight, sent_weight), twelve_key
 
 
 def render_single_analysis(engine, weights=(0.35, 0.35, 0.30)):
@@ -848,7 +883,16 @@ def _display_single_result(result):
     
     # ---- 基本信息栏 ----
     st.markdown('<div class="animate-in">', unsafe_allow_html=True)
-    
+
+    # 数据来源标识
+    is_demo = result.get("is_demo_data", False)
+    data_source_badge = (
+        "<span style='background: rgba(0,245,160,0.15); color: #00f5a0; padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.75rem;'>📡 真实数据 (Twelve Data)</span>"
+        if not is_demo else
+        "<span style='background: rgba(255,165,0,0.15); color: #ffa502; padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.75rem;'>🎲 模拟数据</span>"
+    )
+    st.markdown(f"<div style='text-align: right; margin-bottom: 0.5rem;'>{data_source_badge}</div>", unsafe_allow_html=True)
+
     cols = st.columns(4)
     metrics = [
         ("股票代码", result.get("symbol", "N/A"), "📈"),
@@ -1401,12 +1445,12 @@ def main():
     """Streamlit 应用主入口"""
     render_header()
     
-    # 获取缓存的引擎实例
-    engine = get_engine()
-    
     # 侧边栏导航
-    page, weights = render_sidebar()
-    
+    page, weights, twelve_key = render_sidebar()
+
+    # 获取引擎实例（传入API key配置）
+    engine = get_engine(twelve_data_key=twelve_key)
+
     # 根据选择渲染对应页面
     if page == "📊 单股分析":
         render_single_analysis(engine, weights)
