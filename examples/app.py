@@ -733,7 +733,8 @@ def render_sidebar():
         return page, (tech_weight, fund_weight, sent_weight)
 
 
-def render_single_analysis(engine):
+def render_single_analysis(engine, weights=(0.35, 0.35, 0.30)):
+    tech_weight, fund_weight, sent_weight = weights
     """渲染单股分析页面"""
     st.markdown('<h2 class="section-header"><span class="section-icon">📊</span> 单股深度分析</h2>', unsafe_allow_html=True)
     
@@ -778,7 +779,54 @@ def render_single_analysis(engine):
             if result["success"]:
                 _display_single_result(result)
             else:
-                st.error(f"❌ 分析失败: {result.get('error', '未知错误')}")
+                error_text = result.get('error', '未知错误')
+                # 如果是限流错误，尝试用demo数据直接分析
+                if "Too Many Requests" in error_text or "Rate limited" in error_text or "429" in error_text:
+                    st.warning("⚠️ Yahoo Finance API限流中，正在使用模拟数据进行演示分析...")
+                    try:
+                        from autowealth.core.demo_data import DemoDataGenerator
+                        from autowealth.core.analyzer import TechnicalAnalyzer
+                        from autowealth.agents.coordinator import AgentCoordinator
+                        from autowealth.agents.technical_agent import TechnicalAgent
+                        from autowealth.agents.fundamental_agent import FundamentalAgent
+                        from autowealth.agents.sentiment_agent import SentimentAgent
+                        
+                        generator = DemoDataGenerator()
+                        demo_data = generator.generate_stock_data(symbol, days=365)
+                        
+                        if not demo_data.empty:
+                            # 用demo数据重新构建分析结果
+                            tech_analyzer = TechnicalAnalyzer()
+                            tech_result = tech_analyzer.full_analysis(demo_data).iloc[-1].to_dict()
+                            
+                            coordinator = AgentCoordinator()
+                            coordinator.register_agent(TechnicalAgent(), weight=tech_weight)
+                            coordinator.register_agent(FundamentalAgent(), weight=fund_weight)
+                            coordinator.register_agent(SentimentAgent(), weight=sent_weight)
+                            
+                            analysis_data = {
+                                "historical_data": demo_data,
+                                "stock_info": {"symbol": symbol, "name": symbol, "sector": "N/A", "market_cap": 0}
+                            }
+                            coord_result = coordinator.analyze(symbol, analysis_data)
+                            
+                            fallback_result = {
+                                "symbol": symbol,
+                                "success": True,
+                                "decision": coord_result["final_decision"],
+                                "individual_signals": coord_result["individual_signals"],
+                                "summary": coord_result["analysis_summary"],
+                                "technical_analysis": tech_analyzer.full_analysis(demo_data).iloc[-10:].to_dict(),
+                                "stock_info": {"symbol": symbol, "name": symbol},
+                                "is_demo_data": True,
+                            }
+                            _display_single_result(fallback_result)
+                        else:
+                            st.error("❌ 模拟数据生成失败，请稍后再试")
+                    except Exception as demo_err:
+                        st.error(f"❌ 演示分析出错: {demo_err}")
+                else:
+                    st.error(f"❌ 分析失败: {error_text}")
         
         except Exception as e:
             progress_placeholder.empty()
@@ -1361,7 +1409,7 @@ def main():
     
     # 根据选择渲染对应页面
     if page == "📊 单股分析":
-        render_single_analysis(engine)
+        render_single_analysis(engine, weights)
     elif page == "📈 批量分析":
         render_batch_analysis(engine)
     elif page == "💼 投资组合":
