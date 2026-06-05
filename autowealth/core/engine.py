@@ -24,12 +24,12 @@ class AutoWealthEngine:
     提供简单易用的投资分析接口
     """
 
-    def __init__(self):
+    def __init__(self, data_source="auto", twelve_data_api_key=None):
         self.settings = get_settings()
         self.logger = logging.getLogger("autowealth.engine")
 
         # 初始化核心组件
-        self.data_fetcher = DataFetcher()
+        self.data_fetcher = DataFetcher(source=data_source, twelve_data_api_key=twelve_data_api_key)
         self.technical_analyzer = TechnicalAnalyzer()
         self.fundamental_analyzer = FundamentalAnalyzer()
 
