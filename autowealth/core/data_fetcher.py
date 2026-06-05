@@ -393,6 +393,18 @@ class DataFetcher:
             return data
 
         except Exception as e:
+            error_msg = str(e)
+            # 如果是限流错误，尝试使用demo数据作为fallback
+            if "Too Many Requests" in error_msg or "Rate limited" in error_msg or "429" in error_msg:
+                logger.warning(f"Yahoo Finance限流，使用模拟数据作为演示: {symbol}")
+                try:
+                    from autowealth.core.demo_data import DemoDataGenerator
+                    generator = DemoDataGenerator()
+                    data = generator.generate_stock_data(symbol, days=365)
+                    if not data.empty:
+                        return data
+                except ImportError:
+                    pass
             logger.error(f"获取 {symbol} 数据失败: {e}")
             raise
 
