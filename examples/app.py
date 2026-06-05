@@ -226,14 +226,21 @@ st.markdown("""
     
     /* 输入框样式 */
     .stTextInput > div > div > input,
-    .stTextArea > div > div > textarea {
-        background: rgba(255,255,255,0.05) !important;
-        border: 1px solid rgba(255,255,255,0.1) !important;
+    .stTextArea > div > div > textarea,
+    .stNumberInput > div > div > input {
+        background: rgba(0,212,255,0.05) !important;
+        border: 2px solid rgba(0,212,255,0.4) !important;
         border-radius: 12px !important;
-        color: white !important;
+        color: #ffffff !important;
         padding: 1rem !important;
+        font-size: 1rem !important;
     }
-    
+
+    .stTextInput > div > div > input::placeholder,
+    .stTextArea > div > div > textarea::placeholder {
+        color: rgba(255,255,255,0.5) !important;
+    }
+
     .stTextInput > div > div > input:focus,
     .stTextArea > div > div > textarea:focus {
         border-color: #00d4ff !important;
@@ -320,10 +327,11 @@ st.markdown("""
     }
     
     /* 提示框 */
-    .stAlert {
-        background: rgba(255,255,255,0.03) !important;
-        border: 1px solid rgba(255,255,255,0.1) !important;
+    .stAlert [data-testid="stAlert"] {
+        background: rgba(255,71,87,0.15) !important;
+        border: 1px solid rgba(255,71,87,0.3) !important;
         border-radius: 12px !important;
+        color: #ff6b7a !important;
     }
     
     /* 标签页 */
@@ -760,7 +768,11 @@ def render_single_analysis(engine):
         
         except Exception as e:
             progress_placeholder.empty()
-            st.error(f"❌ 分析出错: {str(e)}")
+            error_msg = str(e)
+            if "Too Many Requests" in error_msg or "Rate limited" in error_msg:
+                st.error("⚠️ 请求过于频繁，Yahoo Finance API限流了。请等待30秒后重试，或尝试其他股票代码。")
+            else:
+                st.error(f"❌ 分析出错: {error_msg}")
     
     elif analyze_btn and not symbol:
         st.warning("⚠️ 请输入股票代码")
@@ -1061,7 +1073,11 @@ def render_batch_analysis(engine):
         except Exception as e:
             progress_bar.empty()
             status_text.empty()
-            st.error(f"❌ 批量分析出错: {str(e)}")
+            error_msg = str(e)
+            if "Too Many Requests" in error_msg or "Rate limited" in error_msg:
+                st.error("⚠️ 请求过于频繁，Yahoo Finance API限流了。请等待30秒后重试，或减少分析的股票数量。")
+            else:
+                st.error(f"❌ 批量分析出错: {error_msg}")
 
 
 def render_portfolio(engine):
@@ -1309,7 +1325,11 @@ def render_market_overview(engine):
                     st.error(f"❌ 获取市场数据失败: {overview.get('error', '未知错误')}")
             
             except Exception as e:
-                st.error(f"❌ 市场概览出错: {str(e)}")
+                error_msg = str(e)
+                if "Too Many Requests" in error_msg or "Rate limited" in error_msg:
+                    st.error("⚠️ 请求过于频繁，Yahoo Finance API限流了。请等待30秒后重试。")
+                else:
+                    st.error(f"❌ 市场概览出错: {error_msg}")
 
 
 # ============================================================
