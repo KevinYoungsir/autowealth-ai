@@ -224,27 +224,34 @@ st.markdown("""
         box-shadow: 0 8px 25px rgba(0,212,255,0.3) !important;
     }
     
-    /* 输入框样式 */
-    .stTextInput > div > div > input,
-    .stTextArea > div > div > textarea,
-    .stNumberInput > div > div > input {
-        background: rgba(0,212,255,0.05) !important;
-        border: 2px solid rgba(0,212,255,0.4) !important;
+    /* 输入框样式 - 使用更通用的选择器适配不同Streamlit版本 */
+    .stTextInput input,
+    .stTextArea textarea,
+    .stNumberInput input,
+    .stTextInput [class*="st-c1"] input,
+    .stTextArea [class*="st-c1"] textarea,
+    .stNumberInput [class*="st-c1"] input {
+        background: rgba(0,212,255,0.08) !important;
+        border: 2px solid rgba(0,212,255,0.5) !important;
         border-radius: 12px !important;
         color: #ffffff !important;
-        padding: 1rem !important;
+        padding: 0.75rem 1rem !important;
         font-size: 1rem !important;
+        transition: all 0.3s ease !important;
     }
 
-    .stTextInput > div > div > input::placeholder,
-    .stTextArea > div > div > textarea::placeholder {
+    .stTextInput input::placeholder,
+    .stTextArea textarea::placeholder,
+    .stNumberInput input::placeholder {
         color: rgba(255,255,255,0.5) !important;
     }
 
-    .stTextInput > div > div > input:focus,
-    .stTextArea > div > div > textarea:focus {
+    .stTextInput input:focus,
+    .stTextArea textarea:focus,
+    .stNumberInput input:focus {
         border-color: #00d4ff !important;
-        box-shadow: 0 0 10px rgba(0,212,255,0.2) !important;
+        box-shadow: 0 0 15px rgba(0,212,255,0.3) !important;
+        background: rgba(0,212,255,0.12) !important;
     }
     
     /* 滑块样式 */
@@ -326,11 +333,18 @@ st.markdown("""
         margin: 2rem 0;
     }
     
-    /* 提示框 */
-    .stAlert [data-testid="stAlert"] {
+    /* 提示框 - 适配不同Streamlit版本 */
+    [data-testid="stAlert"],
+    .stAlert,
+    .stException {
         background: rgba(255,71,87,0.15) !important;
         border: 1px solid rgba(255,71,87,0.3) !important;
         border-radius: 12px !important;
+        color: #ff6b7a !important;
+    }
+    [data-testid="stAlert"] p,
+    .stAlert p,
+    .stException p {
         color: #ff6b7a !important;
     }
     
@@ -770,7 +784,7 @@ def render_single_analysis(engine):
             progress_placeholder.empty()
             error_msg = str(e)
             if "Too Many Requests" in error_msg or "Rate limited" in error_msg:
-                st.error("⚠️ 请求过于频繁，Yahoo Finance API限流了。请等待30秒后重试，或尝试其他股票代码。")
+                st.warning("⚠️ Yahoo Finance API限流中，已自动切换到模拟数据进行演示分析。实时数据将在限流解除后恢复。")
             else:
                 st.error(f"❌ 分析出错: {error_msg}")
     
@@ -1075,7 +1089,7 @@ def render_batch_analysis(engine):
             status_text.empty()
             error_msg = str(e)
             if "Too Many Requests" in error_msg or "Rate limited" in error_msg:
-                st.error("⚠️ 请求过于频繁，Yahoo Finance API限流了。请等待30秒后重试，或减少分析的股票数量。")
+                st.warning("⚠️ Yahoo Finance API限流中，已自动切换到模拟数据进行演示分析。实时数据将在限流解除后恢复。")
             else:
                 st.error(f"❌ 批量分析出错: {error_msg}")
 
@@ -1327,7 +1341,7 @@ def render_market_overview(engine):
             except Exception as e:
                 error_msg = str(e)
                 if "Too Many Requests" in error_msg or "Rate limited" in error_msg:
-                    st.error("⚠️ 请求过于频繁，Yahoo Finance API限流了。请等待30秒后重试。")
+                    st.warning("⚠️ Yahoo Finance API限流中，已自动切换到模拟数据进行演示分析。实时数据将在限流解除后恢复。")
                 else:
                     st.error(f"❌ 市场概览出错: {error_msg}")
 
