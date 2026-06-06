@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AutoWealth AI - 600545 普莱柯 实际数据分析演示
+# AutoWealth AI - 600545 卓郎智能 实际数据分析演示
 
 import sys
 import os
@@ -29,7 +29,7 @@ def analyze_stock_600545():
     
     print()
     print('='*70)
-    print('  AutoWealth AI - 600545 普莱柯 深度分析')
+    print('  AutoWealth AI - 600545 卓郎智能 深度分析')
     print('='*70)
     
     try:
