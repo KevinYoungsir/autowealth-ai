@@ -36,7 +36,16 @@ class DemoDataGenerator:
         "JNJ": {"base_price": 155.0, "volatility": 0.015, "trend": 0.0001, "name": "Johnson & Johnson"},
         "600519.SS": {"base_price": 1800.0, "volatility": 0.022, "trend": 0.0001, "name": "贵州茅台"},
         "000001.SS": {"base_price": 3200.0, "volatility": 0.018, "trend": 0.0001, "name": "上证指数"},
+"600545.SS": {"base_price": 8.5, "volatility": 0.028, "trend": 0.0001, "name": "卓郎智能"},
+        "600519.SS": {"base_price": 1800.0, "volatility": 0.022, "trend": 0.0001, "name": "贵州茅台"},
+        "000001.SS": {"base_price": 3200.0, "volatility": 0.018, "trend": 0.0001, "name": "上证指数"},
         "000858.SZ": {"base_price": 150.0, "volatility": 0.025, "trend": 0.0002, "name": "五粮液"},
+        "002594.SZ": {"base_price": 280.0, "volatility": 0.035, "trend": 0.0003, "name": "比亚迪"},
+        "300750.SZ": {"base_price": 220.0, "volatility": 0.040, "trend": 0.0002, "name": "宁德时代"},
+        "601318.SS": {"base_price": 48.0, "volatility": 0.025, "trend": 0.0001, "name": "中国平安"},
+        "600036.SS": {"base_price": 35.0, "volatility": 0.022, "trend": 0.0001, "name": "招商银行"},
+        "000333.SZ": {"base_price": 65.0, "volatility": 0.025, "trend": 0.0002, "name": "美的集团"},
+        "002415.SZ": {"base_price": 32.0, "volatility": 0.030, "trend": 0.0001, "name": "海康威视"},
     }
 
     # 常见加密货币的基准价格和波动率参数
