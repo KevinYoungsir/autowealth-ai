@@ -325,6 +325,24 @@ class DataFetcher:
                 raise
 
     @staticmethod
+    def is_a_share(symbol: str) -> bool:
+        """
+        判断是否为A股代码
+        Args:
+            symbol: 股票代码
+        Returns:
+            是否为A股（6位数字，上海/深圳/北京）
+        """
+        if not symbol or not isinstance(symbol, str):
+            return False
+        clean = symbol.replace(".SS", "").replace(".SZ", "").replace(".BJ", "")
+        return (
+            len(clean) == 6
+            and clean.isdigit()
+            and (clean.startswith("6") or clean.startswith("0") or clean.startswith("3"))
+        )
+
+    @staticmethod
     def is_crypto_symbol(symbol: str) -> bool:
         """
         判断是否为加密货币symbol
