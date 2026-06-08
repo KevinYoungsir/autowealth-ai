@@ -555,7 +555,13 @@ class DataFetcher:
         # 如果是加密货币，使用币安接口
         if self.is_crypto_symbol(symbol):
             return self._get_binance().get_crypto_info(symbol)
-
+        # A股自动路由到东方财富获取真实公司信息
+        if self.is_a_share(symbol):
+            try:
+                logger.info(f"A股 {symbol} 路由到东方财富获取公司信息")
+                return self._get_eastmoney().get_stock_info(symbol)
+            except Exception as e:
+                logger.warning(f"东方财富获取信息失败: {e}")
         # 根据source选择数据源
         if self.source == "eastmoney":
             return self._get_eastmoney().get_stock_info(symbol)
