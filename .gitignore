@@ -24,3 +24,9 @@ build/
 data/cache/
 *.parquet
 
+# Frontend
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+
