@@ -3,10 +3,12 @@ Run one offline research pipeline experiment with mock data.
 """
 
 import sys
+import json
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from autowealth.agents.deepseek_research_agent import DeepSeekResearchAgent
 from autowealth.research import (
     mock_candidate_symbols,
     mock_factor_scores,
@@ -47,6 +49,14 @@ def main():
             "warnings": summary.warnings,
         }
     )
+
+    agent = DeepSeekResearchAgent(mock_mode=True)
+    research_note = agent.summarize_research_result(result)
+    risk_review = agent.analyze_risk_flags(result)
+    print("\nMock DeepSeek research note:")
+    print(json.dumps(research_note, ensure_ascii=False, indent=2))
+    print("\nMock DeepSeek risk review:")
+    print(json.dumps(risk_review, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":
