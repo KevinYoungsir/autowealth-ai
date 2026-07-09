@@ -151,3 +151,97 @@ A 股回测必须以可复现、可审计、无未来函数为基本原则。所
 - 策略参数、因子版本和风控约束。
 - 指标结果、风险提示和失效情景。
 
+## 13. 第三阶段组合级回测实现
+
+第三阶段新增独立的组合级研究回测模块，位置为 `autowealth/backtest/`。本阶段只实现多标的、多权重、定期调仓、交易成本和基础绩效指标，不实现选股策略、不接入 DeepSeek、不开发前端看板、不接入真实交易接口。
+
+新增模块：
+
+- `autowealth/backtest/portfolio_backtester.py`：`PortfolioBacktester`，支持多只 A 股组合回测、目标权重、现金仓位、单股最大权重、手续费、印花税和滑点。
+- `autowealth/backtest/metrics.py`：计算日收益、总收益、年化收益、最大回撤、波动率、夏普比率、卡玛比率、年度收益和月度收益。
+- `autowealth/backtest/rebalance.py`：生成调仓日期，支持月度、季度、年度和五年调仓。
+
+当前阶段输出字段：
+
+- `equity_curve`
+- `daily_returns`
+- `annualized_return`
+- `total_return`
+- `max_drawdown`
+- `volatility`
+- `sharpe_ratio`
+- `calmar_ratio`
+- `turnover`
+- `trade_log`
+- `holdings_by_period`
+- `annual_returns`
+- `monthly_returns`
+
+重要边界：
+
+- 输入权重是外部给定的目标权重，不代表系统生成的选股策略。
+- 权重总和不能超过 1；未分配部分作为现金保留。
+- `cash_weight` 是最低现金仓位约束，目标股票权重加现金仓位不能超过 1。
+- `max_position_weight` 用于限制单只股票最大目标权重。
+- 手续费、印花税和滑点是研究假设，不代表任何券商或真实市场成交承诺。
+- 当前实现使用收盘价进行研究性调仓模拟，未模拟涨跌停、停牌、部分成交、流动性容量和真实撮合。
+- 回测结果仅用于研究和教育，不构成投资建议，也不代表未来表现。
+
+## 14. 组合回测使用示例
+
+使用外部已准备好的统一行情数据：
+
+```python
+from autowealth.backtest import PortfolioBacktester
+
+target_weights = {
+    "600519": 0.2,
+    "000001": 0.2,
+    "600036": 0.2,
+    "600900": 0.2,
+    "000858": 0.2,
+}
+
+backtester = PortfolioBacktester(
+    initial_capital=1_000_000,
+    start_date="2009-01-01",
+    end_date="2024-12-31",
+    rebalance_frequency="yearly",
+    commission=0.0003,
+    stamp_tax=0.0005,
+    slippage=0.0002,
+    cash_weight=0.0,
+    max_position_weight=0.3,
+)
+
+result = backtester.run(target_weights, price_data=price_data)
+```
+
+使用第二阶段的 A 股数据层按需只读拉取：
+
+```python
+from autowealth.backtest import PortfolioBacktester
+from autowealth.data import AShareDataProvider
+
+backtester = PortfolioBacktester(
+    data_provider=AShareDataProvider(),
+    initial_capital=1_000_000,
+    start_date="2009-01-01",
+    end_date="2024-12-31",
+    rebalance_frequency="quarterly",
+    max_position_weight=0.25,
+)
+
+result = backtester.run(
+    {
+        "600519": 0.2,
+        "000001": 0.2,
+        "600036": 0.2,
+        "600900": 0.2,
+        "000858": 0.1,
+    },
+    adjust="qfq",
+)
+```
+
+示例中的标的和权重只用于说明接口形态，不构成投资建议。
