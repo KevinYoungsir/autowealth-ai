@@ -21,6 +21,42 @@
 
 AutoWealth AI 是一款基于**多智能体技术**的智能投资分析引擎。它通过整合技术分析、基本面分析和市场情绪分析，为个人投资者提供专业的投资决策支持。
 
+## A 股长期组合研究系统
+
+仓库正在保留原项目说明与旧模块的同时，新增一套相互独立的 A 股长期组合研究能力。新增模块只用于数据研究、因子与宏观评分、组合构建、历史回测、结构化复核和看板展示，不包含真实交易能力。历史研究结果不代表未来表现，也不构成投资建议。
+
+当前研究模块：
+
+- `autowealth/data/`：A 股及指数日线数据、统一 schema、parquet 缓存和质量检查。
+- `autowealth/backtest/`：多标的、定期调仓的组合级历史回测与绩效指标。
+- `autowealth/factors/`：价值、质量、动量、低波和超买超卖研究评分。
+- `autowealth/macro/`：宏观状态、外部风险评分和研究用仓位系数。
+- `autowealth/portfolio/`：把预计算评分和宏观系数转换为研究目标权重。
+- `autowealth/research/`：编排组合构建、回测和结构化研究摘要。
+- `autowealth/agents/`：mock 优先的 DeepSeek 研究摘要、风险复核和反方观点。
+- `autowealth/api/research_server.py`：独立 FastAPI 研究聚合接口。
+- `frontend/`：Next.js、TypeScript 和 Tailwind CSS 研究看板。
+
+本地启动入口：
+
+```powershell
+# 终端 1
+.\scripts\start_research_api.ps1
+
+# 终端 2
+.\scripts\start_dashboard.ps1
+```
+
+本地看板默认位于 `http://127.0.0.1:3000`，研究 API 默认位于 `http://127.0.0.1:8001`。生产环境推荐使用 `https://dashboard.outlook.xin` 和 `https://api.outlook.xin`。
+
+详细说明：
+
+- [本地开发](docs/local-development.md)
+- [部署说明](docs/deployment.md)
+- [研究 API](docs/research-api.md)
+- [研究流水线](docs/research-pipeline.md)
+- [前端看板](frontend/README.md)
+
 ### 核心特性
 
 - 🤖 **多智能体协作** — 3个专业AI智能体协同工作，交叉验证投资决策

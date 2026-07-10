@@ -1,0 +1,56 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: #080b10;
+  color: #e5eef8;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+  background-size: 44px 44px;
+  opacity: 0.18;
+}
+
+::selection {
+  background: rgba(45, 212, 191, 0.28);
+}
+
+@layer components {
+  .panel {
+    @apply rounded-lg border border-white/10 bg-ink-850/90 shadow-panel;
+  }
+
+  .panel-soft {
+    @apply rounded-lg border border-white/10 bg-ink-900/70;
+  }
+
+  .metric-label {
+    @apply text-xs font-medium uppercase tracking-[0.16em] text-slate-400;
+  }
+
+  .metric-value {
+    @apply text-2xl font-semibold text-slate-50;
+  }
+}
