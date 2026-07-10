@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from autowealth.backtest.metrics import annual_returns
 from autowealth.data.ashare_provider import AShareDataProvider
 from autowealth.data.fundamental_provider import (
     AShareFundamentalProvider,
@@ -17,6 +18,7 @@ from autowealth.data.fundamental_provider import (
 )
 from autowealth.data.fundamental_schema import latest_fundamental_asof
 from autowealth.data.index_provider import AShareIndexProvider
+from autowealth.data.quality import check_price_quality
 from autowealth.data.universe import UniverseSnapshot
 from autowealth.research.artifacts import REQUIRED_ARTIFACT_FILES
 from autowealth.research.real_pipeline import (
@@ -205,6 +207,46 @@ class MockIndexProvider:
         return _price_frame(symbol)
 
 
+class FailingPriceProvider(MockPriceProvider):
+    def __init__(self, failed_symbol: str) -> None:
+        super().__init__()
+        self.failed_symbol = failed_symbol
+
+    def get_daily(
+        self,
+        symbol: str,
+        start_date: str,
+        end_date: str,
+        adjust: str = "none",
+    ) -> pd.DataFrame:
+        if symbol == self.failed_symbol:
+            self.calls.append(symbol)
+            raise RuntimeError("mock price endpoint unavailable")
+        return super().get_daily(symbol, start_date, end_date, adjust)
+
+
+class FailingIndexProvider(MockIndexProvider):
+    def get_daily(
+        self, symbol: str, start_date: str, end_date: str
+    ) -> pd.DataFrame:
+        self.calls.append(symbol)
+        raise RuntimeError("mock benchmark endpoint unavailable")
+
+
+class EmptyMacroProvider:
+    def get_macro_data(self, start_date: str, end_date: str) -> pd.DataFrame:
+        return pd.DataFrame()
+
+
+class MissingValuationFundamentalProvider(MockFundamentalProvider):
+    def get_fundamentals(
+        self, symbol: str, start_date: str, end_date: str
+    ) -> FundamentalProviderResult:
+        result = super().get_fundamentals(symbol, start_date, end_date)
+        result.data[["pe", "pb", "dividend_yield"]] = pd.NA
+        return result
+
+
 def _write_config(tmp_path: Path, frequency: str) -> Path:
     config = {
         "experiment_name": f"offline_{frequency}_research",
@@ -240,6 +282,19 @@ def _write_config(tmp_path: Path, frequency: str) -> Path:
         "output_directory": str(tmp_path / "runs"),
     }
     path = tmp_path / f"{frequency}.yaml"
+    path.write_text(
+        yaml.safe_dump(config, sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
+    )
+    return path
+
+
+def _write_partial_config(tmp_path: Path) -> Path:
+    path = _write_config(tmp_path, "yearly")
+    config = yaml.safe_load(path.read_text(encoding="utf-8"))
+    config["candidate_symbols"] = ["600001", "000002", "600003"]
+    config["portfolio_constraints"]["max_holdings"] = 3
+    config["portfolio_constraints"]["min_holdings"] = 3
     path.write_text(
         yaml.safe_dump(config, sort_keys=False, allow_unicode=True),
         encoding="utf-8",
@@ -324,6 +379,11 @@ def test_yearly_pipeline_is_point_in_time_and_writes_complete_artifacts(
     assert BENCHMARK_METRICS <= set(result.benchmark_metrics["000300"])
     assert not result.benchmark_curve.empty
     assert not result.equity_curve.empty
+    assert "2010" in result.metrics["annual_returns"]
+    assert result.metrics["annual_return_method"].startswith(
+        "first_valid_equity_to_year_end"
+    )
+    assert result.run_status == "success"
 
 
 def test_five_year_pipeline_generates_five_year_schedule(tmp_path: Path) -> None:
@@ -332,6 +392,128 @@ def test_five_year_pipeline_generates_five_year_schedule(tmp_path: Path) -> None
     rebalance_years = [int(date[:4]) for date in result.target_weights_by_date]
     assert rebalance_years == [2010, 2015, 2020]
     assert result.metrics["rebalance_frequency"] == "five_year"
+
+
+def test_partial_coverage_sets_status_and_structures_benchmark_failure(
+    tmp_path: Path,
+) -> None:
+    result = run_real_data_research(
+        _write_partial_config(tmp_path),
+        price_provider=FailingPriceProvider("600003"),
+        fundamental_provider=MockFundamentalProvider(),
+        universe_provider=MockUniverseProvider(
+            ["600001", "000002", "600003"]
+        ),
+        macro_provider=EmptyMacroProvider(),
+        index_provider=FailingIndexProvider(),
+        git_commit="test-commit",
+    )
+
+    coverage = result.coverage_summary
+    assert result.run_status == "partial_success"
+    assert coverage["requested_symbols"] == ["600001", "000002", "600003"]
+    assert coverage["successful_price_symbols"] == ["000002", "600001"]
+    assert coverage["failed_price_symbols"] == ["600003"]
+    assert coverage["price_coverage_ratio"] == 2 / 3
+    assert coverage["benchmark_status"] == "unavailable"
+    assert coverage["macro_observation_count"] == 0
+    assert coverage["rebalance_count"] == len(result.target_weights_by_date)
+    assert all(
+        count < 3 for count in coverage["holdings_count_by_rebalance"].values()
+    )
+    assert coverage["warning_count"] == len(result.warnings)
+
+    manifest = json.loads(
+        result.artifacts.files["run_manifest.json"].read_text(encoding="utf-8")
+    )
+    assert manifest["run_status"] == "partial_success"
+    assert manifest["coverage_summary"] == coverage
+
+    benchmark_payload = json.loads(
+        result.artifacts.files["benchmark_metrics.json"].read_text(
+            encoding="utf-8"
+        )
+    )
+    assert benchmark_payload["000300"] == {
+        "status": "unavailable",
+        "symbol": "000300",
+        "reason": "mock benchmark endpoint unavailable",
+        "metrics": {},
+    }
+
+
+def test_annual_returns_include_first_valid_year() -> None:
+    dates = pd.bdate_range("2024-01-02", "2025-12-31")
+    equity = pd.Series(
+        [100.0 + index * 0.1 for index in range(len(dates))],
+        index=dates,
+    )
+
+    returns = annual_returns(equity)
+
+    assert returns.index.year.tolist() == [2024, 2025]
+    first_year = equity[equity.index.year == 2024]
+    expected_first = first_year.iloc[-1] / first_year.iloc[0] - 1
+    assert abs(returns.iloc[0] - expected_first) < 1e-12
+
+
+def test_normal_extended_holiday_is_not_a_severe_price_gap() -> None:
+    dates = pd.bdate_range("2024-02-01", "2024-02-29")
+    holiday = (dates >= "2024-02-09") & (dates <= "2024-02-16")
+    dates = dates[~holiday]
+    close = [10.0 + index * 0.01 for index in range(len(dates))]
+    frame = pd.DataFrame(
+        {
+            "date": dates,
+            "open": close,
+            "high": [value * 1.01 for value in close],
+            "low": [value * 0.99 for value in close],
+            "close": close,
+            "volume": 1_000_000,
+        }
+    )
+
+    report = check_price_quality(frame)
+
+    assert not any("gaps exceeding" in warning for warning in report.warnings)
+
+
+def test_missing_valuation_factor_is_excluded_and_weights_are_renormalized(
+    tmp_path: Path,
+) -> None:
+    symbols = ["600001", "000002"]
+    result = run_real_data_research(
+        _write_config(tmp_path, "yearly"),
+        price_provider=MockPriceProvider(),
+        fundamental_provider=MissingValuationFundamentalProvider(),
+        universe_provider=MockUniverseProvider(symbols),
+        macro_provider=MockMacroProvider(),
+        index_provider=MockIndexProvider(),
+        git_commit="test-commit",
+    )
+
+    snapshots = result.factor_snapshots
+    assert result.run_status == "partial_success"
+    assert not snapshots["value_available"].any()
+    assert snapshots["value_score"].isna().all()
+    for serialized_weights in snapshots["composite_weights"]:
+        weights = json.loads(serialized_weights)
+        assert "value" not in weights
+        assert abs(sum(weights.values()) - 1.0) < 1e-12
+    for period in result.coverage_summary["factor_coverage_by_rebalance"].values():
+        assert period["value"] == {
+            "available_count": 0,
+            "missing_count": 2,
+            "coverage_ratio": 0.0,
+        }
+    assert result.coverage_summary["factor_coverage_overall"]["value"] == {
+        "available_count": 0,
+        "missing_count": len(snapshots),
+        "coverage_ratio": 0.0,
+    }
+    assert any(
+        "excluded unavailable factors" in warning for warning in result.warnings
+    )
 
 
 def test_import_does_not_initialize_network_providers(monkeypatch) -> None:

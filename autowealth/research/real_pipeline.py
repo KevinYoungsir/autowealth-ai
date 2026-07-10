@@ -66,6 +66,9 @@ SUPPORTED_FACTOR_NAMES = {
     "low_vol",
     "overbought_oversold",
 }
+MIN_FACTOR_COVERAGE_RATIO = 0.8
+FACTOR_OPTIONAL_RAW_FIELDS = {"low_vol": {"beta"}}
+RUN_STATUSES = {"success", "partial_success", "failed"}
 REQUIRED_CONFIG_KEYS = {
     "start_date",
     "end_date",
@@ -130,6 +133,8 @@ class RealResearchResult:
     benchmark_curve: pd.DataFrame
     target_weights_by_date: dict[str, dict[str, float]]
     factor_snapshots: pd.DataFrame
+    run_status: str
+    coverage_summary: dict[str, Any]
     warnings: list[str]
     artifacts: ResearchArtifactSet
 
@@ -595,13 +600,44 @@ def _financial_factor_inputs(record: Optional[FundamentalRecord]) -> dict[str, o
     }
 
 
+def _raw_value_available(value: object) -> bool:
+    if value is None:
+        return False
+    try:
+        missing = pd.isna(value)
+    except (TypeError, ValueError):
+        return True
+    try:
+        return not bool(missing)
+    except (TypeError, ValueError):
+        return True
+
+
+def _factor_data_counts(score: FactorScore) -> tuple[int, int]:
+    optional = FACTOR_OPTIONAL_RAW_FIELDS.get(score.factor_name, set())
+    values = [
+        value for name, value in score.raw_values.items() if name not in optional
+    ]
+    available_count = sum(_raw_value_available(value) for value in values)
+    return available_count, len(values) - available_count
+
+
+def _factor_score_available(score: FactorScore) -> bool:
+    available_count, _ = _factor_data_counts(score)
+    return available_count > 0
+
+
 def _calculate_factor_scores(
     symbol: str,
     price_history: pd.DataFrame,
     fundamental: Optional[FundamentalRecord],
     weights: Mapping[str, float],
     rebalance_date: pd.Timestamp,
-) -> tuple[CompositeFactorScore, dict[str, FactorScore]]:
+) -> tuple[
+    Optional[CompositeFactorScore],
+    dict[str, FactorScore],
+    dict[str, bool],
+]:
     as_of_date = rebalance_date.strftime("%Y-%m-%d")
     financial = _financial_factor_inputs(fundamental)
     scores = {
@@ -613,30 +649,61 @@ def _calculate_factor_scores(
             symbol, price_history, as_of_date
         ),
     }
-    selected = {name: scores[name] for name in weights}
+    selected = {
+        name: scores[name] for name, weight in weights.items() if weight > 0
+    }
+    availability = {
+        name: _factor_score_available(score) for name, score in selected.items()
+    }
+    available_scores = {
+        name: score for name, score in selected.items() if availability[name]
+    }
+    if not available_scores:
+        return None, selected, availability
+
+    available_weights = {name: weights[name] for name in available_scores}
     composite = combine_factor_scores(
         symbol,
-        selected,
-        weights,
+        available_scores,
+        available_weights,
         as_of_date,
         normalize_weights=True,
     )
-    return composite, selected
+    excluded = sorted(name for name, available in availability.items() if not available)
+    if excluded:
+        composite.warnings.append(
+            "excluded unavailable factors and renormalized weights: "
+            + ", ".join(excluded)
+        )
+    return composite, selected, availability
 
 
 def _factor_snapshot_row(
     rebalance_date: pd.Timestamp,
     symbol: str,
-    composite: CompositeFactorScore,
+    composite: Optional[CompositeFactorScore],
     factor_scores: Mapping[str, FactorScore],
+    factor_availability: Mapping[str, bool],
     fundamental: Optional[FundamentalRecord],
     macro_available_date: Optional[str],
     fundamental_point_in_time: bool,
 ) -> dict[str, object]:
+    factor_warnings = _dedupe_warnings(
+        [
+            f"{name}: {warning}"
+            for name, score in factor_scores.items()
+            for warning in score.warnings
+        ]
+        + (list(composite.warnings) if composite is not None else [])
+    )
     row: dict[str, object] = {
         "rebalance_date": rebalance_date,
         "symbol": symbol,
-        "composite_score": composite.score,
+        "composite_score": composite.score if composite is not None else None,
+        "composite_weights": json.dumps(
+            composite.weights if composite is not None else {},
+            sort_keys=True,
+        ),
         "fundamental_report_date": (
             fundamental.report_date if fundamental is not None else None
         ),
@@ -645,10 +712,15 @@ def _factor_snapshot_row(
         ),
         "fundamental_point_in_time": fundamental_point_in_time,
         "macro_available_date": macro_available_date,
-        "warnings": " | ".join(composite.warnings),
+        "warnings": " | ".join(factor_warnings),
     }
     for name, score in factor_scores.items():
-        row[f"{name}_score"] = score.score
+        available_count, missing_count = _factor_data_counts(score)
+        available = bool(factor_availability[name])
+        row[f"{name}_score"] = score.score if available else None
+        row[f"{name}_available"] = available
+        row[f"{name}_raw_available_count"] = available_count
+        row[f"{name}_raw_missing_count"] = missing_count
     return row
 
 
@@ -659,7 +731,7 @@ def _candidate_for_date(
     fundamental_result: FundamentalProviderResult,
     factor_weights: Mapping[str, float],
     macro_available_date: Optional[str],
-) -> tuple[StockCandidate, dict[str, object], list[str]]:
+) -> tuple[Optional[StockCandidate], dict[str, object], list[str]]:
     price_history = price_data[price_data["date"] <= rebalance_date].copy()
     warnings = _tradability_warnings(symbol, price_data, rebalance_date)
     warnings.extend(
@@ -679,29 +751,55 @@ def _candidate_for_date(
             f"{symbol} fundamental source is not verified point-in-time"
         )
 
-    composite, factor_scores = _calculate_factor_scores(
+    composite, factor_scores, factor_availability = _calculate_factor_scores(
         symbol,
         price_history,
         fundamental,
         factor_weights,
         rebalance_date,
     )
-    candidate = StockCandidate(
-        symbol=symbol,
-        score=composite.score,
-        factor_scores={name: score.score for name, score in factor_scores.items()},
-        industry="unknown",
-        warnings=list(composite.warnings),
+    factor_warnings = _dedupe_warnings(
+        [
+            f"{name}: {warning}"
+            for name, score in factor_scores.items()
+            for warning in score.warnings
+        ]
+        + (list(composite.warnings) if composite is not None else [])
     )
+    warnings.extend(
+        f"{symbol} {rebalance_date.date()} factor warning: {warning}"
+        for warning in factor_warnings
+    )
+    if composite is None:
+        candidate = None
+        warnings.append(
+            f"{symbol} has no available factor data at {rebalance_date.date()}; "
+            "candidate rejected"
+        )
+    else:
+        candidate = StockCandidate(
+            symbol=symbol,
+            score=composite.score,
+            factor_scores={
+                name: score.score
+                for name, score in factor_scores.items()
+                if factor_availability[name]
+            },
+            industry="unknown",
+            warnings=list(composite.warnings),
+        )
     snapshot = _factor_snapshot_row(
         rebalance_date,
         symbol,
         composite,
         factor_scores,
+        factor_availability,
         fundamental,
         macro_available_date,
         fundamental_result.point_in_time,
     )
+    if candidate is None:
+        snapshot["factor_rejection_reason"] = "no available factor data"
     return candidate, snapshot, warnings
 
 
@@ -767,7 +865,8 @@ def _build_weight_schedule(
                 config.factor_weights,
                 macro_available_date,
             )
-            period_candidates.append(candidate)
+            if candidate is not None:
+                period_candidates.append(candidate)
             period_snapshots.append(snapshot)
             warnings.extend(candidate_warnings)
 
@@ -796,7 +895,9 @@ def _build_weight_schedule(
             symbol = str(snapshot["symbol"])
             snapshot["target_weight"] = portfolio.target_weights.get(symbol, 0.0)
             snapshot["selected"] = symbol in portfolio.selected_symbols
-            snapshot["rejection_reason"] = portfolio.rejected_symbols.get(symbol)
+            snapshot["rejection_reason"] = snapshot.get(
+                "factor_rejection_reason"
+            ) or portfolio.rejected_symbols.get(symbol)
             snapshot["macro_regime"] = (
                 getattr(macro_score, "regime", None) if macro_score is not None else None
             )
@@ -863,17 +964,26 @@ def _load_benchmark_data(
     return clean, metadata, warnings
 
 
+def _unavailable_benchmark(symbol: str, reason: str) -> dict[str, object]:
+    return {
+        "status": "unavailable",
+        "symbol": symbol,
+        "reason": reason,
+        "metrics": {},
+    }
+
+
 def _run_benchmarks(
     config: RealResearchConfig,
     provider: object,
     fetched_at: datetime,
 ) -> tuple[
-    dict[str, dict[str, float]],
+    dict[str, dict[str, Any]],
     pd.DataFrame,
     list[dict[str, object]],
     list[str],
 ]:
-    metrics: dict[str, dict[str, float]] = {}
+    metrics: dict[str, dict[str, Any]] = {}
     curves: dict[str, pd.Series] = {}
     source_records: list[dict[str, object]] = []
     warnings: list[str] = []
@@ -884,12 +994,25 @@ def _run_benchmarks(
                 symbol, config, provider, fetched_at
             )
         except Exception as exc:
-            warnings.append(f"benchmark {symbol} unavailable: {exc}")
+            reason = str(exc)
+            metrics[symbol] = _unavailable_benchmark(symbol, reason)
+            warnings.append(f"benchmark {symbol} unavailable: {reason}")
+            source_records.append(
+                {
+                    "data_type": "benchmark",
+                    "symbol": symbol,
+                    "source": provider.__class__.__name__,
+                    "status": "failed",
+                    "error": reason,
+                }
+            )
             continue
         warnings.extend(item_warnings)
         source_records.append(source_record)
         if frame.empty:
-            warnings.append(f"benchmark {symbol} contains no usable prices")
+            reason = "provider returned no usable prices"
+            metrics[symbol] = _unavailable_benchmark(symbol, reason)
+            warnings.append(f"benchmark {symbol} unavailable: {reason}")
             continue
         close = frame.set_index("date")["close"].sort_index()
         curve = close / float(close.iloc[0]) * config.initial_capital
@@ -903,6 +1026,191 @@ def _run_benchmarks(
 
 def _dedupe_warnings(values: list[str]) -> list[str]:
     return list(dict.fromkeys(str(value) for value in values if str(value).strip()))
+
+
+def _factor_coverage_by_rebalance(
+    factor_snapshots: pd.DataFrame,
+    factor_names: Mapping[str, float],
+) -> dict[str, dict[str, dict[str, float | int]]]:
+    frame = pd.DataFrame(factor_snapshots).copy()
+    if frame.empty:
+        return {}
+    frame["rebalance_date"] = pd.to_datetime(
+        frame["rebalance_date"], errors="coerce"
+    )
+    summary: dict[str, dict[str, dict[str, float | int]]] = {}
+    for rebalance_date, period in frame.dropna(
+        subset=["rebalance_date"]
+    ).groupby("rebalance_date"):
+        date_text = pd.Timestamp(rebalance_date).strftime("%Y-%m-%d")
+        factor_summary: dict[str, dict[str, float | int]] = {}
+        for factor_name in factor_names:
+            availability_column = f"{factor_name}_available"
+            if availability_column in period:
+                available_count = int(
+                    period[availability_column].fillna(False).astype(bool).sum()
+                )
+            else:
+                available_count = 0
+            total_count = len(period)
+            missing_count = total_count - available_count
+            factor_summary[factor_name] = {
+                "available_count": available_count,
+                "missing_count": missing_count,
+                "coverage_ratio": (
+                    available_count / total_count if total_count else 0.0
+                ),
+            }
+        summary[date_text] = factor_summary
+    return summary
+
+
+def _overall_factor_coverage(
+    coverage_by_rebalance: Mapping[
+        str, Mapping[str, Mapping[str, float | int]]
+    ],
+    factor_names: Mapping[str, float],
+) -> dict[str, dict[str, float | int]]:
+    summary: dict[str, dict[str, float | int]] = {}
+    for factor_name in factor_names:
+        available_count = sum(
+            int(period.get(factor_name, {}).get("available_count", 0))
+            for period in coverage_by_rebalance.values()
+        )
+        missing_count = sum(
+            int(period.get(factor_name, {}).get("missing_count", 0))
+            for period in coverage_by_rebalance.values()
+        )
+        total_count = available_count + missing_count
+        summary[factor_name] = {
+            "available_count": available_count,
+            "missing_count": missing_count,
+            "coverage_ratio": (
+                available_count / total_count if total_count else 0.0
+            ),
+        }
+    return summary
+
+
+def _benchmark_coverage_status(
+    benchmark_metrics: Mapping[str, Mapping[str, Any]],
+    requested_symbols: list[str],
+) -> tuple[str, list[str], list[str]]:
+    available_symbols = []
+    unavailable_symbols = []
+    for symbol in requested_symbols:
+        entry = benchmark_metrics.get(symbol, {})
+        if entry and entry.get("status") != "unavailable":
+            available_symbols.append(symbol)
+        else:
+            unavailable_symbols.append(symbol)
+    if not available_symbols:
+        status = "unavailable"
+    elif unavailable_symbols:
+        status = "partial"
+    else:
+        status = "available"
+    return status, available_symbols, unavailable_symbols
+
+
+def _build_coverage_summary(
+    config: RealResearchConfig,
+    price_data: Mapping[str, pd.DataFrame],
+    fundamental_results: Mapping[str, FundamentalProviderResult],
+    benchmark_metrics: Mapping[str, Mapping[str, Any]],
+    macro_data: pd.DataFrame,
+    weight_schedule: Mapping[pd.Timestamp, Mapping[str, float]],
+    factor_snapshots: pd.DataFrame,
+    warning_count: int,
+) -> dict[str, Any]:
+    successful_price_symbols = sorted(price_data)
+    failed_price_symbols = sorted(
+        set(config.candidate_symbols) - set(successful_price_symbols)
+    )
+    successful_fundamental_symbols = sorted(
+        symbol
+        for symbol, result in fundamental_results.items()
+        if not result.data.empty
+    )
+    failed_fundamental_symbols = sorted(
+        set(successful_price_symbols) - set(successful_fundamental_symbols)
+    )
+    benchmark_status, available_benchmarks, unavailable_benchmarks = (
+        _benchmark_coverage_status(
+            benchmark_metrics, config.benchmark_symbols
+        )
+    )
+    holdings_count_by_rebalance = {
+        pd.Timestamp(date).strftime("%Y-%m-%d"): sum(
+            float(weight) > 0 for weight in weights.values()
+        )
+        for date, weights in sorted(weight_schedule.items())
+    }
+    active_factor_weights = {
+        name: weight
+        for name, weight in config.factor_weights.items()
+        if weight > 0
+    }
+    factor_coverage_by_rebalance = _factor_coverage_by_rebalance(
+        factor_snapshots, active_factor_weights
+    )
+    return {
+        "requested_symbols": list(config.candidate_symbols),
+        "successful_price_symbols": successful_price_symbols,
+        "failed_price_symbols": failed_price_symbols,
+        "price_coverage_ratio": (
+            len(successful_price_symbols) / len(config.candidate_symbols)
+            if config.candidate_symbols
+            else 0.0
+        ),
+        "successful_fundamental_symbols": successful_fundamental_symbols,
+        "failed_fundamental_symbols": failed_fundamental_symbols,
+        "benchmark_status": benchmark_status,
+        "available_benchmark_symbols": available_benchmarks,
+        "unavailable_benchmark_symbols": unavailable_benchmarks,
+        "macro_observation_count": len(macro_data),
+        "rebalance_count": len(weight_schedule),
+        "holdings_count_by_rebalance": holdings_count_by_rebalance,
+        "factor_coverage_threshold": MIN_FACTOR_COVERAGE_RATIO,
+        "factor_coverage_by_rebalance": factor_coverage_by_rebalance,
+        "factor_coverage_overall": _overall_factor_coverage(
+            factor_coverage_by_rebalance, active_factor_weights
+        ),
+        "warning_count": int(warning_count),
+    }
+
+
+def _determine_run_status(
+    coverage_summary: Mapping[str, Any],
+    min_holdings: int,
+) -> tuple[str, list[str]]:
+    if (
+        not coverage_summary.get("successful_price_symbols")
+        or not coverage_summary.get("rebalance_count")
+    ):
+        return "failed", ["required price or rebalance coverage is empty"]
+
+    reasons: list[str] = []
+    if coverage_summary.get("failed_price_symbols"):
+        reasons.append("one or more candidate price series are unavailable")
+    if coverage_summary.get("benchmark_status") != "available":
+        reasons.append("one or more benchmarks are unavailable")
+    if coverage_summary.get("macro_observation_count") == 0:
+        reasons.append("macro data is empty and the neutral multiplier is used")
+
+    holdings_counts = coverage_summary.get("holdings_count_by_rebalance", {})
+    if any(int(count) < min_holdings for count in holdings_counts.values()):
+        reasons.append("one or more rebalances are below min_holdings")
+
+    factor_coverage = coverage_summary.get("factor_coverage_overall", {})
+    if any(
+        float(values.get("coverage_ratio", 0.0))
+        < MIN_FACTOR_COVERAGE_RATIO
+        for values in factor_coverage.values()
+    ):
+        reasons.append("one or more configured factors have insufficient coverage")
+
+    return ("partial_success", reasons) if reasons else ("success", [])
 
 
 def _point_in_time_limitations(
@@ -961,11 +1269,19 @@ def _run_manifest(
     git_commit: str,
     source_records: list[dict[str, object]],
     point_in_time_limitations: list[str],
+    run_status: str,
+    coverage_summary: Mapping[str, Any],
+    run_status_reasons: list[str],
 ) -> dict[str, object]:
+    if run_status not in RUN_STATUSES:
+        raise ValueError(f"unsupported run_status: {run_status}")
     return {
         "run_time": run_time.isoformat(),
         "git_commit": git_commit,
         "experiment_name": config.experiment_name,
+        "run_status": run_status,
+        "run_status_reasons": run_status_reasons,
+        "coverage_summary": dict(coverage_summary),
         "data_sources": source_records,
         "data_range": {
             "start_date": config.start_date,
@@ -1105,6 +1421,17 @@ def _run_portfolio_backtest(
     metrics = scalar_metrics(result)
     metrics["annual_returns"] = _period_returns(result["annual_returns"], "%Y")
     metrics["monthly_returns"] = _period_returns(result["monthly_returns"], "%Y-%m")
+    equity_curve = pd.Series(result["equity_curve"])
+    equity_years = sorted({int(date.year) for date in equity_curve.index})
+    included_annual_years = sorted(
+        int(pd.Timestamp(date).year) for date in result["annual_returns"].index
+    )
+    metrics["annual_return_method"] = (
+        "first_valid_equity_to_year_end_for_first_year_then_year_end_to_year_end"
+    )
+    metrics["excluded_partial_years"] = sorted(
+        set(equity_years) - set(included_annual_years)
+    )
     metrics["rebalance_frequency"] = config.rebalance_frequency
     metrics["start_date"] = config.start_date
     metrics["end_date"] = config.end_date
@@ -1198,10 +1525,14 @@ def run_real_data_research(
         resolved_index_provider = index_provider or AShareIndexProvider()
     except ImportError as exc:
         resolved_index_provider = None
-        warnings.append(f"benchmark provider is unavailable: {exc}")
+        benchmark_provider_reason = f"benchmark provider is unavailable: {exc}"
+        warnings.append(benchmark_provider_reason)
 
     if resolved_index_provider is None:
-        benchmark_metrics: dict[str, dict[str, float]] = {}
+        benchmark_metrics: dict[str, dict[str, Any]] = {
+            symbol: _unavailable_benchmark(symbol, benchmark_provider_reason)
+            for symbol in config.benchmark_symbols
+        }
         benchmark_curve = pd.DataFrame()
     else:
         (
@@ -1217,6 +1548,20 @@ def run_real_data_research(
         config, fundamental_results, macro_data
     )
     warnings = _dedupe_warnings(warnings)
+    coverage_summary = _build_coverage_summary(
+        config,
+        price_data,
+        fundamental_results,
+        benchmark_metrics,
+        macro_data,
+        weight_schedule,
+        factor_snapshots,
+        len(warnings),
+    )
+    run_status, run_status_reasons = _determine_run_status(
+        coverage_summary,
+        config.portfolio_constraints.min_holdings,
+    )
     repository_root = _repository_root(Path(config_path).resolve())
     manifest = _run_manifest(
         config,
@@ -1224,6 +1569,9 @@ def run_real_data_research(
         git_commit or current_git_commit(repository_root),
         source_records,
         limitations,
+        run_status,
+        coverage_summary,
+        run_status_reasons,
     )
     artifacts = write_research_artifacts(
         config.output_directory,
@@ -1254,6 +1602,8 @@ def run_real_data_research(
         benchmark_curve=benchmark_curve,
         target_weights_by_date=serialized_schedule,
         factor_snapshots=factor_snapshots,
+        run_status=run_status,
+        coverage_summary=coverage_summary,
         warnings=warnings,
         artifacts=artifacts,
     )

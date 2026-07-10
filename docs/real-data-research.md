@@ -114,6 +114,49 @@ equity_curve = pd.read_parquet(run_dir / "equity_curve.parquet")
 factor_snapshots = pd.read_parquet(run_dir / "factor_snapshots.parquet")
 ```
 
+## 运行状态与覆盖摘要
+
+`run_manifest.json` 包含 `run_status`、`run_status_reasons` 和
+`coverage_summary`。状态规则如下：
+
+- `success`：候选行情、基准、宏观、持仓数量和关键因子覆盖均达到要求。
+- `partial_success`：任一候选行情失败、任一基准不可用、宏观数据为空而使用中性乘数、任一调仓低于 `min_holdings`，或任一正权重配置因子的全运行总体覆盖率低于 0.8。
+- `failed`：没有可用候选行情或没有可执行调仓。必要行情完全不可用时，流水线可能在 artifacts 生成前明确抛错，不会伪造失败结果。
+
+`coverage_summary` 记录请求与成功行情标的、失败行情标的、行情覆盖率、
+成功基本面标的、基准状态、宏观观察数、调仓数、各期持仓数、各期因子
+覆盖率、全运行总体因子覆盖率和最终 warning 数量。
+
+基准失败时，`benchmark_metrics.json` 保留结构化原因，不生成收益数据：
+
+```json
+{
+  "000300": {
+    "status": "unavailable",
+    "symbol": "000300",
+    "reason": "provider error",
+    "metrics": {}
+  }
+}
+```
+
+成功基准继续使用原有指标对象。
+
+## 收益与缺失数据规则
+
+年度收益的首个有效年度按“首个有效净值到该年年末”计算，后续年度按
+相邻年末净值计算。只有一个净值点的年度会被排除，并列入 metrics 的
+`excluded_partial_years`；`annual_return_method` 记录当前口径。
+
+行情连续性使用缺失工作日而非日历日检查。超过 8 个缺失工作日才产生
+提示，且提示明确说明可能包含特殊市场休市；在接入正式交易日历前，
+该检查不能用于断言数据必然缺失。
+
+每个调仓日的因子快照记录各因子的可用状态及原始输入可用/缺失数量。
+某因子所有有效原始输入都缺失时，该因子不进入复合分数，其配置权重在
+剩余可用因子间重新归一化，并形成 warning。若所有配置因子都不可用，
+该候选在该调仓日被拒绝评分。
+
 ## 当前限制
 
 - 固定股票池不是历史成分股，存在幸存者偏差。
