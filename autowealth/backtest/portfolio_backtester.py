@@ -160,6 +160,101 @@ class PortfolioBacktester:
         )
         return result.to_dict()
 
+    def run_weight_schedule(
+        self,
+        target_weights_by_date: Mapping[object, Mapping[str, float]],
+        price_data: Optional[Mapping[str, pd.DataFrame]] = None,
+        adjust: str = "qfq",
+    ) -> Dict[str, object]:
+        """Run a backtest with a point-in-time target-weight schedule.
+
+        This is a backward-compatible companion to ``run``. Every generated
+        rebalance date must have one target-weight mapping. Symbols omitted from
+        a period mapping receive a zero target weight for that rebalance.
+        """
+        if not target_weights_by_date:
+            raise ValueError("target_weights_by_date cannot be empty")
+
+        schedule: Dict[pd.Timestamp, Dict[str, float]] = {}
+        symbols = set()
+        for date, target_weights in target_weights_by_date.items():
+            timestamp = pd.Timestamp(date).normalize()
+            if timestamp in schedule:
+                raise ValueError(f"duplicate target weight schedule date: {timestamp.date()}")
+            validated = self._validate_weights(target_weights)
+            schedule[timestamp] = validated
+            symbols.update(validated)
+
+        if not symbols:
+            raise ValueError("target weight schedule contains no symbols")
+
+        prices = self._prepare_price_matrix(
+            {symbol: 0.0 for symbol in sorted(symbols)},
+            price_data,
+            adjust,
+        )
+        rebalance_dates = pd.DatetimeIndex(
+            generate_rebalance_dates(prices.index, self.rebalance_frequency)
+        ).normalize()
+        missing_dates = [date for date in rebalance_dates if date not in schedule]
+        if missing_dates:
+            formatted = ", ".join(date.strftime("%Y-%m-%d") for date in missing_dates)
+            raise ValueError(f"target weight schedule missing rebalance dates: {formatted}")
+
+        shares = {symbol: 0.0 for symbol in sorted(symbols)}
+        cash = self.initial_capital
+        equity_points: List[Dict[str, float]] = []
+        trade_log: List[Dict[str, object]] = []
+        holdings_snapshots: List[Dict[str, object]] = []
+        turnover_numerator = 0.0
+        rebalance_date_set = set(rebalance_dates)
+
+        for date, row in prices.iterrows():
+            portfolio_value = self._portfolio_value(cash, shares, row)
+            if date.normalize() in rebalance_date_set:
+                period_weights = {
+                    symbol: schedule[date.normalize()].get(symbol, 0.0)
+                    for symbol in shares
+                }
+                rebalance_result = self._rebalance(
+                    date,
+                    row,
+                    portfolio_value,
+                    cash,
+                    shares,
+                    period_weights,
+                )
+                cash = rebalance_result["cash"]
+                shares = rebalance_result["shares"]
+                trade_log.extend(rebalance_result["trades"])
+                holdings_snapshots.append(
+                    self._holdings_snapshot(date, cash, shares, row, period_weights)
+                )
+                turnover_numerator += rebalance_result["turnover_value"]
+
+            equity_points.append(
+                {"date": date, "equity": self._portfolio_value(cash, shares, row)}
+            )
+
+        equity_curve = pd.DataFrame(equity_points).set_index("date")["equity"]
+        returns = daily_returns(equity_curve)
+        result = PortfolioBacktestResult(
+            equity_curve=equity_curve,
+            daily_returns=returns,
+            annualized_return=annualized_return(equity_curve),
+            total_return=total_return(equity_curve),
+            max_drawdown=max_drawdown(equity_curve),
+            volatility=volatility(returns),
+            sharpe_ratio=sharpe_ratio(returns),
+            calmar_ratio=calmar_ratio(equity_curve),
+            turnover=turnover_numerator / self.initial_capital,
+            trade_log=pd.DataFrame(trade_log),
+            holdings_by_period=pd.DataFrame(holdings_snapshots),
+            annual_returns=annual_returns(equity_curve),
+            monthly_returns=monthly_returns(equity_curve),
+        )
+        return result.to_dict()
+
     def _validate_config(self) -> None:
         if self.initial_capital <= 0:
             raise ValueError("initial_capital must be positive")

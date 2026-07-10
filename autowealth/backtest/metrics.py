@@ -102,11 +102,24 @@ def calmar_ratio(equity_curve: pd.Series, periods_per_year: int = TRADING_DAYS_P
 def annual_returns(equity_curve: pd.Series) -> pd.Series:
     """
     Calculate calendar-year returns.
+
+    The first year uses the first valid equity point through that year end when
+    at least two observations are available. Later years use consecutive
+    calendar year-end values.
     """
     equity = _as_series(equity_curve)
     if equity.empty:
         return pd.Series(dtype=float)
-    return equity.resample("YE").last().pct_change().dropna()
+
+    year_end = equity.resample("YE").last()
+    returns = year_end.pct_change()
+    first_year = int(equity.index[0].year)
+    first_year_equity = equity[equity.index.year == first_year]
+    if len(first_year_equity) >= 2 and first_year_equity.iloc[0] != 0:
+        returns.iloc[0] = (
+            first_year_equity.iloc[-1] / first_year_equity.iloc[0] - 1
+        )
+    return returns.dropna()
 
 
 def monthly_returns(equity_curve: pd.Series) -> pd.Series:

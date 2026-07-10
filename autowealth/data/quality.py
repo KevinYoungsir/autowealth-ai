@@ -7,7 +7,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Optional
 
+import numpy as np
 import pandas as pd
+
+
+MAX_MISSING_BUSINESS_DAYS = 8
 
 
 @dataclass
@@ -67,10 +71,20 @@ def _check_date_continuity(data: pd.DataFrame, report: DataQualityReport) -> Non
     if len(dates) < 2:
         return
 
-    gaps = dates.diff().dropna()
-    large_gaps = gaps[gaps > pd.Timedelta(days=10)]
-    if not large_gaps.empty:
-        report.warnings.append("date has gaps longer than 10 calendar days")
+    large_gaps = []
+    for previous, current in zip(dates.iloc[:-1], dates.iloc[1:]):
+        missing_business_days = max(
+            int(np.busday_count(previous.date(), current.date())) - 1,
+            0,
+        )
+        if missing_business_days > MAX_MISSING_BUSINESS_DAYS:
+            large_gaps.append((previous, current, missing_business_days))
+
+    if large_gaps:
+        report.warnings.append(
+            "date has gaps exceeding 8 missing business days; review source "
+            "coverage because extended market closures may be included"
+        )
 
 
 def _check_ohlc(data: pd.DataFrame, report: DataQualityReport) -> None:

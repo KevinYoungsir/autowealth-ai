@@ -22,6 +22,8 @@ build/
 
 # Local data cache
 data/cache/
+data/real_cache/
+data/research_runs/
 *.parquet
 
 # Frontend
