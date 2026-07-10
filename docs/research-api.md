@@ -2,7 +2,7 @@
 
 ## 用途
 
-Research API 是 A 股研究系统的聚合接口层，用于给后续 outloo.xin 可视化看板提供结构化数据。它连接 mock 或外部传入的研究数据、研究流水线、研究摘要和 mock DeepSeek 复核报告。
+Research API 是 A 股研究系统的聚合接口层，用于给后续 outlook.xin 可视化看板提供结构化数据。它连接 mock 或外部传入的研究数据、研究流水线、研究摘要和 mock DeepSeek 复核报告。
 
 本阶段接口只用于研究展示，不接入真实交易，不做参数寻优，不承诺收益，不输出真实交易指令。DeepSeek 路径固定使用 `mock_mode=True`。
 
@@ -17,6 +17,22 @@ uvicorn autowealth.api.research_server:app --reload --port 8001
 ```bash
 curl http://127.0.0.1:8001/research/health
 ```
+
+## CORS 配置
+
+研究 API 的 CORS 只配置在独立的 `autowealth.api.research_server` 应用上，不改变 `autowealth.api.server` 的既有行为。默认允许：
+
+- `http://127.0.0.1:3000`
+- `http://localhost:3000`
+- `https://dashboard.outlook.xin`
+
+可以使用逗号分隔的环境变量覆盖默认值：
+
+```env
+RESEARCH_API_CORS_ORIGINS=http://127.0.0.1:3000,http://localhost:3000,https://dashboard.outlook.xin
+```
+
+生产部署建议由 `https://dashboard.outlook.xin` 提供看板，由 `https://api.outlook.xin` 提供研究 API，并保持精确来源白名单，避免使用通配来源。
 
 ## 接口列表
 
@@ -116,4 +132,4 @@ curl http://127.0.0.1:8001/research/health
 - `target_weights` 是研究目标权重，不是实盘交易指令。
 - 历史回测指标不代表未来表现。
 - DeepSeek 只做研究摘要、风险复核、反方观点和一致性检查。
-- 后续接入 outloo.xin 看板时，应继续保留上述研究边界。
+- 后续接入 outlook.xin 看板时，应继续保留上述研究边界。

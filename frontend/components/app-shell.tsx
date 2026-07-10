@@ -69,7 +69,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <div className="flex items-center gap-3">
               <ShieldCheck className="h-5 w-5 text-signal-green" aria-hidden="true" />
               <div>
-                <div className="text-sm font-semibold text-slate-100">outloo.xin prototype</div>
+                <div className="text-sm font-semibold text-slate-100">outlook.xin prototype</div>
                 <div className="text-xs text-slate-500">研究展示 · mock API · 非交易系统</div>
               </div>
             </div>

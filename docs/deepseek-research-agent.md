@@ -57,4 +57,4 @@ validation = agent.validate_research_consistency(research_result)
 
 ## 后续接入
 
-后续阶段可以把该 Agent 接入研究流水线报告、FastAPI 服务和 outloo.xin 可视化看板。接入时仍需保留研究边界：DeepSeek 只做摘要、复核和解释，不作为自动交易或组合权重决策来源。
+后续阶段可以把该 Agent 接入研究流水线报告、FastAPI 服务和 outlook.xin 可视化看板。接入时仍需保留研究边界：DeepSeek 只做摘要、复核和解释，不作为自动交易或组合权重决策来源。

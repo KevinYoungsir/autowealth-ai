@@ -7,11 +7,13 @@ legacy API behavior remains unchanged.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Any, Dict, Mapping
 
 import pandas as pd
 from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
 from autowealth.agents.deepseek_research_agent import DeepSeekResearchAgent
 from autowealth.api.research_models import (
@@ -39,6 +41,13 @@ from autowealth.research import (
     summarize_research_result,
 )
 from autowealth.research.schema import ResearchPipelineResult, ResearchSummary
+
+
+DEFAULT_RESEARCH_API_CORS_ORIGINS = (
+    "http://127.0.0.1:3000",
+    "http://localhost:3000",
+    "https://dashboard.outlook.xin",
+)
 
 
 @dataclass
@@ -128,11 +137,32 @@ async def research_deepseek_mock_report(
     return DeepSeekMockReportResponse(**report)
 
 
+def _research_api_cors_origins() -> list[str]:
+    configured = os.getenv("RESEARCH_API_CORS_ORIGINS", "")
+    if not configured.strip():
+        return list(DEFAULT_RESEARCH_API_CORS_ORIGINS)
+
+    origins: list[str] = []
+    for value in configured.split(","):
+        origin = value.strip().rstrip("/")
+        if origin and origin not in origins:
+            origins.append(origin)
+    return origins or list(DEFAULT_RESEARCH_API_CORS_ORIGINS)
+
+
 def create_research_app() -> FastAPI:
     app = FastAPI(
         title="AutoWealth Research API",
         description="Research-only aggregation API for A-share portfolio experiments.",
         version=RESEARCH_API_VERSION,
+    )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_research_api_cors_origins(),
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Content-Type"],
+        max_age=600,
     )
     app.include_router(research_router)
     return app

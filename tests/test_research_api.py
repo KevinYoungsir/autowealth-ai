@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -8,7 +9,7 @@ sys.modules["yfinance"] = MagicMock()
 
 from fastapi.testclient import TestClient
 
-from autowealth.api.research_server import app
+from autowealth.api.research_server import app, create_research_app
 from autowealth.research import (
     mock_candidate_symbols,
     mock_factor_scores,
@@ -30,6 +31,26 @@ def test_research_health():
     assert payload["service"] == "autowealth-research-api"
     assert payload["mock_mode"] is True
     assert "version" in payload
+
+
+def test_research_cors_allows_configured_dashboard_origins():
+    origins = (
+        "http://127.0.0.1:3000,http://localhost:3000,"
+        "https://dashboard.outlook.xin"
+    )
+    with patch.dict(os.environ, {"RESEARCH_API_CORS_ORIGINS": origins}):
+        cors_client = TestClient(create_research_app())
+
+    for origin in origins.split(","):
+        response = cors_client.options(
+            "/research/health",
+            headers={
+                "Origin": origin,
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+        assert response.status_code == 200
+        assert response.headers["access-control-allow-origin"] == origin
 
 
 def test_research_demo_uses_mock_data_without_network():

@@ -1,5 +1,10 @@
-const RESEARCH_API_BASE_URL =
-  process.env.RESEARCH_API_BASE_URL ?? "http://127.0.0.1:8001";
+const DEFAULT_RESEARCH_API_BASE_URL = "http://127.0.0.1:8001";
+
+const RESEARCH_API_BASE_URL = (
+  process.env.NEXT_PUBLIC_API_BASE_URL?.trim() ||
+  process.env.RESEARCH_API_BASE_URL?.trim() ||
+  DEFAULT_RESEARCH_API_BASE_URL
+).replace(/\/+$/, "");
 
 export async function proxyResearchJson(path: string, init?: RequestInit) {
   try {

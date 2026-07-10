@@ -1,59 +1,83 @@
-# AutoWealth Research Dashboard Prototype
+# AutoWealth Research Dashboard
 
-This is a Next.js + TypeScript + Tailwind CSS prototype for the outloo.xin research dashboard.
+这是面向 `outlook.xin` 的 Next.js、TypeScript 和 Tailwind CSS 研究看板原型，推荐生产域名为 `dashboard.outlook.xin`。
 
-The dashboard is research-only. It visualizes local mock research API output and does not connect to brokers, trading APIs, live DeepSeek calls, or parameter optimization workflows. Historical metrics are for analysis and education only and do not represent future results.
+看板只展示 mock 或预计算研究结果，不连接券商、真实交易接口、实时 DeepSeek 或参数寻优流程。历史指标仅用于研究和教育，不代表未来表现，也不构成投资建议。
 
-## Start The Backend API
+## 本地启动后端
 
-From the repository root:
+在仓库根目录运行：
 
-```bash
-python -m uvicorn autowealth.api.research_server:app --reload --port 8001
+```powershell
+.\scripts\start_research_api.ps1
 ```
 
-The frontend proxy expects the research API at:
+等价的手动命令：
 
-```text
-http://127.0.0.1:8001
+```powershell
+python -m uvicorn autowealth.api.research_server:app --reload --host 127.0.0.1 --port 8001
 ```
 
-You can override it for the Next.js server with:
+健康检查地址为 `http://127.0.0.1:8001/research/health`。
 
-```bash
-RESEARCH_API_BASE_URL=http://127.0.0.1:8001
+## 配置 API 地址
+
+前端服务端转发层读取 `NEXT_PUBLIC_API_BASE_URL`。未配置时默认使用：
+
+```env
+NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8001
 ```
 
-## Start The Frontend
+生产构建应在执行 `npm run build` 之前配置：
 
-From `frontend/`:
+```env
+NEXT_PUBLIC_API_BASE_URL=https://api.outlook.xin
+```
 
-```bash
+旧的 `RESEARCH_API_BASE_URL` 暂时保留为兼容回退，但新环境统一使用 `NEXT_PUBLIC_API_BASE_URL`。浏览器仍请求同源的 `/api/research/*`，由 Next.js 路由转发到上述研究 API 地址。
+
+## 本地启动前端
+
+在仓库根目录运行：
+
+```powershell
+cd frontend
 npm install
+cd ..
+.\scripts\start_dashboard.ps1
+```
+
+也可以在 `frontend/` 中手动执行：
+
+```powershell
+$env:NEXT_PUBLIC_API_BASE_URL="http://127.0.0.1:8001"
 npm run dev
 ```
 
-Open:
+打开 `http://127.0.0.1:3000`。
 
-```text
-http://127.0.0.1:3000
-```
+## 页面
 
-## Pages
+- Dashboard：组合指标、现金仓位、目标权重和权益曲线。
+- Backtest：历史研究指标、权益曲线及月度/年度收益占位。
+- Portfolio：研究目标权重、入选标的和过滤记录。
+- Factors：因子分布和候选评分。
+- Macro：宏观状态、仓位系数和宏观维度。
+- Research Notes：mock DeepSeek 摘要、风险复核和反方观点。
 
-- Dashboard: overview metrics, cash weight, allocation and equity curve.
-- Backtest: annualized return, drawdown, Sharpe, Calmar and return matrix placeholders.
-- Portfolio: target weights, selected symbols and rejected candidates.
-- Factors: factor score distribution and ranked candidate scores.
-- Macro: macro regime, equity multiplier and macro dimension scores.
-- Research Notes: mock DeepSeek report, risk flags and counter-arguments.
+## API 调用
 
-## API Calls
+Next.js 路由会转发以下研究接口：
 
-The Next.js route handlers proxy to the local research API:
+- `GET /research/health`
+- `GET /research/demo`
+- `POST /research/deepseek/mock-report`
 
-- `GET http://127.0.0.1:8001/research/health`
-- `GET http://127.0.0.1:8001/research/demo`
-- `POST http://127.0.0.1:8001/research/deepseek/mock-report`
+当前 DeepSeek 路径固定使用 mock 模式，不读取真实密钥，也不访问真实 DeepSeek 服务。
 
-DeepSeek is always used through the mock report endpoint in this prototype.
+## 部署域名
+
+- 看板：`https://dashboard.outlook.xin`
+- 研究 API：`https://api.outlook.xin`
+
+生产环境的 DNS、环境变量、CORS 和反向代理说明见 `docs/deployment.md`。
