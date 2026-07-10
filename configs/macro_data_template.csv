@@ -1,0 +1,3 @@
+# Template only. Do not treat this file as real macro data.
+# date is the observation period; available_date is the first publication date.
+date,available_date,pmi,cpi_yoy,ppi_yoy,m2_yoy,social_financing_yoy,ten_year_yield,usd_cny,policy_score,external_risk_score,source

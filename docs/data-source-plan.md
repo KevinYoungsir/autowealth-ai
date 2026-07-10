@@ -279,3 +279,17 @@ data/cache/600519_20090101_20241231_qfq.parquet
 ```
 
 `data/cache/` 和 `*.parquet` 已加入 `.gitignore`，缓存数据不得提交到 Git。
+
+## 12. 第十二阶段真实数据实现
+
+真实研究流水线新增以下数据边界：
+
+- `fundamental_schema.py` 统一保存 `report_date` 与 `available_date`，两者含义不得混用。
+- `fundamental_provider.py` 集中处理基本面网络调用；模块 import 不访问网络。
+- 历史公告日期必须来自数据源的显式公告或披露日期字段。缺失时记录 warning，不以报告期或当前日期代替。
+- 历史 PE、PB、股息率无法可靠取得时保留缺失值，不把当前估值静默回填到历史。
+- `universe.py` 把固定配置股票池明确标记为非 point-in-time，并预留历史指数成分 provider 接口。
+- 股票、基本面和基准缓存写入 `data/real_cache/`，并保存来源、区间、拉取时间、口径、行数和摘要 metadata。
+- 完整运行结果写入 `data/research_runs/<run_id>/`，两个目录均不提交到 Git。
+
+调仓日的数据选择必须满足 `available_date <= rebalance_date`。详细配置、运行命令和数据限制见 `docs/real-data-research.md`。
