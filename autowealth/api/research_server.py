@@ -15,6 +15,7 @@ import pandas as pd
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from autowealth.agents.deepseek_research_agent import DeepSeekResearchAgent
 from autowealth.api.research_models import (
@@ -72,6 +73,13 @@ DEFAULT_RESEARCH_API_CORS_ORIGINS = (
     "http://localhost:3000",
     "https://dashboard.outlook.xin",
 )
+DEFAULT_RESEARCH_API_TRUSTED_HOSTS = (
+    "127.0.0.1",
+    "localhost",
+    "testserver",
+    "api.outlook.xin",
+)
+RAILWAY_HEALTHCHECK_HOST = "healthcheck.railway.app"
 
 
 @dataclass
@@ -95,12 +103,19 @@ def _request_run_store(request: Request) -> ResearchRunStore:
 
 
 @research_router.get("/health", response_model=ResearchHealthResponse)
-async def research_health() -> ResearchHealthResponse:
+async def research_health(request: Request) -> ResearchHealthResponse:
+    store = _request_run_store(request)
+    research_runs_available = store.ensure_directory()
+    latest_run_available = (
+        store.has_runs() if research_runs_available else False
+    )
     return ResearchHealthResponse(
         status="ok",
         service="autowealth-research-api",
         version=RESEARCH_API_VERSION,
         mock_mode=True,
+        research_runs_available=research_runs_available,
+        latest_run_available=latest_run_available,
     )
 
 
@@ -353,7 +368,10 @@ async def research_run(request: ResearchRunRequest) -> ResearchPipelineResultPay
             slippage=request.slippage,
         )
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=400,
+            detail="The research request could not be processed.",
+        ) from exc
     return _result_payload(result)
 
 
@@ -365,7 +383,10 @@ async def research_summarize(
         result = _result_from_payload(payload)
         summary = summarize_research_result(result)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=400,
+            detail="The research summary input is invalid.",
+        ) from exc
     return _summary_payload(summary)
 
 
@@ -383,7 +404,10 @@ async def research_deepseek_mock_report(
         )
         report = agent.build_research_report(result)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=400,
+            detail="The mock research report input is invalid.",
+        ) from exc
     return DeepSeekMockReportResponse(**report)
 
 
@@ -395,9 +419,34 @@ def _research_api_cors_origins() -> list[str]:
     origins: list[str] = []
     for value in configured.split(","):
         origin = value.strip().rstrip("/")
+        if origin == "*":
+            raise ValueError("RESEARCH_API_CORS_ORIGINS cannot contain a wildcard")
         if origin and origin not in origins:
             origins.append(origin)
     return origins or list(DEFAULT_RESEARCH_API_CORS_ORIGINS)
+
+
+def _research_api_trusted_hosts() -> list[str]:
+    configured = os.getenv("RESEARCH_API_TRUSTED_HOSTS", "")
+    values = (
+        configured.split(",")
+        if configured.strip()
+        else list(DEFAULT_RESEARCH_API_TRUSTED_HOSTS)
+    )
+    hosts: list[str] = []
+    for value in values:
+        host = value.strip().lower()
+        if not host:
+            continue
+        if "*" in host or "://" in host or "/" in host:
+            raise ValueError(
+                "RESEARCH_API_TRUSTED_HOSTS contains an invalid host"
+            )
+        if host not in hosts:
+            hosts.append(host)
+    if RAILWAY_HEALTHCHECK_HOST not in hosts:
+        hosts.append(RAILWAY_HEALTHCHECK_HOST)
+    return hosts or list(DEFAULT_RESEARCH_API_TRUSTED_HOSTS)
 
 
 def create_research_app(
@@ -416,6 +465,10 @@ def create_research_app(
         allow_headers=["Content-Type"],
         max_age=600,
     )
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=_research_api_trusted_hosts(),
+    )
     app.state.research_run_store = run_store or ResearchRunStore()
 
     @app.exception_handler(ResearchRunStoreError)
@@ -430,6 +483,18 @@ def create_research_app(
             status_code=status_code,
             content=payload.model_dump(),
         )
+
+    @app.exception_handler(Exception)
+    async def unexpected_error_handler(
+        request: Request,
+        exc: Exception,
+    ) -> JSONResponse:
+        del request, exc
+        payload = ResearchAPIErrorResponse(
+            code="internal_server_error",
+            message="The research API could not process this request.",
+        )
+        return JSONResponse(status_code=500, content=payload.model_dump())
 
     app.include_router(research_router)
     return app

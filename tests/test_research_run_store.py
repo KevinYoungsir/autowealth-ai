@@ -140,6 +140,19 @@ def test_empty_runs_directory_returns_empty_and_latest_is_clear(
         store.get_latest_run()
 
 
+def test_missing_absolute_runs_directory_is_created_safely(
+    tmp_path: Path,
+) -> None:
+    root = (tmp_path / "mounted" / "research_runs").resolve()
+    store = ResearchRunStore(root)
+
+    assert not root.exists()
+    assert store.list_runs() == []
+    assert root.is_dir()
+    assert store.ensure_directory() is True
+    assert store.has_runs() is False
+
+
 def test_module_import_does_not_scan_disk(monkeypatch) -> None:
     def fail(*args, **kwargs):
         raise AssertionError("run store scanned disk during import")

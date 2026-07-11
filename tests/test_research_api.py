@@ -45,6 +45,8 @@ def test_research_health():
     assert payload["service"] == "autowealth-research-api"
     assert payload["mock_mode"] is True
     assert "version" in payload
+    assert isinstance(payload["research_runs_available"], bool)
+    assert isinstance(payload["latest_run_available"], bool)
 
 
 def test_research_cors_allows_configured_dashboard_origins():
@@ -65,6 +67,85 @@ def test_research_cors_allows_configured_dashboard_origins():
         )
         assert response.status_code == 200
         assert response.headers["access-control-allow-origin"] == origin
+
+
+def test_research_cors_rejects_wildcard_configuration():
+    with patch.dict(os.environ, {"RESEARCH_API_CORS_ORIGINS": "*"}):
+        with pytest.raises(ValueError, match="cannot contain a wildcard"):
+            create_research_app()
+
+
+def test_trusted_hosts_allow_production_and_railway_healthcheck(tmp_path: Path):
+    with patch.dict(
+        os.environ,
+        {"RESEARCH_API_TRUSTED_HOSTS": "api.outlook.xin"},
+    ):
+        trusted_client = TestClient(
+            create_research_app(ResearchRunStore(tmp_path / "runs")),
+            base_url="https://api.outlook.xin",
+        )
+
+    assert trusted_client.get("/research/health").status_code == 200
+    railway = trusted_client.get(
+        "/research/health",
+        headers={"Host": "healthcheck.railway.app"},
+    )
+    assert railway.status_code == 200
+
+
+def test_trusted_hosts_reject_unknown_host(tmp_path: Path):
+    with patch.dict(
+        os.environ,
+        {"RESEARCH_API_TRUSTED_HOSTS": "api.outlook.xin"},
+    ):
+        trusted_client = TestClient(
+            create_research_app(ResearchRunStore(tmp_path / "runs")),
+            base_url="https://api.outlook.xin",
+        )
+
+    response = trusted_client.get(
+        "/research/health",
+        headers={"Host": "untrusted.example"},
+    )
+
+    assert response.status_code == 400
+    assert "Invalid host" in response.text
+
+
+def test_empty_health_and_latest_are_structured(tmp_path: Path):
+    root = tmp_path / "missing" / "research_runs"
+    empty_client = TestClient(create_research_app(ResearchRunStore(root)))
+
+    health = empty_client.get("/research/health")
+    runs = empty_client.get("/research/runs")
+    latest = empty_client.get("/research/runs/latest")
+
+    assert health.status_code == 200
+    assert health.json()["research_runs_available"] is True
+    assert health.json()["latest_run_available"] is False
+    assert root.is_dir()
+    assert runs.json()["runs"] == []
+    assert latest.status_code == 404
+    assert latest.json()["code"] == "research_run_not_found"
+    assert "no research runs" in latest.json()["message"]
+
+
+def test_unexpected_api_error_is_sanitized(tmp_path: Path):
+    store = ResearchRunStore(tmp_path / "runs")
+    store.list_runs = MagicMock(
+        side_effect=RuntimeError("secret D:\\private\\path TOKEN=value")
+    )
+    safe_client = TestClient(
+        create_research_app(store),
+        raise_server_exceptions=False,
+    )
+
+    response = safe_client.get("/research/runs")
+
+    assert response.status_code == 500
+    assert response.json()["code"] == "internal_server_error"
+    assert "private" not in response.text
+    assert "TOKEN" not in response.text
 
 
 def test_research_demo_uses_mock_data_without_network():

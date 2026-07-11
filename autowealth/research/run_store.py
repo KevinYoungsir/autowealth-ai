@@ -70,19 +70,44 @@ class ResearchRunStore:
     def root_directory(self) -> Path:
         return self._root
 
+    def ensure_directory(self) -> bool:
+        """Create the configured root when possible without exposing its path."""
+        if self._root.exists():
+            if not self._root.is_dir():
+                raise ResearchRunStoreError(
+                    "configured research runs location is not a directory"
+                )
+            return True
+        try:
+            self._root.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return False
+        return self._root.is_dir()
+
+    def has_runs(self) -> bool:
+        """Return whether at least one safely named run directory is present."""
+        if not self.ensure_directory():
+            return False
+        return any(
+            candidate.is_dir()
+            and not candidate.is_symlink()
+            and SAFE_RUN_ID.fullmatch(candidate.name)
+            for candidate in self._root.iterdir()
+        )
+
     def list_runs(self, limit: Optional[int] = None) -> list[dict[str, Any]]:
         if limit is not None and limit <= 0:
             raise ValueError("limit must be positive")
-        if not self._root.exists():
+        if not self.ensure_directory():
             return []
-        if not self._root.is_dir():
-            raise ResearchRunStoreError(
-                "configured research runs location is not a directory"
-            )
 
         summaries = []
         for candidate in self._root.iterdir():
-            if not candidate.is_dir() or not SAFE_RUN_ID.fullmatch(candidate.name):
+            if (
+                not candidate.is_dir()
+                or candidate.is_symlink()
+                or not SAFE_RUN_ID.fullmatch(candidate.name)
+            ):
                 continue
             summaries.append(self.get_summary(candidate.name))
         summaries.sort(key=_summary_sort_key, reverse=True)
