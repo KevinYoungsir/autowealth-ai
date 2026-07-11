@@ -126,6 +126,59 @@ RESEARCH_API_CORS_ORIGINS=http://127.0.0.1:3000,http://localhost:3000,https://da
 
 本阶段所有内置接口都可以在无网络环境中运行。`/research/demo` 使用本地 mock 股票、mock 因子、mock 宏观状态和 mock 价格数据。`/research/deepseek/mock-report` 使用本地确定性规则生成结构化报告。
 
+## 真实研究运行目录
+
+真实运行接口通过只读 `ResearchRunStore` 读取 artifacts。默认目录为项目根
+目录下的 `data/research_runs`，可使用环境变量覆盖：
+
+```env
+RESEARCH_RUNS_DIRECTORY=data/research_runs
+```
+
+API 不接受磁盘路径参数。`run_id` 只能包含字母、数字、下划线和连字符，
+并且解析后的目录必须仍位于配置根目录内。模块 import 不扫描目录，API
+请求也不会触发网络或修改 artifacts。
+
+## 真实运行接口
+
+- `GET /research/runs?limit=20`：按运行时间倒序返回摘要，不读取大体积 parquet。
+- `GET /research/runs/latest`：返回最新运行摘要、manifest、metrics、基准和 warning 摘要。
+- `GET /research/runs/{run_id}`：返回指定运行详情。
+- `GET /research/runs/{run_id}/equity-curve?downsample=500`：返回有上限且保留首尾点的权益曲线。
+- `GET /research/runs/{run_id}/benchmark-curve?downsample=500`：返回基准曲线或结构化 unavailable 原因。
+- `GET /research/runs/{run_id}/holdings?limit=200&rebalance_date=YYYY-MM-DD`：返回逐标的持仓快照。
+- `GET /research/runs/{run_id}/trades?limit=500`：返回有限数量交易记录。
+- `GET /research/runs/{run_id}/factors?limit=500`：返回因子快照与调仓期/总体覆盖率。
+- `GET /research/runs/{run_id}/warnings?sample_limit=3&raw_limit=20`：返回分类计数、少量样例和有限原始 warning。
+
+真实运行响应统一包含 `data_source: "real_artifacts"`。`run_status` 显示为
+`success`、`partial_success` 或 `failed`；看板分别解释为完整运行、部分完成
+和运行失败。失败运行不应展示误导性的绩效结论。
+
+## Warning 聚合
+
+原始 `warnings.json` 保持不变。API 读取后按以下类别聚合：
+
+```text
+price_provider, price_quality, fundamental_data, point_in_time,
+macro_data, universe_bias, portfolio_constraints, factor_coverage,
+benchmark, system
+```
+
+每类只返回配置数量的样例，避免前端默认渲染全部 warning。
+
+## 基准不可用
+
+基准失败时 API 返回 `status: "unavailable"`、各标的 `reason` 和空 points，
+不会创建或推断基准曲线。成功基准继续返回已落盘的真实曲线。
+
+## 前端 Fallback
+
+看板先调用 `/research/runs`。存在运行时只使用所选真实 artifacts；目录为空
+时回退 `/research/demo` 并显示“演示数据”。API 整体不可用时显示
+`api_unavailable`，不会把 mock 标记成真实。DeepSeek 页面继续使用 mock
+review，并与真实量化运行分开标识。
+
 ## 边界
 
 - API 输出仅用于研究和教育展示。

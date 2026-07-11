@@ -26,7 +26,21 @@ const navItems = [
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const { refresh, loading, health } = useResearchData();
+  const {
+    refresh,
+    loading,
+    health,
+    dataSource,
+    runList,
+    selectedRunId,
+    selectRun
+  } = useResearchData();
+  const sourceLabel =
+    dataSource === "real_artifacts"
+      ? "真实研究 artifacts"
+      : dataSource === "mock_demo"
+        ? "演示数据"
+        : "API 不可用";
 
   return (
     <div className="relative min-h-screen bg-ink-950 text-slate-100">
@@ -70,12 +84,27 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <ShieldCheck className="h-5 w-5 text-signal-green" aria-hidden="true" />
               <div>
                 <div className="text-sm font-semibold text-slate-100">outlook.xin prototype</div>
-                <div className="text-xs text-slate-500">研究展示 · mock API · 非交易系统</div>
+                <div className="text-xs text-slate-500">研究展示 · {sourceLabel} · 非交易系统</div>
               </div>
             </div>
             <div className="flex items-center gap-2">
+              {runList.length > 0 ? (
+                <select
+                  aria-label="选择研究运行"
+                  value={selectedRunId ?? ""}
+                  onChange={(event) => void selectRun(event.target.value)}
+                  className="h-9 max-w-[280px] rounded-lg border border-white/10 bg-ink-900 px-3 text-xs text-slate-200"
+                  disabled={loading}
+                >
+                  {runList.map((run) => (
+                    <option key={run.run_id} value={run.run_id}>
+                      {run.experiment_name} · {run.run_id}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
               <span className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-slate-300">
-                API {health?.mock_mode ? "mock" : "unknown"}
+                {sourceLabel} · API {health?.status ?? "unknown"}
               </span>
               <button
                 type="button"

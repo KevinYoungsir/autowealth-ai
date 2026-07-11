@@ -9,25 +9,40 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Any, Dict, Mapping
+from typing import Any, Dict, Mapping, Optional
 
 import pandas as pd
-from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from autowealth.agents.deepseek_research_agent import DeepSeekResearchAgent
 from autowealth.api.research_models import (
     DeepSeekMockReportResponse,
     EquityPoint,
+    EquityCurvePoint,
+    HoldingRecord,
     PortfolioConstraintsInput,
     RESEARCH_API_EXPLANATION,
     RESEARCH_API_VERSION,
     ResearchDemoResponse,
     ResearchFactorScoreInput,
     ResearchHealthResponse,
+    ResearchAPIErrorResponse,
+    ResearchBenchmarkCurveResponse,
+    ResearchEquityCurveResponse,
+    ResearchFactorsResponse,
+    ResearchHoldingsResponse,
     ResearchPipelineResultPayload,
+    ResearchRunDetailResponse,
+    ResearchRunListResponse,
     ResearchRunRequest,
+    ResearchRunSummary,
     ResearchSummaryPayload,
+    ResearchTradesResponse,
+    ResearchWarningsResponse,
+    TradeRecord,
+    WarningSummary,
 )
 from autowealth.portfolio.schema import PortfolioConstraints
 from autowealth.research import (
@@ -41,6 +56,15 @@ from autowealth.research import (
     summarize_research_result,
 )
 from autowealth.research.schema import ResearchPipelineResult, ResearchSummary
+from autowealth.research.run_store import (
+    InvalidRunIdError,
+    ResearchArtifactDecodeError,
+    ResearchArtifactNotFoundError,
+    ResearchRunNotFoundError,
+    ResearchRunStore,
+    ResearchRunStoreError,
+    aggregate_warnings,
+)
 
 
 DEFAULT_RESEARCH_API_CORS_ORIGINS = (
@@ -59,6 +83,15 @@ class _PrecomputedFactorScore:
 
 
 research_router = APIRouter(prefix="/research", tags=["research"])
+RUN_ERROR_RESPONSES = {
+    400: {"model": ResearchAPIErrorResponse},
+    404: {"model": ResearchAPIErrorResponse},
+    422: {"model": ResearchAPIErrorResponse},
+}
+
+
+def _request_run_store(request: Request) -> ResearchRunStore:
+    return request.app.state.research_run_store
 
 
 @research_router.get("/health", response_model=ResearchHealthResponse)
@@ -80,6 +113,223 @@ async def research_demo() -> ResearchDemoResponse:
         result=_result_payload(result),
         summary=_summary_payload(summary),
         explanation=RESEARCH_API_EXPLANATION,
+    )
+
+
+@research_router.get(
+    "/runs",
+    response_model=ResearchRunListResponse,
+    responses=RUN_ERROR_RESPONSES,
+)
+async def research_runs(
+    request: Request,
+    limit: int = Query(20, ge=1, le=100),
+) -> ResearchRunListResponse:
+    store = _request_run_store(request)
+    runs = [ResearchRunSummary(**item) for item in store.list_runs(limit=limit)]
+    return ResearchRunListResponse(count=len(runs), runs=runs)
+
+
+@research_router.get(
+    "/runs/latest",
+    response_model=ResearchRunDetailResponse,
+    responses=RUN_ERROR_RESPONSES,
+)
+async def research_latest_run(request: Request) -> ResearchRunDetailResponse:
+    return _run_detail_response(
+        _request_run_store(request).get_latest_run()
+    )
+
+
+@research_router.get(
+    "/runs/{run_id}",
+    response_model=ResearchRunDetailResponse,
+    responses=RUN_ERROR_RESPONSES,
+)
+async def research_run_detail(
+    run_id: str,
+    request: Request,
+) -> ResearchRunDetailResponse:
+    return _run_detail_response(_request_run_store(request).get_run(run_id))
+
+
+@research_router.get(
+    "/runs/{run_id}/equity-curve",
+    response_model=ResearchEquityCurveResponse,
+    responses=RUN_ERROR_RESPONSES,
+)
+async def research_run_equity_curve(
+    run_id: str,
+    request: Request,
+    downsample: int = Query(500, ge=2, le=5000),
+) -> ResearchEquityCurveResponse:
+    frame = _request_run_store(request).read_equity_curve(run_id)
+    if "date" not in frame or "equity" not in frame:
+        raise ResearchArtifactDecodeError(
+            f"equity_curve.parquet for run {run_id} lacks date/equity columns"
+        )
+    frame = frame.sort_values("date")
+    sampled = _downsample_frame(frame, downsample)
+    points = [
+        EquityCurvePoint(
+            date=_date_text(row["date"]),
+            equity=float(row["equity"]),
+        )
+        for _, row in sampled.iterrows()
+    ]
+    return ResearchEquityCurveResponse(
+        run_id=run_id,
+        total_points=len(frame),
+        returned_points=len(points),
+        downsample=downsample,
+        points=points,
+    )
+
+
+@research_router.get(
+    "/runs/{run_id}/benchmark-curve",
+    response_model=ResearchBenchmarkCurveResponse,
+    responses=RUN_ERROR_RESPONSES,
+)
+async def research_run_benchmark_curve(
+    run_id: str,
+    request: Request,
+    downsample: int = Query(500, ge=2, le=5000),
+) -> ResearchBenchmarkCurveResponse:
+    store = _request_run_store(request)
+    detail = store.get_run(run_id)
+    status, reasons = _benchmark_response_status(detail["benchmark_metrics"])
+    if status == "unavailable":
+        return ResearchBenchmarkCurveResponse(
+            run_id=run_id,
+            status=status,
+            reasons=reasons,
+            downsample=downsample,
+        )
+    frame = store.read_benchmark_curve(run_id)
+    if "date" not in frame:
+        raise ResearchArtifactDecodeError(
+            f"benchmark_curve.parquet for run {run_id} lacks a date column"
+        )
+    sampled = _downsample_frame(frame.sort_values("date"), downsample)
+    points = _frame_records(sampled)
+    return ResearchBenchmarkCurveResponse(
+        run_id=run_id,
+        status=status,
+        reasons=reasons,
+        total_points=len(frame),
+        returned_points=len(points),
+        downsample=downsample,
+        points=points,
+    )
+
+
+@research_router.get(
+    "/runs/{run_id}/holdings",
+    response_model=ResearchHoldingsResponse,
+    responses=RUN_ERROR_RESPONSES,
+)
+async def research_run_holdings(
+    run_id: str,
+    request: Request,
+    limit: int = Query(200, ge=1, le=2000),
+    rebalance_date: Optional[str] = Query(None),
+) -> ResearchHoldingsResponse:
+    store = _request_run_store(request)
+    frame = store.read_holdings(run_id)
+    records = _holding_records(frame, rebalance_date=rebalance_date)[:limit]
+    manifest = store.read_manifest(run_id)
+    coverage = _mapping_value(manifest.get("coverage_summary"))
+    constraints = _mapping_value(
+        _mapping_value(manifest.get("config_summary")).get(
+            "portfolio_constraints"
+        )
+    )
+    return ResearchHoldingsResponse(
+        run_id=run_id,
+        records=[HoldingRecord(**record) for record in records],
+        returned=len(records),
+        min_holdings=_optional_int(constraints.get("min_holdings")),
+        holdings_count_by_rebalance={
+            str(date): int(count)
+            for date, count in _mapping_value(
+                coverage.get("holdings_count_by_rebalance")
+            ).items()
+        },
+    )
+
+
+@research_router.get(
+    "/runs/{run_id}/trades",
+    response_model=ResearchTradesResponse,
+    responses=RUN_ERROR_RESPONSES,
+)
+async def research_run_trades(
+    run_id: str,
+    request: Request,
+    limit: int = Query(500, ge=1, le=5000),
+) -> ResearchTradesResponse:
+    frame = _request_run_store(request).read_trades(run_id)
+    if "date" in frame:
+        frame = frame.sort_values("date", ascending=False)
+    records = _frame_records(frame.head(limit))
+    return ResearchTradesResponse(
+        run_id=run_id,
+        records=[TradeRecord(**record) for record in records],
+        returned=len(records),
+    )
+
+
+@research_router.get(
+    "/runs/{run_id}/factors",
+    response_model=ResearchFactorsResponse,
+    responses=RUN_ERROR_RESPONSES,
+)
+async def research_run_factors(
+    run_id: str,
+    request: Request,
+    limit: int = Query(500, ge=1, le=5000),
+) -> ResearchFactorsResponse:
+    store = _request_run_store(request)
+    frame = store.read_factor_snapshots(run_id)
+    if "rebalance_date" in frame:
+        frame = frame.sort_values("rebalance_date", ascending=False)
+    records = _frame_records(frame.head(limit))
+    coverage = _mapping_value(
+        store.read_manifest(run_id).get("coverage_summary")
+    )
+    return ResearchFactorsResponse(
+        run_id=run_id,
+        records=records,
+        returned=len(records),
+        coverage_by_rebalance=_mapping_value(
+            coverage.get("factor_coverage_by_rebalance")
+        ),
+        coverage_overall=_mapping_value(
+            coverage.get("factor_coverage_overall")
+        ),
+    )
+
+
+@research_router.get(
+    "/runs/{run_id}/warnings",
+    response_model=ResearchWarningsResponse,
+    responses=RUN_ERROR_RESPONSES,
+)
+async def research_run_warnings(
+    run_id: str,
+    request: Request,
+    sample_limit: int = Query(3, ge=0, le=10),
+    raw_limit: int = Query(20, ge=0, le=200),
+) -> ResearchWarningsResponse:
+    summary = aggregate_warnings(
+        _request_run_store(request).read_warnings(run_id),
+        sample_limit=sample_limit,
+        raw_limit=raw_limit,
+    )
+    return ResearchWarningsResponse(
+        run_id=run_id,
+        summary=WarningSummary(**summary),
     )
 
 
@@ -150,7 +400,9 @@ def _research_api_cors_origins() -> list[str]:
     return origins or list(DEFAULT_RESEARCH_API_CORS_ORIGINS)
 
 
-def create_research_app() -> FastAPI:
+def create_research_app(
+    run_store: Optional[ResearchRunStore] = None,
+) -> FastAPI:
     app = FastAPI(
         title="AutoWealth Research API",
         description="Research-only aggregation API for A-share portfolio experiments.",
@@ -164,6 +416,21 @@ def create_research_app() -> FastAPI:
         allow_headers=["Content-Type"],
         max_age=600,
     )
+    app.state.research_run_store = run_store or ResearchRunStore()
+
+    @app.exception_handler(ResearchRunStoreError)
+    async def research_run_store_error_handler(
+        request: Request,
+        exc: ResearchRunStoreError,
+    ) -> JSONResponse:
+        del request
+        status_code, code = _store_error_status(exc)
+        payload = ResearchAPIErrorResponse(code=code, message=str(exc))
+        return JSONResponse(
+            status_code=status_code,
+            content=payload.model_dump(),
+        )
+
     app.include_router(research_router)
     return app
 
@@ -314,6 +581,161 @@ def _series_from_equity_points(points: list[EquityPoint]) -> pd.Series:
     values = [float(point.equity) for point in points]
     series = pd.Series(values, index=dates).dropna()
     return series.sort_index()
+
+
+def _run_detail_response(detail: Mapping[str, Any]) -> ResearchRunDetailResponse:
+    warning_summary = aggregate_warnings(
+        _mapping_value(detail.get("warnings")),
+        sample_limit=3,
+        raw_limit=0,
+    )
+    return ResearchRunDetailResponse(
+        summary=ResearchRunSummary(**_mapping_value(detail.get("summary"))),
+        manifest=_mapping_value(detail.get("manifest")),
+        metrics=_mapping_value(detail.get("metrics")),
+        benchmark_metrics=_mapping_value(detail.get("benchmark_metrics")),
+        warning_summary=WarningSummary(**warning_summary),
+    )
+
+
+def _store_error_status(exc: ResearchRunStoreError) -> tuple[int, str]:
+    if isinstance(exc, InvalidRunIdError):
+        return 400, "invalid_run_id"
+    if isinstance(
+        exc, (ResearchRunNotFoundError, ResearchArtifactNotFoundError)
+    ):
+        return 404, "research_run_not_found"
+    if isinstance(exc, ResearchArtifactDecodeError):
+        return 422, "invalid_research_artifact"
+    return 500, "research_run_store_error"
+
+
+def _downsample_frame(frame: pd.DataFrame, limit: int) -> pd.DataFrame:
+    if len(frame) <= limit:
+        return frame.copy()
+    indexes = sorted(
+        {
+            round(index * (len(frame) - 1) / (limit - 1))
+            for index in range(limit)
+        }
+    )
+    return frame.iloc[indexes].copy()
+
+
+def _benchmark_response_status(
+    benchmarks: Mapping[str, Any],
+) -> tuple[str, dict[str, str]]:
+    reasons: dict[str, str] = {}
+    available = 0
+    for symbol, value in benchmarks.items():
+        entry = _mapping_value(value)
+        if entry.get("status") == "unavailable":
+            reasons[str(symbol)] = str(entry.get("reason") or "unavailable")
+        else:
+            available += 1
+    if available == 0:
+        return "unavailable", reasons
+    if reasons:
+        return "partial", reasons
+    return "available", reasons
+
+
+def _holding_records(
+    frame: pd.DataFrame,
+    *,
+    rebalance_date: Optional[str],
+) -> list[dict[str, Any]]:
+    data = pd.DataFrame(frame).copy()
+    if "date" not in data:
+        raise ResearchArtifactDecodeError(
+            "holdings.parquet lacks a date column"
+        )
+    data["date"] = pd.to_datetime(data["date"], errors="coerce")
+    data = data.dropna(subset=["date"])
+    if rebalance_date is not None:
+        requested = pd.to_datetime(rebalance_date, errors="coerce")
+        if pd.isna(requested):
+            raise InvalidRunIdError("rebalance_date has an invalid format")
+        data = data[data["date"].dt.normalize() == requested.normalize()]
+    data = data.sort_values("date", ascending=False)
+
+    records: list[dict[str, Any]] = []
+    for _, row in data.iterrows():
+        date_text = _date_text(row["date"])
+        for column in data.columns:
+            if not column.endswith("_weight") or column == "cash_weight":
+                continue
+            weight = _optional_float_value(row.get(column))
+            if weight is None or weight <= 0:
+                continue
+            symbol = column[: -len("_weight")]
+            records.append(
+                {
+                    "rebalance_date": date_text,
+                    "symbol": symbol,
+                    "weight": weight,
+                    "shares": _optional_float_value(
+                        row.get(f"{symbol}_shares")
+                    ),
+                    "cash_weight": _optional_float_value(
+                        row.get("cash_weight")
+                    ),
+                    "cash": _optional_float_value(row.get("cash")),
+                    "equity": _optional_float_value(row.get("equity")),
+                }
+            )
+    return records
+
+
+def _frame_records(frame: pd.DataFrame) -> list[dict[str, Any]]:
+    records = []
+    for record in pd.DataFrame(frame).to_dict(orient="records"):
+        records.append(
+            {str(key): _json_scalar(value) for key, value in record.items()}
+        )
+    return records
+
+
+def _json_scalar(value: Any) -> Any:
+    if isinstance(value, pd.Timestamp):
+        return value.isoformat()
+    if hasattr(value, "item"):
+        try:
+            value = value.item()
+        except (TypeError, ValueError):
+            return str(value)
+    try:
+        if bool(pd.isna(value)):
+            return None
+    except (TypeError, ValueError):
+        pass
+    return value
+
+
+def _date_text(value: Any) -> str:
+    timestamp = pd.to_datetime(value, errors="coerce")
+    if pd.isna(timestamp):
+        return str(value)
+    return pd.Timestamp(timestamp).isoformat()
+
+
+def _mapping_value(value: object) -> dict[str, Any]:
+    return dict(value) if isinstance(value, Mapping) else {}
+
+
+def _optional_float_value(value: object) -> Optional[float]:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return None if pd.isna(parsed) else parsed
+
+
+def _optional_int(value: object) -> Optional[int]:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _json_ready(value: Any) -> Any:

@@ -6,9 +6,16 @@ const RESEARCH_API_BASE_URL = (
   DEFAULT_RESEARCH_API_BASE_URL
 ).replace(/\/+$/, "");
 
+function buildResearchApiUrl(path: string) {
+  if (path !== "/research" && !path.startsWith("/research/")) {
+    throw new Error("Only research API paths can be proxied");
+  }
+  return `${RESEARCH_API_BASE_URL}${path}`;
+}
+
 export async function proxyResearchJson(path: string, init?: RequestInit) {
   try {
-    const response = await fetch(`${RESEARCH_API_BASE_URL}${path}`, {
+    const response = await fetch(buildResearchApiUrl(path), {
       ...init,
       headers: {
         "Content-Type": "application/json",

@@ -7,12 +7,29 @@ import {
   SectionHeader
 } from "@/components/dashboard-sections";
 import { useResearchData } from "@/components/research-data-provider";
+import {
+  DataSourceBanner,
+  RealMetricGrid,
+  RealReturnsPanel,
+  RunLimitationsPanel
+} from "@/components/real-run-sections";
 
 export default function BacktestPage() {
-  const { demo, health, loading, error } = useResearchData();
+  const {
+    demo,
+    health,
+    loading,
+    error,
+    dataSource,
+    realDetail,
+    realEquity,
+    realBenchmark
+  } = useResearchData();
+  const real = dataSource === "real_artifacts" ? realDetail : null;
 
   return (
     <div className="space-y-5">
+      <DataSourceBanner source={dataSource} summary={real?.summary} />
       <SectionHeader
         eyebrow="Backtest"
         title="回测表现"
@@ -21,9 +38,24 @@ export default function BacktestPage() {
         loading={loading}
         error={error}
       />
-      <MetricGrid metrics={demo?.summary.backtest_metrics} />
-      <EquityPanel equityCurve={demo?.result.equity_curve ?? []} tall />
-      <ReturnPlaceholderPanel />
+      {real ? (
+        <>
+          <RunLimitationsPanel detail={real} />
+          {real.summary.run_status !== "failed" ? (
+            <>
+              <RealMetricGrid detail={real} />
+              <EquityPanel equityCurve={realEquity?.points ?? []} tall subtitle="Real artifact equity curve" />
+              <RealReturnsPanel detail={real} benchmark={realBenchmark} />
+            </>
+          ) : null}
+        </>
+      ) : (
+        <>
+          <MetricGrid metrics={demo?.summary.backtest_metrics} />
+          <EquityPanel equityCurve={demo?.result.equity_curve ?? []} tall />
+          <ReturnPlaceholderPanel />
+        </>
+      )}
     </div>
   );
 }
