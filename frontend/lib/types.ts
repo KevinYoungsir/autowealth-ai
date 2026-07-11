@@ -66,3 +66,111 @@ export type DeepSeekReport = {
   metadata: Record<string, any>;
   warnings: string[];
 };
+
+export type ResearchDataSource =
+  | "real_artifacts"
+  | "mock_demo"
+  | "api_unavailable";
+
+export type RunStatus = "success" | "partial_success" | "failed";
+
+export type FactorCoverage = {
+  available_count: number;
+  missing_count: number;
+  coverage_ratio: number;
+};
+
+export type ResearchRunSummary = {
+  run_id: string;
+  run_time: string;
+  experiment_name: string;
+  run_status: RunStatus;
+  start_date: string;
+  end_date: string;
+  annualized_return: number | null;
+  total_return: number | null;
+  max_drawdown: number | null;
+  sharpe_ratio: number | null;
+  benchmark_status: string;
+  warning_count: number;
+  price_coverage_ratio: number | null;
+  factor_coverage_overall: Record<string, FactorCoverage>;
+};
+
+export type ResearchRunListResponse = {
+  data_source: "real_artifacts";
+  count: number;
+  runs: ResearchRunSummary[];
+};
+
+export type WarningSummary = {
+  total: number;
+  categories: Record<string, number>;
+  samples: Record<string, string[]>;
+  raw_warnings: string[];
+  raw_returned: number;
+  raw_truncated: boolean;
+};
+
+export type ResearchRunDetail = {
+  data_source: "real_artifacts";
+  summary: ResearchRunSummary;
+  manifest: Record<string, any>;
+  metrics: Record<string, any>;
+  benchmark_metrics: Record<string, any>;
+  warning_summary: WarningSummary;
+};
+
+export type ResearchEquityCurveResponse = {
+  data_source: "real_artifacts";
+  run_id: string;
+  total_points: number;
+  returned_points: number;
+  downsample: number;
+  points: EquityPoint[];
+};
+
+export type HoldingRecord = {
+  rebalance_date: string;
+  symbol: string;
+  weight: number;
+  shares: number | null;
+  cash_weight: number | null;
+  cash: number | null;
+  equity: number | null;
+};
+
+export type ResearchHoldingsResponse = {
+  data_source: "real_artifacts";
+  run_id: string;
+  records: HoldingRecord[];
+  returned: number;
+  min_holdings: number | null;
+  holdings_count_by_rebalance: Record<string, number>;
+};
+
+export type ResearchFactorsResponse = {
+  data_source: "real_artifacts";
+  run_id: string;
+  records: Array<Record<string, any>>;
+  returned: number;
+  coverage_by_rebalance: Record<string, Record<string, FactorCoverage>>;
+  coverage_overall: Record<string, FactorCoverage>;
+};
+
+export type ResearchWarningsResponse = {
+  data_source: "real_artifacts";
+  run_id: string;
+  summary: WarningSummary;
+};
+
+export type ResearchBenchmarkCurveResponse = {
+  data_source: "real_artifacts";
+  run_id: string;
+  status: string;
+  reasons: Record<string, string>;
+  total_points: number;
+  returned_points: number;
+  downsample: number;
+  points: Array<Record<string, number | string | null>>;
+};

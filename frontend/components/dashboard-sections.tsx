@@ -107,14 +107,16 @@ export function MetricGrid({ metrics }: { metrics?: Record<string, any> }) {
 
 export function EquityPanel({
   equityCurve,
-  tall = false
+  tall = false,
+  subtitle = "Mock research equity curve"
 }: {
   equityCurve: EquityPoint[];
   tall?: boolean;
+  subtitle?: string;
 }) {
   return (
     <section className="panel p-5">
-      <PanelTitle title="权益曲线" subtitle="Mock research equity curve" icon={LineChart} />
+      <PanelTitle title="权益曲线" subtitle={subtitle} icon={LineChart} />
       <div className="mt-4">
         <EquityCurveChart points={equityCurve} height={tall ? 360 : 285} />
       </div>

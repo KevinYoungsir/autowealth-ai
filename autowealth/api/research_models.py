@@ -4,7 +4,7 @@ Pydantic models for the research-only FastAPI surface.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -136,3 +136,133 @@ class DeepSeekMockReportResponse(BaseModel):
     validation_result: Dict[str, Any]
     metadata: Dict[str, Any]
     warnings: List[str]
+
+
+class FactorCoverageRecord(BaseModel):
+    available_count: int = 0
+    missing_count: int = 0
+    coverage_ratio: float = 0.0
+
+
+class ResearchRunSummary(BaseModel):
+    run_id: str
+    run_time: str
+    experiment_name: str
+    run_status: Literal["success", "partial_success", "failed"]
+    start_date: str
+    end_date: str
+    annualized_return: Optional[float] = None
+    total_return: Optional[float] = None
+    max_drawdown: Optional[float] = None
+    sharpe_ratio: Optional[float] = None
+    benchmark_status: str
+    warning_count: int
+    price_coverage_ratio: Optional[float] = None
+    factor_coverage_overall: Dict[str, FactorCoverageRecord] = Field(
+        default_factory=dict
+    )
+
+
+class ResearchRunListResponse(BaseModel):
+    data_source: Literal["real_artifacts"] = "real_artifacts"
+    count: int
+    runs: List[ResearchRunSummary]
+
+
+class WarningSummary(BaseModel):
+    total: int
+    categories: Dict[str, int]
+    samples: Dict[str, List[str]]
+    raw_warnings: List[str] = Field(default_factory=list)
+    raw_returned: int = 0
+    raw_truncated: bool = False
+
+
+class ResearchRunDetailResponse(BaseModel):
+    data_source: Literal["real_artifacts"] = "real_artifacts"
+    summary: ResearchRunSummary
+    manifest: Dict[str, Any]
+    metrics: Dict[str, Any]
+    benchmark_metrics: Dict[str, Any]
+    warning_summary: WarningSummary
+
+
+class EquityCurvePoint(BaseModel):
+    date: str
+    equity: float
+
+
+class ResearchEquityCurveResponse(BaseModel):
+    data_source: Literal["real_artifacts"] = "real_artifacts"
+    run_id: str
+    total_points: int
+    returned_points: int
+    downsample: int
+    points: List[EquityCurvePoint]
+
+
+class ResearchBenchmarkCurveResponse(BaseModel):
+    data_source: Literal["real_artifacts"] = "real_artifacts"
+    run_id: str
+    status: str
+    reasons: Dict[str, str] = Field(default_factory=dict)
+    total_points: int = 0
+    returned_points: int = 0
+    downsample: int
+    points: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class HoldingRecord(BaseModel):
+    rebalance_date: str
+    symbol: str
+    weight: float
+    shares: Optional[float] = None
+    cash_weight: Optional[float] = None
+    cash: Optional[float] = None
+    equity: Optional[float] = None
+
+
+class ResearchHoldingsResponse(BaseModel):
+    data_source: Literal["real_artifacts"] = "real_artifacts"
+    run_id: str
+    records: List[HoldingRecord]
+    returned: int
+    min_holdings: Optional[int] = None
+    holdings_count_by_rebalance: Dict[str, int] = Field(default_factory=dict)
+
+
+class TradeRecord(BaseModel):
+    date: str
+    symbol: str
+    side: str
+    shares: float
+    price: float
+    trade_value: float
+    cost: float
+
+
+class ResearchTradesResponse(BaseModel):
+    data_source: Literal["real_artifacts"] = "real_artifacts"
+    run_id: str
+    records: List[TradeRecord]
+    returned: int
+
+
+class ResearchFactorsResponse(BaseModel):
+    data_source: Literal["real_artifacts"] = "real_artifacts"
+    run_id: str
+    records: List[Dict[str, Any]]
+    returned: int
+    coverage_by_rebalance: Dict[str, Any] = Field(default_factory=dict)
+    coverage_overall: Dict[str, FactorCoverageRecord] = Field(default_factory=dict)
+
+
+class ResearchWarningsResponse(BaseModel):
+    data_source: Literal["real_artifacts"] = "real_artifacts"
+    run_id: str
+    summary: WarningSummary
+
+
+class ResearchAPIErrorResponse(BaseModel):
+    code: str
+    message: str

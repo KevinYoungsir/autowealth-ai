@@ -25,16 +25,24 @@ from autowealth.research.schema import (
     ResearchPipelineResult,
     ResearchSummary,
 )
+from autowealth.research.run_store import (
+    ResearchRunStore,
+    ResearchRunStoreError,
+    aggregate_warnings,
+)
 
 __all__ = [
     "ResearchExperimentConfig",
     "ResearchPipelineResult",
     "ResearchSummary",
+    "ResearchRunStore",
+    "ResearchRunStoreError",
     "RealDataAccessError",
     "RealResearchConfig",
     "RealResearchError",
     "RealResearchResult",
     "load_real_research_config",
+    "aggregate_warnings",
     "mock_candidate_symbols",
     "mock_factor_scores",
     "mock_industries",

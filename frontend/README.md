@@ -4,6 +4,9 @@
 
 看板只展示 mock 或预计算研究结果，不连接券商、真实交易接口、实时 DeepSeek 或参数寻优流程。历史指标仅用于研究和教育，不代表未来表现，也不构成投资建议。
 
+看板现在优先读取 `data/research_runs` 下已经完成且未被修改的真实研究
+artifacts。真实数据、演示数据和 API 不可用状态会在页面顶部明确区分。
+
 ## 本地启动后端
 
 在仓库根目录运行：
@@ -19,6 +22,20 @@ python -m uvicorn autowealth.api.research_server:app --reload --host 127.0.0.1 -
 ```
 
 健康检查地址为 `http://127.0.0.1:8001/research/health`。
+
+真实看板启动前应确认目录存在并至少包含一个完整运行：
+
+```text
+data/research_runs/<run_id>/run_manifest.json
+data/research_runs/<run_id>/metrics.json
+data/research_runs/<run_id>/equity_curve.parquet
+```
+
+可通过环境变量指定部署时挂载的只读目录：
+
+```env
+RESEARCH_RUNS_DIRECTORY=data/research_runs
+```
 
 ## 配置 API 地址
 
@@ -58,12 +75,14 @@ npm run dev
 
 ## 页面
 
-- Dashboard：组合指标、现金仓位、目标权重和权益曲线。
-- Backtest：历史研究指标、权益曲线及月度/年度收益占位。
-- Portfolio：研究目标权重、入选标的和过滤记录。
-- Factors：因子分布和候选评分。
-- Macro：宏观状态、仓位系数和宏观维度。
-- Research Notes：mock DeepSeek 摘要、风险复核和反方观点。
+- Dashboard：运行状态、覆盖率、绩效、权益曲线、持仓和 warning 摘要。
+- Backtest：年度/月度收益、回撤、换手率和基准状态。
+- Portfolio：最近调仓持仓、现金比例和 `min_holdings` 检查。
+- Factors：各因子覆盖率、缺失数量和实际复合权重。
+- Macro：宏观观察数量及中性乘数状态。
+- Research Notes：明确标记的 mock review，不与真实量化结果混合。
+
+侧栏顶部的运行选择器用于切换 `run_id`。选择后各页面同步读取同一运行。
 
 ## API 调用
 
@@ -72,8 +91,25 @@ Next.js 路由会转发以下研究接口：
 - `GET /research/health`
 - `GET /research/demo`
 - `POST /research/deepseek/mock-report`
+- `GET /research/runs`
+- `GET /research/runs/latest`
+- `GET /research/runs/{run_id}`
+- `GET /research/runs/{run_id}/equity-curve`
+- `GET /research/runs/{run_id}/benchmark-curve`
+- `GET /research/runs/{run_id}/holdings`
+- `GET /research/runs/{run_id}/trades`
+- `GET /research/runs/{run_id}/factors`
+- `GET /research/runs/{run_id}/warnings`
 
 当前 DeepSeek 路径固定使用 mock 模式，不读取真实密钥，也不访问真实 DeepSeek 服务。
+
+## 数据来源识别
+
+- `real_artifacts`：来自配置目录中已落盘的真实研究运行。
+- `mock_demo`：没有可用运行时显示的演示数据。
+- `api_unavailable`：后端不可访问，页面不把任何本地占位内容标为真实。
+
+`partial_success` 会显示“部分完成”和主要限制；`failed` 不展示绩效结论。
 
 ## 部署域名
 
