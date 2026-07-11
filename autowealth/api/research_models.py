@@ -21,6 +21,8 @@ class ResearchHealthResponse(BaseModel):
     service: str
     version: str
     mock_mode: bool
+    research_runs_available: bool
+    latest_run_available: bool
 
 
 class PriceBarInput(BaseModel):

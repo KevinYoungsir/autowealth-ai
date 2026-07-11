@@ -22,7 +22,7 @@ FastAPI /research/runs/*
 Next.js /api/research/runs/* proxy
         |
         v
-Dashboard / Backtest / Portfolio / Factors / Macro
+Dashboard / Backtest / Portfolio / Factors / Macro / System Status
 ```
 
 `ResearchRunStore` 仅在收到 API 请求后读取配置根目录。模块 import 不扫描磁盘，
@@ -39,6 +39,7 @@ Dashboard / Backtest / Portfolio / Factors / Macro
 | Macro | 宏观观察数、中性乘数状态 | manifest `coverage_summary` |
 | Research Notes | mock 风险复核与反方观点 | `/research/deepseek/mock-report`，固定 mock 模式 |
 | Warning 摘要 | 分类计数与少量样例 | 原始 `warnings.json` 的只读聚合结果 |
+| System Status | API、目录、latest run 和数据来源 | `/research/health`、`/research/runs`、latest 摘要 |
 
 权益、持仓和因子接口均设有返回上限。权益曲线降采样会保留首尾点，warning
 默认只显示分类计数和少量样例，不会一次渲染完整原始列表。
@@ -53,6 +54,9 @@ Dashboard / Backtest / Portfolio / Factors / Macro
 
 运行选择器只列出真实 artifacts。Research Notes 当前仍是 `mock review`，即使
 同页上下文来自真实量化运行，也不得把该复核描述为真实模型结论。
+
+System Status 只复用 health 和运行摘要，不调用 DeepSeek。它只显示 API 地址的
+协议类别和公开主机摘要，不展示服务器磁盘路径或环境变量原值。
 
 ## 运行状态
 
@@ -98,3 +102,4 @@ API 在不修改 `warnings.json` 的前提下聚合以下类别：
 - 基准不可用时只返回结构化原因和空曲线，不推断或伪造基准表现。
 - 看板不重新计算底层结果；发现 artifact 损坏或缺失时由 API 返回明确错误。
 - DeepSeek 区域当前只展示本地 mock review，不读取真实 API Key。
+- 生产构建缺少 `NEXT_PUBLIC_API_BASE_URL` 时显示 `api_unavailable`，不会回退 localhost。

@@ -50,8 +50,16 @@ type ResearchDataContextValue = {
   dataSource: ResearchDataSource;
   loading: boolean;
   error: string | null;
+  reportLoading: boolean;
+  reportError: string | null;
+  lastApiCheck: {
+    checkedAt: string;
+    status: "ok" | "degraded" | "unavailable";
+    message: string;
+  } | null;
   refresh: () => Promise<void>;
   selectRun: (runId: string) => Promise<void>;
+  loadReport: () => Promise<void>;
 };
 
 const ResearchDataContext = createContext<ResearchDataContextValue | null>(null);
@@ -71,11 +79,44 @@ export function ResearchDataProvider({ children }: { children: React.ReactNode }
   const [dataSource, setDataSource] = useState<ResearchDataSource>("api_unavailable");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [reportLoading, setReportLoading] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+  const [lastApiCheck, setLastApiCheck] = useState<
+    ResearchDataContextValue["lastApiCheck"]
+  >(null);
 
-  const loadMockReview = useCallback(async () => {
+  const loadDemo = useCallback(async () => {
     const demoResponse = await fetchDemo();
     setDemo(demoResponse);
-    setReport(await fetchMockReport(demoResponse.result));
+    return demoResponse;
+  }, []);
+
+  const loadReport = useCallback(async () => {
+    setReportLoading(true);
+    setReportError(null);
+    try {
+      const demoResponse = await fetchDemo();
+      setDemo(demoResponse);
+      setReport(await fetchMockReport(demoResponse.result));
+    } catch (caught) {
+      setReport(null);
+      setReportError(
+        caught instanceof Error ? caught.message : "Mock research review unavailable"
+      );
+    } finally {
+      setReportLoading(false);
+    }
+  }, []);
+
+  const clearRealData = useCallback(() => {
+    setRunList([]);
+    setSelectedRunId(null);
+    setRealDetail(null);
+    setRealEquity(null);
+    setRealBenchmark(null);
+    setRealHoldings(null);
+    setRealFactors(null);
+    setRealWarnings(null);
   }, []);
 
   const loadRealRun = useCallback(async (
@@ -118,6 +159,7 @@ export function ResearchDataProvider({ children }: { children: React.ReactNode }
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setHealth(null);
     try {
       setHealth(await fetchHealth());
       const runs = await fetchResearchRuns();
@@ -125,36 +167,47 @@ export function ResearchDataProvider({ children }: { children: React.ReactNode }
       if (runs.runs.length > 0) {
         const latest = await fetchLatestResearchRun();
         await loadRealRun(latest.summary.run_id, latest);
-        try {
-          await loadMockReview();
-        } catch {
-          setDemo(null);
-          setReport(null);
-        }
+        setLastApiCheck({
+          checkedAt: new Date().toISOString(),
+          status: "ok",
+          message: `已读取真实运行 ${latest.summary.run_id}`
+        });
       } else {
-        await loadMockReview();
-        setSelectedRunId(null);
-        setRealDetail(null);
-        setRealEquity(null);
-        setRealBenchmark(null);
-        setRealHoldings(null);
-        setRealFactors(null);
-        setRealWarnings(null);
+        await loadDemo();
+        clearRealData();
         setDataSource("mock_demo");
+        setLastApiCheck({
+          checkedAt: new Date().toISOString(),
+          status: "ok",
+          message: "API 正常，暂无真实研究运行"
+        });
       }
     } catch (caught) {
       try {
-        await loadMockReview();
+        await loadDemo();
+        clearRealData();
         setDataSource("mock_demo");
         setError("真实研究运行不可用，当前显示演示数据");
+        setLastApiCheck({
+          checkedAt: new Date().toISOString(),
+          status: "degraded",
+          message: "真实运行接口不可用，演示接口可用"
+        });
       } catch {
+        clearRealData();
+        setDemo(null);
         setDataSource("api_unavailable");
         setError(caught instanceof Error ? caught.message : "Research API unavailable");
+        setLastApiCheck({
+          checkedAt: new Date().toISOString(),
+          status: "unavailable",
+          message: "研究 API 不可用"
+        });
       }
     } finally {
       setLoading(false);
     }
-  }, [loadMockReview, loadRealRun]);
+  }, [clearRealData, loadDemo, loadRealRun]);
 
   useEffect(() => {
     void refresh();
@@ -176,8 +229,12 @@ export function ResearchDataProvider({ children }: { children: React.ReactNode }
       dataSource,
       loading,
       error,
+      reportLoading,
+      reportError,
+      lastApiCheck,
       refresh,
-      selectRun
+      selectRun,
+      loadReport
     }),
     [
       health,
@@ -194,8 +251,12 @@ export function ResearchDataProvider({ children }: { children: React.ReactNode }
       dataSource,
       loading,
       error,
+      reportLoading,
+      reportError,
+      lastApiCheck,
       refresh,
-      selectRun
+      selectRun,
+      loadReport
     ]
   );
 

@@ -10,6 +10,7 @@ import {
   LayoutDashboard,
   PieChart,
   RefreshCw,
+  Server,
   ShieldCheck,
   Waves
 } from "lucide-react";
@@ -21,7 +22,8 @@ const navItems = [
   { href: "/portfolio", label: "Portfolio", icon: PieChart },
   { href: "/factors", label: "Factors", icon: Gauge },
   { href: "/macro", label: "Macro", icon: Waves },
-  { href: "/research-notes", label: "Research Notes", icon: BrainCircuit }
+  { href: "/research-notes", label: "Research Notes", icon: BrainCircuit },
+  { href: "/system-status", label: "系统状态", icon: Server }
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {

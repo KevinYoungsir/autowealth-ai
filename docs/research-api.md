@@ -34,11 +34,21 @@ RESEARCH_API_CORS_ORIGINS=http://127.0.0.1:3000,http://localhost:3000,https://da
 
 生产部署建议由 `https://dashboard.outlook.xin` 提供看板，由 `https://api.outlook.xin` 提供研究 API，并保持精确来源白名单，避免使用通配来源。
 
+`RESEARCH_API_CORS_ORIGINS` 不接受 `*`。生产环境同时设置可信 Host：
+
+```env
+RESEARCH_API_TRUSTED_HOSTS=api.outlook.xin
+```
+
+本地默认允许 `localhost`、`127.0.0.1`，应用还会安全追加 Railway 健康检查
+使用的 `healthcheck.railway.app`。Host 值不允许协议、路径或通配符。未知 Host
+返回 400；允许来源的 OPTIONS 预检保持正常。
+
 ## 接口列表
 
 ### GET `/research/health`
 
-返回服务状态、模块版本和 mock 状态。
+返回服务状态、模块版本、mock 状态和运行目录布尔可用性，不返回目录路径或变量值。
 
 响应示例：
 
@@ -47,7 +57,9 @@ RESEARCH_API_CORS_ORIGINS=http://127.0.0.1:3000,http://localhost:3000,https://da
   "status": "ok",
   "service": "autowealth-research-api",
   "version": "0.1.0",
-  "mock_mode": true
+  "mock_mode": true,
+  "research_runs_available": true,
+  "latest_run_available": false
 }
 ```
 
@@ -135,6 +147,15 @@ RESEARCH_API_CORS_ORIGINS=http://127.0.0.1:3000,http://localhost:3000,https://da
 RESEARCH_RUNS_DIRECTORY=data/research_runs
 ```
 
+Railway Volume 生产配置使用绝对路径：
+
+```env
+RESEARCH_RUNS_DIRECTORY=/data/research_runs
+```
+
+缺失目录会在首次读取时安全尝试创建。空目录下 `/research/runs` 返回空列表，
+`/research/runs/latest` 返回结构化 404，不会创建 mock artifacts。
+
 API 不接受磁盘路径参数。`run_id` 只能包含字母、数字、下划线和连字符，
 并且解析后的目录必须仍位于配置根目录内。模块 import 不扫描目录，API
 请求也不会触发网络或修改 artifacts。
@@ -186,3 +207,4 @@ review，并与真实量化运行分开标识。
 - 历史回测指标不代表未来表现。
 - DeepSeek 只做研究摘要、风险复核、反方观点和一致性检查。
 - 后续接入 outlook.xin 看板时，应继续保留上述研究边界。
+- 未处理的服务端异常统一脱敏，不返回 Python 堆栈、绝对路径、环境变量或密钥。

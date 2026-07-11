@@ -3,6 +3,8 @@ export type HealthResponse = {
   service: string;
   version: string;
   mock_mode: boolean;
+  research_runs_available: boolean;
+  latest_run_available: boolean;
 };
 
 export type EquityPoint = {

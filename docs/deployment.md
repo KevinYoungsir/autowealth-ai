@@ -1,5 +1,8 @@
 # outlook.xin 部署说明
 
+> Vercel + Railway 的生产部署、阿里云 DNS、Volume、回滚和验收步骤见
+> `docs/production-deployment.md`。本文保留本地和平台中立的部署入口。
+
 ## 1. 部署边界
 
 当前系统是 A 股长期组合研究与展示系统。部署内容包括研究 API、mock 研究实验和看板，不包含真实交易能力，不连接券商，也不启用真实 DeepSeek 调用。历史研究结果不代表未来表现，所有页面和接口仅用于研究与教育，不构成投资建议。
@@ -51,6 +54,8 @@ cd ..
 ```env
 NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8001
 RESEARCH_API_CORS_ORIGINS=http://127.0.0.1:3000,http://localhost:3000,https://dashboard.outlook.xin
+RESEARCH_API_TRUSTED_HOSTS=127.0.0.1,localhost,api.outlook.xin
+RESEARCH_RUNS_DIRECTORY=data/research_runs
 DEEPSEEK_API_KEY=
 DEEPSEEK_BASE_URL=
 DEEPSEEK_MODEL=
@@ -61,13 +66,15 @@ DEEPSEEK_MODEL=
 ```env
 NEXT_PUBLIC_API_BASE_URL=https://api.outlook.xin
 RESEARCH_API_CORS_ORIGINS=https://dashboard.outlook.xin
+RESEARCH_API_TRUSTED_HOSTS=api.outlook.xin
+RESEARCH_RUNS_DIRECTORY=/data/research_runs
 ```
 
 `NEXT_PUBLIC_API_BASE_URL` 必须在前端执行 `npm run build` 之前配置。`RESEARCH_API_CORS_ORIGINS` 在后端运行时读取，多个来源用英文逗号分隔。仓库和部署日志中都不应写入真实密钥；当前 mock 接口不需要 DeepSeek 配置。
 
 ## 5. 前端部署建议
 
-1. 使用支持 Next.js Node.js 运行时的平台或容器部署 `frontend/`。
+1. Vercel 项目的 Root Directory 设置为 `frontend`，由平台识别 Next.js。
 2. 在构建环境设置 `NEXT_PUBLIC_API_BASE_URL=https://api.outlook.xin`。
 3. 执行 `npm ci`、`npm run typecheck`、`npm run build`。
 4. 使用 `npm run start -- --hostname 0.0.0.0 --port 3000` 启动生产服务。
@@ -77,7 +84,7 @@ RESEARCH_API_CORS_ORIGINS=https://dashboard.outlook.xin
 
 ## 6. 后端部署建议
 
-1. 在隔离的 Python 环境安装 `pip install -e ".[api]"`。
+1. Railway 使用根目录 `Dockerfile.api` 构建，并挂载 Volume 到 `/data`。
 2. 设置 `RESEARCH_API_CORS_ORIGINS=https://dashboard.outlook.xin`。
 3. 使用进程管理器或容器运行 `python -m uvicorn autowealth.api.research_server:app --host 0.0.0.0 --port 8001`。
 4. 在 API 网关或反向代理终止 TLS，并将 HTTPS 请求转发到内部的 `8001` 端口。
