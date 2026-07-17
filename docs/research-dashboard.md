@@ -22,7 +22,7 @@ FastAPI /research/runs/*
 Next.js /api/research/runs/* proxy
         |
         v
-Dashboard / Backtest / Portfolio / Factors / Macro / System Status
+Dashboard / Backtest / Portfolio / Factors / Macro / Research Notes / System Status
 ```
 
 `ResearchRunStore` 仅在收到 API 请求后读取配置根目录。模块 import 不扫描磁盘，
@@ -37,12 +37,13 @@ Dashboard / Backtest / Portfolio / Factors / Macro / System Status
 | Portfolio | 最近调仓持仓、现金、持仓数量 | `holdings.parquet`、manifest 配置摘要 |
 | Factors | 因子覆盖、缺失数、实际复合权重 | manifest 覆盖摘要、`factor_snapshots.parquet` |
 | Macro | 宏观观察数、中性乘数状态 | manifest `coverage_summary` |
-| Research Notes | mock 风险复核与反方观点 | `/research/deepseek/mock-report`，固定 mock 模式 |
+| Research Notes | 确定性复核、风险、反方观点和研究边界 | 所选运行的 `/research/runs/{run_id}/report`；无真实运行时才使用 mock |
 | Warning 摘要 | 分类计数与少量样例 | 原始 `warnings.json` 的只读聚合结果 |
 | System Status | API、目录、latest run 和数据来源 | `/research/health`、`/research/runs`、latest 摘要 |
 
-权益、持仓和因子接口均设有返回上限。权益曲线降采样会保留首尾点，warning
-默认只显示分类计数和少量样例，不会一次渲染完整原始列表。
+权益、持仓和因子接口均设有返回上限。权益曲线降采样会保留首尾点。通用
+warning 接口默认返回分类计数和少量样例；真实研究报告则包含全部持久化
+warning，并在 Research Notes 的限高滚动区域中完整呈现。
 
 ## 真实数据与演示数据
 
@@ -52,8 +53,9 @@ Dashboard / Backtest / Portfolio / Factors / Macro / System Status
 - `mock_demo`：运行目录为空或真实运行不可用时加载的离线演示结果。
 - `api_unavailable`：研究 API 无法访问，页面不把占位内容标记为真实结果。
 
-运行选择器只列出真实 artifacts。Research Notes 当前仍是 `mock review`，即使
-同页上下文来自真实量化运行，也不得把该复核描述为真实模型结论。
+运行选择器只列出真实 artifacts。Research Notes 跟随同一个 `selectedRunId`：
+存在真实运行时使用确定性 artifact 报告，不调用 demo 或 mock report；只有
+运行列表为空并明确进入 `mock_demo` 时才展示演示研究报告。
 
 System Status 只复用 health 和运行摘要，不调用 DeepSeek。它只显示 API 地址的
 协议类别和公开主机摘要，不展示服务器磁盘路径或环境变量原值。
@@ -101,5 +103,6 @@ API 在不修改 `warnings.json` 的前提下聚合以下类别：
 - 停牌、涨跌停、退市和成交可行性的历史状态仍受数据源覆盖限制。
 - 基准不可用时只返回结构化原因和空曲线，不推断或伪造基准表现。
 - 看板不重新计算底层结果；发现 artifact 损坏或缺失时由 API 返回明确错误。
-- DeepSeek 区域当前只展示本地 mock review，不读取真实 API Key。
+- 真实 Research Notes 是确定性 artifact 复核，不调用 DeepSeek；无真实运行时的
+  演示报告仍固定使用本地 mock mode，不读取真实 API Key。
 - 生产构建缺少 `NEXT_PUBLIC_API_BASE_URL` 时显示 `api_unavailable`，不会回退 localhost。

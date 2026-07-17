@@ -29,11 +29,16 @@ REAL_RUN_ID = "20250201T000000Z_cccccccccc"
 
 
 @pytest.fixture
-def real_runs_client(tmp_path: Path):
+def real_runs_root(tmp_path: Path):
     pytest.importorskip("pyarrow")
     root = tmp_path / "research_runs"
     _write_api_run(root)
-    return TestClient(create_research_app(ResearchRunStore(root)))
+    return root
+
+
+@pytest.fixture
+def real_runs_client(real_runs_root: Path):
+    return TestClient(create_research_app(ResearchRunStore(real_runs_root)))
 
 
 def test_research_health():
@@ -233,6 +238,87 @@ def test_real_run_list_latest_and_detail(real_runs_client: TestClient):
     assert detail.status_code == 200
     assert detail.json()["metrics"]["annualized_return"] == 0.12
     assert detail.json()["warning_summary"]["total"] == 3
+
+
+def test_real_run_report_is_deterministic_and_preserves_limitations(
+    real_runs_client: TestClient,
+    real_runs_root: Path,
+):
+    run_directory = real_runs_root / REAL_RUN_ID
+    source_files = [
+        "run_manifest.json",
+        "metrics.json",
+        "benchmark_metrics.json",
+        "warnings.json",
+        "holdings.parquet",
+        "factor_snapshots.parquet",
+        "trades.parquet",
+    ]
+    before = {
+        filename: (run_directory / filename).read_bytes()
+        for filename in source_files
+    }
+    with patch(
+        "autowealth.data.ashare_provider.AShareDataProvider.__init__",
+        side_effect=AssertionError("network provider must not be initialized"),
+    ), patch(
+        "requests.post",
+        side_effect=AssertionError("external network must not be called"),
+    ) as post:
+        response = real_runs_client.get(
+            f"/research/runs/{REAL_RUN_ID}/report"
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["run_id"] == REAL_RUN_ID
+    assert payload["data_source"] == "real_artifacts"
+    assert payload["generated_mode"] == "deterministic"
+    assert payload["run_status"] == "partial_success"
+    assert payload["benchmark_status"] == "unavailable"
+    assert payload["warning_count"] == 3
+    assert payload["benchmark_review"]["status"] == "unavailable"
+    assert (
+        payload["benchmark_review"]["evidence"]["entries"]["000300"]
+        ["status"]
+        == "unavailable"
+    )
+    assert len(payload["data_quality_review"]["evidence"]["warnings"]) == 3
+    assert payload["research_boundaries"]["evidence"]["deepseek_called"] is False
+    assert payload["research_boundaries"]["evidence"]["trading_executed"] is False
+    assert payload["research_boundaries"]["evidence"]["source_artifacts"] == source_files
+    assert before == {
+        filename: (run_directory / filename).read_bytes()
+        for filename in source_files
+    }
+    restricted = ["建议买入", "建议卖出", "推荐买入", "推荐卖出", "保证收益"]
+    report_text = json.dumps(payload, ensure_ascii=False)
+    assert all(phrase not in report_text for phrase in restricted)
+    post.assert_not_called()
+
+
+def test_real_run_report_rejects_invalid_run_id(
+    real_runs_client: TestClient,
+):
+    response = real_runs_client.get("/research/runs/bad.run/report")
+
+    assert response.status_code == 400
+    assert response.json()["code"] == "invalid_run_id"
+
+
+def test_real_run_report_missing_artifact_is_structured(
+    real_runs_root: Path,
+):
+    (real_runs_root / REAL_RUN_ID / "factor_snapshots.parquet").unlink()
+    missing_client = TestClient(
+        create_research_app(ResearchRunStore(real_runs_root))
+    )
+
+    response = missing_client.get(f"/research/runs/{REAL_RUN_ID}/report")
+
+    assert response.status_code == 404
+    assert response.json()["code"] == "research_artifact_not_found"
+    assert "factor_snapshots.parquet" in response.json()["message"]
 
 
 def test_real_run_equity_curve_is_bounded(real_runs_client: TestClient):

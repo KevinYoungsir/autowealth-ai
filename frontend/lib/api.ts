@@ -6,6 +6,7 @@ import type {
   ResearchEquityCurveResponse,
   ResearchFactorsResponse,
   ResearchHoldingsResponse,
+  RealResearchReport,
   ResearchResult,
   ResearchRunDetail,
   ResearchRunListResponse,
@@ -83,5 +84,11 @@ export function fetchResearchFactors(runId: string): Promise<ResearchFactorsResp
 export function fetchResearchWarnings(runId: string): Promise<ResearchWarningsResponse> {
   return fetchJson<ResearchWarningsResponse>(
     `/api/research/runs/${encodeURIComponent(runId)}/warnings?sample_limit=3&raw_limit=20`
+  );
+}
+
+export function fetchResearchReport(runId: string): Promise<RealResearchReport> {
+  return fetchJson<RealResearchReport>(
+    `/api/research/runs/${encodeURIComponent(runId)}/report`
   );
 }
