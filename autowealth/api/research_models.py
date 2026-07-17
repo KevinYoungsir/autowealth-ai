@@ -265,6 +265,52 @@ class ResearchWarningsResponse(BaseModel):
     summary: WarningSummary
 
 
+class ArtifactReportSection(BaseModel):
+    status: str
+    summary: str
+    evidence: Dict[str, Any] = Field(default_factory=dict)
+    observations: List[str] = Field(default_factory=list)
+    limitations: List[str] = Field(default_factory=list)
+
+
+class ArtifactRiskFlag(BaseModel):
+    code: str
+    category: str
+    severity: Literal["info", "low", "medium", "high", "critical"]
+    title: str
+    description: str
+    evidence: Dict[str, Any] = Field(default_factory=dict)
+    review_focus: str
+
+
+class ArtifactCounterArgument(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    topic: str
+    argument: str
+    evidence_needed: List[str] = Field(default_factory=list)
+    affected_assumptions: List[str] = Field(default_factory=list)
+    research_value: str
+
+
+class RealResearchReportResponse(BaseModel):
+    run_id: str
+    data_source: Literal["real_artifacts"] = "real_artifacts"
+    generated_mode: Literal["deterministic"] = "deterministic"
+    run_status: Literal["success", "partial_success", "failed"]
+    benchmark_status: str
+    warning_count: int
+    executive_summary: ArtifactReportSection
+    performance_review: ArtifactReportSection
+    risk_flags: List[ArtifactRiskFlag]
+    factor_review: ArtifactReportSection
+    benchmark_review: ArtifactReportSection
+    macro_review: ArtifactReportSection
+    data_quality_review: ArtifactReportSection
+    counterarguments: List[ArtifactCounterArgument]
+    research_boundaries: ArtifactReportSection
+
+
 class ResearchAPIErrorResponse(BaseModel):
     code: str
     message: str

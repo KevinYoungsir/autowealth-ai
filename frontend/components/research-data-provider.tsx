@@ -17,12 +17,13 @@ import {
   fetchResearchEquity,
   fetchResearchFactors,
   fetchResearchHoldings,
+  fetchResearchReport,
   fetchResearchRun,
   fetchResearchRuns,
   fetchResearchWarnings
 } from "@/lib/api";
+import { loadResearchReportForSource } from "@/lib/research-report-loader";
 import type {
-  DeepSeekReport,
   DemoResponse,
   HealthResponse,
   ResearchBenchmarkCurveResponse,
@@ -30,6 +31,7 @@ import type {
   ResearchEquityCurveResponse,
   ResearchFactorsResponse,
   ResearchHoldingsResponse,
+  ResearchReport,
   ResearchRunDetail,
   ResearchRunSummary,
   ResearchWarningsResponse
@@ -38,7 +40,7 @@ import type {
 type ResearchDataContextValue = {
   health: HealthResponse | null;
   demo: DemoResponse | null;
-  report: DeepSeekReport | null;
+  report: ResearchReport | null;
   runList: ResearchRunSummary[];
   selectedRunId: string | null;
   realDetail: ResearchRunDetail | null;
@@ -67,7 +69,7 @@ const ResearchDataContext = createContext<ResearchDataContextValue | null>(null)
 export function ResearchDataProvider({ children }: { children: React.ReactNode }) {
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [demo, setDemo] = useState<DemoResponse | null>(null);
-  const [report, setReport] = useState<DeepSeekReport | null>(null);
+  const [report, setReport] = useState<ResearchReport | null>(null);
   const [runList, setRunList] = useState<ResearchRunSummary[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [realDetail, setRealDetail] = useState<ResearchRunDetail | null>(null);
@@ -95,18 +97,26 @@ export function ResearchDataProvider({ children }: { children: React.ReactNode }
     setReportLoading(true);
     setReportError(null);
     try {
-      const demoResponse = await fetchDemo();
-      setDemo(demoResponse);
-      setReport(await fetchMockReport(demoResponse.result));
+      const loaded = await loadResearchReportForSource(
+        dataSource,
+        selectedRunId,
+        {
+          fetchRealReport: fetchResearchReport,
+          fetchDemo,
+          fetchMockReport
+        }
+      );
+      if (loaded.demo) setDemo(loaded.demo);
+      setReport(loaded.report);
     } catch (caught) {
       setReport(null);
       setReportError(
-        caught instanceof Error ? caught.message : "Mock research review unavailable"
+        caught instanceof Error ? caught.message : "Research review unavailable"
       );
     } finally {
       setReportLoading(false);
     }
-  }, []);
+  }, [dataSource, selectedRunId]);
 
   const clearRealData = useCallback(() => {
     setRunList([]);
@@ -117,12 +127,16 @@ export function ResearchDataProvider({ children }: { children: React.ReactNode }
     setRealHoldings(null);
     setRealFactors(null);
     setRealWarnings(null);
+    setReport(null);
+    setReportError(null);
   }, []);
 
   const loadRealRun = useCallback(async (
     runId: string,
     preloadedDetail?: ResearchRunDetail
   ) => {
+    setReport(null);
+    setReportError(null);
     const [detail, equity, benchmark, holdings, factors, warnings] = await Promise.all([
       preloadedDetail ?? fetchResearchRun(runId),
       fetchResearchEquity(runId),

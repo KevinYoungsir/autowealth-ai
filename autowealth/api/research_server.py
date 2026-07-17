@@ -35,6 +35,7 @@ from autowealth.api.research_models import (
     ResearchFactorsResponse,
     ResearchHoldingsResponse,
     ResearchPipelineResultPayload,
+    RealResearchReportResponse,
     ResearchRunDetailResponse,
     ResearchRunListResponse,
     ResearchRunRequest,
@@ -56,7 +57,7 @@ from autowealth.research import (
     run_research_pipeline,
     summarize_research_result,
 )
-from autowealth.research.schema import ResearchPipelineResult, ResearchSummary
+from autowealth.research.real_report import build_real_research_report
 from autowealth.research.run_store import (
     InvalidRunIdError,
     ResearchArtifactDecodeError,
@@ -66,6 +67,7 @@ from autowealth.research.run_store import (
     ResearchRunStoreError,
     aggregate_warnings,
 )
+from autowealth.research.schema import ResearchPipelineResult, ResearchSummary
 
 
 DEFAULT_RESEARCH_API_CORS_ORIGINS = (
@@ -166,6 +168,22 @@ async def research_run_detail(
     request: Request,
 ) -> ResearchRunDetailResponse:
     return _run_detail_response(_request_run_store(request).get_run(run_id))
+
+
+@research_router.get(
+    "/runs/{run_id}/report",
+    response_model=RealResearchReportResponse,
+    responses=RUN_ERROR_RESPONSES,
+)
+async def research_run_report(
+    run_id: str,
+    request: Request,
+) -> RealResearchReportResponse:
+    report = build_real_research_report(
+        _request_run_store(request),
+        run_id,
+    )
+    return RealResearchReportResponse(**report)
 
 
 @research_router.get(
@@ -666,10 +684,10 @@ def _run_detail_response(detail: Mapping[str, Any]) -> ResearchRunDetailResponse
 def _store_error_status(exc: ResearchRunStoreError) -> tuple[int, str]:
     if isinstance(exc, InvalidRunIdError):
         return 400, "invalid_run_id"
-    if isinstance(
-        exc, (ResearchRunNotFoundError, ResearchArtifactNotFoundError)
-    ):
+    if isinstance(exc, ResearchRunNotFoundError):
         return 404, "research_run_not_found"
+    if isinstance(exc, ResearchArtifactNotFoundError):
+        return 404, "research_artifact_not_found"
     if isinstance(exc, ResearchArtifactDecodeError):
         return 422, "invalid_research_artifact"
     return 500, "research_run_store_error"

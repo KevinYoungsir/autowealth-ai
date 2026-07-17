@@ -69,6 +69,39 @@ export type DeepSeekReport = {
   warnings: string[];
 };
 
+export type ArtifactReportSection = {
+  status: string;
+  summary: string;
+  evidence: Record<string, any>;
+  observations: string[];
+  limitations: string[];
+};
+
+export type ArtifactRiskFlag = RiskFlag & {
+  code: string;
+  title: string;
+};
+
+export type RealResearchReport = {
+  run_id: string;
+  data_source: "real_artifacts";
+  generated_mode: "deterministic";
+  run_status: RunStatus;
+  benchmark_status: string;
+  warning_count: number;
+  executive_summary: ArtifactReportSection;
+  performance_review: ArtifactReportSection;
+  risk_flags: ArtifactRiskFlag[];
+  factor_review: ArtifactReportSection;
+  benchmark_review: ArtifactReportSection;
+  macro_review: ArtifactReportSection;
+  data_quality_review: ArtifactReportSection;
+  counterarguments: CounterArgument[];
+  research_boundaries: ArtifactReportSection;
+};
+
+export type ResearchReport = DeepSeekReport | RealResearchReport;
+
 export type ResearchDataSource =
   | "real_artifacts"
   | "mock_demo"
