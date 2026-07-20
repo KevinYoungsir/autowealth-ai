@@ -21,8 +21,28 @@
 - `cache_directory`
 - `output_directory`
 - `price_adjust`：`none`、`qfq` 或 `hfq`
+- `history_lookback`：研究开始日前的只读数据回看窗口；旧配置缺失时使用
+  `price_calendar_days: 450` 和 `fundamental_years: 5`
 
 配置是一次实验的固定输入。流水线不会搜索参数、比较参数组合或自动寻找最高历史收益方案。
+
+`history_lookback` 的两个值必须是非负整数。它们只控制数据抓取范围，
+实际因子交易日样本数由代码中的统一规则决定，不能通过 YAML 调整。
+
+## 四层窗口与执行时序
+
+- **Research window**：配置的 `start_date` 至 `end_date`，定义正式研究区间。
+- **Fetch window**：价格从研究开始日前 450 个日历日抓取，基本面从研究
+  开始日前 5 年抓取，结束日均不超过研究结束日。
+- **Signal window**：每个 execution date 使用严格早于该日的最近一个组合
+  对齐真实交易日；价格、财报和宏观输入均以该 signal date 截止。
+- **Metrics window**：权益曲线、交易、持仓和全部绩效指标只覆盖 research
+  window，warm-up 数据不产生正式研究收益。
+
+当前日线能力只可靠支持收盘价：信号使用 signal date close，交易使用
+execution date close。旧持仓先承受截至 execution close 的价格变化，再按该
+收盘价调仓；新权重从 execution close 之后的首个收益区间生效。同一收盘价
+不会同时用于生成信号并让新仓位取得该日收益。
 
 ## 股票池
 
@@ -37,18 +57,28 @@
 - `report_date`：财务报告对应的报告期。
 - `available_date`：该记录当时真正公开并可被研究者获得的日期。
 
-调仓日只能选择同时满足以下条件的记录：
+每个 signal date 只能选择同时满足以下条件的记录：
 
 ```text
-report_date <= rebalance_date
-available_date <= rebalance_date
+report_date <= signal_date
+available_date <= signal_date
 ```
 
-缺少 `available_date` 的记录不会被静默当作已公开数据。晚于调仓日的公告记录会被排除并写入 warning。若公开数据源不能提供可靠历史公告日期，provider 会标记 point-in-time 未验证，不会用当前值回填历史。
+缺少 `available_date` 的记录不会被静默当作已公开数据。晚于 signal date 的公告记录会被排除并写入 warning。研究开始日前已经公开且仍是最新记录的财报可用于首期信号。若公开数据源不能提供可靠历史公告日期，provider 会标记 point-in-time 未验证，不会用报告期或当前值回填历史。
 
-宏观 CSV 同样要求 `date` 和 `available_date`。`autowealth.macro.asof.select_macro_asof` 只选择调仓日已经发布的最新记录，禁止读取调仓日之后的数据。`configs/macro_data_template.csv` 只提供字段和说明，不包含伪造宏观观察值。
+`available_date < report_date` 的异常记录保留审计痕迹但会失效其
+`available_date`，因此不能进入 as-of 选择。完全重复的报告按
+`fetched_at`、稳定来源顺序保留最后一条，并生成 warning。
 
-价格因子只接收 `date <= rebalance_date` 的历史切片。流水线不使用向后填充把未来价格、财报或宏观值补到过去。
+宏观 CSV 同样要求 `date` 和 `available_date`。
+`autowealth.macro.asof.select_macro_asof` 只选择 signal date 已经发布的最新记录，
+禁止读取 signal date 之后的数据。`configs/macro_data_template.csv` 只提供字段
+和说明，不包含伪造宏观观察值。
+
+价格因子只接收 `date <= signal_date` 的历史切片。signal date 来自所有已
+加载组合标的都有真实 bar 的共同日期，不用自然日减一天，也不把单只证券
+独有日期当作组合决策时点。流水线不使用向后填充把未来价格、财报或宏观
+值补到过去。
 
 ## 数据源与缓存
 
@@ -60,7 +90,11 @@ available_date <= rebalance_date
 - `fundamentals/`：基本面 parquet 与 point-in-time metadata。
 - `benchmarks/`：指数日线 parquet 与 metadata sidecar。
 
-metadata 记录数据类型、标的、来源、覆盖区间、拉取时间、复权方式、行数和文件摘要。`data/real_cache/` 不提交到 Git。
+价格缓存键使用实际 fetch start/end；覆盖不足的同键缓存不会被静默接受，
+流水线会重试 provider 或明确失败，也不会覆盖已有缓存文件。metadata 同时
+记录 `fetch_start_date`、`fetch_end_date`、`research_start_date` 和
+`research_end_date`。基本面缓存同样按 fundamental fetch window 区分。
+`data/real_cache/` 不提交到 Git。
 
 公开数据源可能出现接口变更、公告日期缺失、历史估值缺失、复权口径差异和临时网络失败。流水线会保留 warning，不会伪造研究结果。
 
@@ -100,7 +134,12 @@ python examples/run_real_15y_research.py --config configs/a_share_15y_baseline.y
 - `factor_snapshots.parquet`
 - `warnings.json`
 
-`run_manifest.json` 记录运行时间、Git commit、数据源、数据区间、配置摘要、point-in-time 限制和幸存者偏差风险。复核实验时应先阅读 manifest 与 warnings，再读取指标和曲线。
+`run_manifest.json` 以增量字段记录 `artifact_schema_version`、
+`research_window`、`metrics_window`、`fetch_windows`、`factor_lookbacks`、
+`signal_execution_policy` 和 `price_alignment`，同时保留原有数据区间、配置
+摘要、point-in-time 限制和幸存者偏差风险。旧 run 缺少这些字段仍可读取。
+`factor_snapshots.parquet` 新增 `signal_date` 与 `execution_date`，并继续保留
+`rebalance_date` 作为 execution date 的兼容字段。
 
 可使用 pandas 读取 parquet：
 
@@ -156,6 +195,27 @@ factor_snapshots = pd.read_parquet(run_dir / "factor_snapshots.parquet")
 某因子所有有效原始输入都缺失时，该因子不进入复合分数，其配置权重在
 剩余可用因子间重新归一化，并形成 warning。若所有配置因子都不可用，
 该候选在该调仓日被拒绝评分。
+
+因子子项最低样本要求固定在 `autowealth.factors.readiness`：
+
+| 子项 | 最低有效样本 |
+| --- | ---: |
+| 6 个月动量（剔除最近 1 个月） | 148 个收盘价 |
+| 12 个月动量（剔除最近 1 个月） | 274 个收盘价 |
+| 年化波动率 | 253 个收盘价 / 252 个收益率 |
+| 最大回撤 | 253 个收盘价，使用同一固定窗口 |
+| RSI | 15 个收盘价 |
+| 布林带位置 | 20 个收盘价 |
+| 短期收益 | 21 个收盘价 |
+| 成交量比率 | 60 个有效成交量记录 |
+
+样本不足时原始输入为 unavailable，warning 会记录实际数与最低要求。多输入
+因子仍可使用其余有效子项；coverage 使用与复合评分相同的可用性规则。
+
+价格矩阵前向填充最多 5 个组合交易日，并在 manifest 记录是否发生、填充
+数量和仍未解决的缺失数。execution date 必须是所有已加载标的都有真实 bar
+的共同日期；有限前向填充只用于持仓估值对齐，不会把缺失真实 bar 的证券
+当作正常成交。
 
 ## 当前限制
 

@@ -19,7 +19,6 @@ from autowealth.research.run_store import (
     aggregate_warnings,
 )
 
-
 RUN_OLD = "20250101T000000Z_aaaaaaaaaa"
 RUN_NEW = "20250201T000000Z_bbbbbbbbbb"
 
@@ -58,6 +57,19 @@ def test_gets_latest_and_specific_run(runs_root: Path) -> None:
     assert specific["metrics"]["annualized_return"] == 0.12
 
 
+def test_legacy_manifest_without_window_fields_remains_readable(
+    runs_root: Path,
+) -> None:
+    store = ResearchRunStore(runs_root)
+
+    run = store.get_run(RUN_OLD)
+
+    assert "artifact_schema_version" not in run["manifest"]
+    assert "research_window" not in run["manifest"]
+    assert run["summary"]["run_id"] == RUN_OLD
+    assert run["summary"]["run_status"] == "success"
+
+
 @pytest.mark.parametrize("run_id", ["../outside", "..", "C:/outside", "a/b"])
 def test_rejects_path_traversal(runs_root: Path, run_id: str) -> None:
     with pytest.raises(InvalidRunIdError):
@@ -65,9 +77,7 @@ def test_rejects_path_traversal(runs_root: Path, run_id: str) -> None:
 
 
 def test_reports_corrupt_json(runs_root: Path) -> None:
-    (runs_root / RUN_OLD / "run_manifest.json").write_text(
-        "{not-json", encoding="utf-8"
-    )
+    (runs_root / RUN_OLD / "run_manifest.json").write_text("{not-json", encoding="utf-8")
 
     with pytest.raises(ResearchArtifactDecodeError, match="invalid JSON"):
         ResearchRunStore(runs_root).read_manifest(RUN_OLD)
@@ -81,9 +91,7 @@ def test_reports_missing_parquet(runs_root: Path) -> None:
 
 
 def test_reports_corrupt_parquet(runs_root: Path) -> None:
-    (runs_root / RUN_OLD / "equity_curve.parquet").write_text(
-        "not parquet", encoding="utf-8"
-    )
+    (runs_root / RUN_OLD / "equity_curve.parquet").write_text("not parquet", encoding="utf-8")
 
     with pytest.raises(ResearchArtifactDecodeError, match="invalid parquet"):
         ResearchRunStore(runs_root).read_equity_curve(RUN_OLD)

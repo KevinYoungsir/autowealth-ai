@@ -16,7 +16,6 @@ from autowealth.factors import (
     value_factor,
 )
 
-
 SYMBOL = "600519"
 AS_OF_DATE = "2024-12-31"
 
@@ -100,6 +99,105 @@ def test_missing_price_history_degrades_without_crashing():
 
     assert 0 <= score.score <= 100
     assert score.warnings
+
+
+def test_single_price_point_does_not_make_low_vol_available_or_score_100():
+    score = low_vol_factor(SYMBOL, make_price_data(days=1), AS_OF_DATE)
+
+    assert score.raw_values["annualized_volatility"] is None
+    assert score.raw_values["max_drawdown"] is None
+    assert score.score != 100.0
+    assert any("1 available, 253 required" in warning for warning in score.warnings)
+
+
+def test_low_vol_requires_full_fixed_window():
+    insufficient = low_vol_factor(
+        SYMBOL,
+        make_price_data(days=252),
+        AS_OF_DATE,
+    )
+    ready = low_vol_factor(
+        SYMBOL,
+        make_price_data(days=253),
+        AS_OF_DATE,
+    )
+
+    assert insufficient.raw_values["annualized_volatility"] is None
+    assert insufficient.raw_values["max_drawdown"] is None
+    assert ready.raw_values["annualized_volatility"] is not None
+    assert ready.raw_values["max_drawdown"] is not None
+
+
+def test_momentum_readiness_boundaries_preserve_existing_formula():
+    six_ready = momentum_factor(
+        SYMBOL,
+        make_price_data(days=148),
+        AS_OF_DATE,
+    )
+    twelve_short = momentum_factor(
+        SYMBOL,
+        make_price_data(days=273),
+        AS_OF_DATE,
+    )
+    twelve_ready = momentum_factor(
+        SYMBOL,
+        make_price_data(days=274),
+        AS_OF_DATE,
+    )
+
+    assert six_ready.raw_values["momentum_6m_ex_1m"] is not None
+    assert six_ready.raw_values["momentum_12m_ex_1m"] is None
+    assert twelve_short.raw_values["momentum_12m_ex_1m"] is None
+    assert twelve_ready.raw_values["momentum_12m_ex_1m"] is not None
+
+
+def test_overbought_oversold_component_readiness_boundaries():
+    fourteen = overbought_oversold_factor(
+        SYMBOL,
+        make_price_data(days=14),
+        AS_OF_DATE,
+    )
+    fifteen = overbought_oversold_factor(
+        SYMBOL,
+        make_price_data(days=15),
+        AS_OF_DATE,
+    )
+    nineteen = overbought_oversold_factor(
+        SYMBOL,
+        make_price_data(days=19),
+        AS_OF_DATE,
+    )
+    twenty = overbought_oversold_factor(
+        SYMBOL,
+        make_price_data(days=20),
+        AS_OF_DATE,
+    )
+    twenty_one = overbought_oversold_factor(
+        SYMBOL,
+        make_price_data(days=21),
+        AS_OF_DATE,
+    )
+    fifty_nine = overbought_oversold_factor(
+        SYMBOL,
+        make_price_data(days=59),
+        AS_OF_DATE,
+    )
+    sixty = overbought_oversold_factor(
+        SYMBOL,
+        make_price_data(days=60),
+        AS_OF_DATE,
+    )
+
+    assert fourteen.raw_values["rsi"] is None
+    assert fifteen.raw_values["rsi"] is not None
+    assert nineteen.raw_values["bollinger_position"] is None
+    assert twenty.raw_values["rsi"] is not None
+    assert twenty.raw_values["bollinger_position"] is not None
+    assert twenty.raw_values["short_term_return"] is None
+    assert twenty_one.raw_values["short_term_return"] is not None
+    assert fifty_nine.raw_values["volume_ratio"] is None
+    assert sixty.raw_values["short_term_return"] is not None
+    assert sixty.raw_values["volume_ratio"] is not None
 
 
 def test_composite_factor_weighted_score_is_correct():

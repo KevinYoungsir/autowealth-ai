@@ -8,7 +8,10 @@ from typing import Callable, Optional, Protocol
 
 import pandas as pd
 
-from autowealth.data.fundamental_schema import normalize_fundamental_data
+from autowealth.data.fundamental_schema import (
+    normalize_fundamental_data,
+    validate_fundamental_history,
+)
 
 
 @dataclass
@@ -87,6 +90,8 @@ class AShareFundamentalProvider:
         normalized = normalized[
             normalized["report_date"].between(start, end, inclusive="both")
         ].reset_index(drop=True)
+        normalized, validation_warnings = validate_fundamental_history(normalized)
+        warnings.extend(validation_warnings)
 
         if normalized.empty:
             warnings.append(f"{clean_symbol} fundamental provider returned no rows")
@@ -150,9 +155,7 @@ class AShareFundamentalProvider:
         normalized["net_margin"] = _percentage_column(
             raw, "XSJLL", "net_margin", "销售净利率(%)", "净利率(%)"
         )
-        normalized["debt_ratio"] = _percentage_column(
-            raw, "ZCFZL", "debt_ratio", "资产负债率(%)"
-        )
+        normalized["debt_ratio"] = _percentage_column(raw, "ZCFZL", "debt_ratio", "资产负债率(%)")
         normalized["operating_cash_flow"] = _numeric_column(
             raw,
             "NETCASHOPERATE",

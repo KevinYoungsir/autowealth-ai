@@ -8,6 +8,13 @@ from typing import Optional
 
 import pandas as pd
 
+from autowealth.factors.readiness import (
+    BOLLINGER_MIN_CLOSES,
+    RSI_MIN_CLOSES,
+    SHORT_TERM_RETURN_MIN_CLOSES,
+    VOLUME_RATIO_MIN_OBSERVATIONS,
+    insufficient_sample_warning,
+)
 from autowealth.factors.schema import (
     FactorScore,
     average_available,
@@ -41,11 +48,26 @@ def overbought_oversold_factor(
         "rsi": score_center_better(rsi, 50, 35),
         "bollinger_position": score_center_better(bollinger_position, 0.5, 0.5),
         "short_term_return": score_center_better(short_term_return, 0.0, 0.25),
-        "volume_ratio": score_lower_better(abs(volume_ratio - 1) if volume_ratio is not None else None, 0, 2),
+        "volume_ratio": score_lower_better(
+            abs(volume_ratio - 1) if volume_ratio is not None else None, 0, 2
+        ),
     }
-    warnings = [
-        f"missing {name}; score degraded" for name, value in raw_values.items() if value is None
-    ]
+    valid_volume_count = int(data["volume"].dropna().shape[0])
+    requirements = {
+        "rsi": (len(data), RSI_MIN_CLOSES),
+        "bollinger_position": (len(data), BOLLINGER_MIN_CLOSES),
+        "short_term_return": (len(data), SHORT_TERM_RETURN_MIN_CLOSES),
+        "volume_ratio": (valid_volume_count, VOLUME_RATIO_MIN_OBSERVATIONS),
+    }
+    warnings = []
+    for name, value in raw_values.items():
+        if value is not None:
+            continue
+        actual, minimum = requirements[name]
+        if actual < minimum:
+            warnings.append(insufficient_sample_warning(name, actual, minimum))
+        else:
+            warnings.append(f"missing {name}; score degraded")
     return FactorScore(
         symbol=symbol,
         factor_name="overbought_oversold",
@@ -70,7 +92,7 @@ def _prepare_price_data(price_data: pd.DataFrame) -> pd.DataFrame:
     return data.dropna(subset=["date", "close"]).sort_values("date").reset_index(drop=True)
 
 
-def _rsi(close: pd.Series, window: int = 14) -> Optional[float]:
+def _rsi(close: pd.Series, window: int = RSI_MIN_CLOSES - 1) -> Optional[float]:
     if len(close) < window + 1:
         return None
     delta = close.diff()
@@ -83,7 +105,10 @@ def _rsi(close: pd.Series, window: int = 14) -> Optional[float]:
     return float(100 - 100 / (1 + rs))
 
 
-def _bollinger_position(close: pd.Series, window: int = 20) -> Optional[float]:
+def _bollinger_position(
+    close: pd.Series,
+    window: int = BOLLINGER_MIN_CLOSES,
+) -> Optional[float]:
     if len(close) < window:
         return None
     rolling = close.tail(window)
@@ -96,7 +121,10 @@ def _bollinger_position(close: pd.Series, window: int = 20) -> Optional[float]:
     return float((close.iloc[-1] - lower) / (upper - lower))
 
 
-def _short_term_return(close: pd.Series, window: int = 20) -> Optional[float]:
+def _short_term_return(
+    close: pd.Series,
+    window: int = SHORT_TERM_RETURN_MIN_CLOSES - 1,
+) -> Optional[float]:
     if len(close) < window + 1:
         return None
     base = close.iloc[-window - 1]
@@ -105,13 +133,15 @@ def _short_term_return(close: pd.Series, window: int = 20) -> Optional[float]:
     return float(close.iloc[-1] / base - 1)
 
 
-def _volume_ratio(volume: pd.Series, window: int = 60) -> Optional[float]:
+def _volume_ratio(
+    volume: pd.Series,
+    window: int = VOLUME_RATIO_MIN_OBSERVATIONS,
+) -> Optional[float]:
     clean = volume.dropna()
-    if len(clean) < 2:
+    if len(clean) < window:
         return None
     lookback = clean.tail(window)
     average = lookback.mean()
     if average <= 0:
         return None
     return float(clean.iloc[-1] / average)
-

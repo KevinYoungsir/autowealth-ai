@@ -26,6 +26,13 @@ slippage: 0.0002
 # and cash dividends are not yet reconstructed and remain a disclosed limit.
 price_adjust: none
 
+# Data can be fetched before the formal research window for point-in-time
+# signal preparation. These values are fixed research inputs, not parameters
+# searched for historical performance.
+history_lookback:
+  price_calendar_days: 450
+  fundamental_years: 5
+
 factor_weights:
   value: 0.25
   quality: 0.25

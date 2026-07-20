@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Optional, Union
@@ -14,6 +14,7 @@ import pandas as pd
 import yaml
 
 from autowealth.backtest import PortfolioBacktester, generate_rebalance_dates
+from autowealth.backtest.portfolio_backtester import MAX_FORWARD_FILL_TRADING_DAYS
 from autowealth.backtest.metrics import (
     annualized_return,
     calmar_ratio,
@@ -33,6 +34,7 @@ from autowealth.data.fundamental_schema import (
     FundamentalRecord,
     latest_fundamental_asof,
     normalize_fundamental_data,
+    validate_fundamental_history,
 )
 from autowealth.data.index_provider import AShareIndexProvider
 from autowealth.data.quality import check_price_quality
@@ -46,6 +48,7 @@ from autowealth.factors import (
     value_factor,
 )
 from autowealth.factors.schema import CompositeFactorScore, FactorScore
+from autowealth.factors.readiness import factor_lookback_manifest
 from autowealth.macro.asof import load_macro_asof_csv, select_macro_asof
 from autowealth.macro.scoring import score_macro_environment
 from autowealth.portfolio import PortfolioConstraints, StockCandidate, build_factor_portfolio
@@ -55,7 +58,6 @@ from autowealth.research.artifacts import (
     write_research_artifacts,
 )
 from autowealth.research.schema import scalar_metrics
-
 
 PathLike = Union[str, Path]
 SUPPORTED_REBALANCE_FREQUENCIES = {"yearly", "five_year"}
@@ -69,6 +71,7 @@ SUPPORTED_FACTOR_NAMES = {
 MIN_FACTOR_COVERAGE_RATIO = 0.8
 FACTOR_OPTIONAL_RAW_FIELDS = {"low_vol": {"beta"}}
 RUN_STATUSES = {"success", "partial_success", "failed"}
+PRICE_WINDOW_EDGE_TOLERANCE_CALENDAR_DAYS = 14
 REQUIRED_CONFIG_KEYS = {
     "start_date",
     "end_date",
@@ -96,6 +99,14 @@ class RealDataAccessError(RealResearchError):
 
 
 @dataclass(frozen=True)
+class HistoryLookback:
+    """Pre-research data windows used for point-in-time signal preparation."""
+
+    price_calendar_days: int = 450
+    fundamental_years: int = 5
+
+
+@dataclass(frozen=True)
 class RealResearchConfig:
     experiment_name: str
     start_date: str
@@ -113,6 +124,21 @@ class RealResearchConfig:
     cache_directory: Path
     output_directory: Path
     price_adjust: str = "none"
+    history_lookback: HistoryLookback = field(default_factory=HistoryLookback)
+
+    @property
+    def price_fetch_start_date(self) -> str:
+        start = pd.Timestamp(self.start_date) - pd.Timedelta(
+            days=self.history_lookback.price_calendar_days
+        )
+        return start.strftime("%Y-%m-%d")
+
+    @property
+    def fundamental_fetch_start_date(self) -> str:
+        start = pd.Timestamp(self.start_date) - pd.DateOffset(
+            years=self.history_lookback.fundamental_years
+        )
+        return start.strftime("%Y-%m-%d")
 
     def to_dict(self) -> dict[str, object]:
         values = asdict(self)
@@ -168,17 +194,15 @@ def load_real_research_config(path: PathLike) -> RealResearchConfig:
             stamp_tax=float(raw["stamp_tax"]),
             slippage=float(raw["slippage"]),
             factor_weights={
-                str(name): float(weight)
-                for name, weight in dict(raw["factor_weights"]).items()
+                str(name): float(weight) for name, weight in dict(raw["factor_weights"]).items()
             },
-            portfolio_constraints=PortfolioConstraints(
-                **dict(raw["portfolio_constraints"])
-            ),
+            portfolio_constraints=PortfolioConstraints(**dict(raw["portfolio_constraints"])),
             benchmark_symbols=_symbols(raw["benchmark_symbols"]),
             macro_csv_path=_resolve_config_path(raw["macro_csv_path"], root),
             cache_directory=_resolve_config_path(raw["cache_directory"], root),
             output_directory=_resolve_config_path(raw["output_directory"], root),
             price_adjust=str(raw.get("price_adjust", "none")).lower(),
+            history_lookback=_history_lookback(raw.get("history_lookback")),
         )
     except (TypeError, ValueError) as exc:
         raise RealResearchError(f"invalid research config value: {exc}") from exc
@@ -226,12 +250,39 @@ def _date_string(value: object) -> str:
 def _symbols(values: object) -> list[str]:
     if not isinstance(values, list):
         raise ValueError("symbol fields must be YAML lists")
-    symbols = list(
-        dict.fromkeys(str(value).strip() for value in values if str(value).strip())
-    )
+    symbols = list(dict.fromkeys(str(value).strip() for value in values if str(value).strip()))
     if not symbols:
         raise ValueError("symbol list cannot be empty")
     return symbols
+
+
+def _history_lookback(value: object) -> HistoryLookback:
+    if value is None:
+        return HistoryLookback()
+    if not isinstance(value, Mapping):
+        raise ValueError("history_lookback must be a YAML mapping")
+    allowed = {"price_calendar_days", "fundamental_years"}
+    unknown = sorted(set(value) - allowed)
+    if unknown:
+        raise ValueError(f"unsupported history_lookback keys: {unknown}")
+    return HistoryLookback(
+        price_calendar_days=_non_negative_int(
+            value.get("price_calendar_days", 450),
+            "history_lookback.price_calendar_days",
+        ),
+        fundamental_years=_non_negative_int(
+            value.get("fundamental_years", 5),
+            "history_lookback.fundamental_years",
+        ),
+    )
+
+
+def _non_negative_int(value: object, name: str) -> int:
+    if type(value) is not int:
+        raise ValueError(f"{name} must be a non-negative integer")
+    if value < 0:
+        raise ValueError(f"{name} must be a non-negative integer")
+    return value
 
 
 def _universe_snapshot(provider: object, as_of_date: str) -> UniverseSnapshot:
@@ -280,15 +331,21 @@ def _macro_asof(
 ) -> tuple[Optional[object], float, Optional[str], list[str]]:
     date_text = rebalance_date.strftime("%Y-%m-%d")
     if macro_data.empty:
-        return None, 1.0, None, [
-            f"no point-in-time macro data for {date_text}; neutral multiplier used"
-        ]
+        return (
+            None,
+            1.0,
+            None,
+            [f"no point-in-time macro data for {date_text}; neutral multiplier used"],
+        )
 
     selection = select_macro_asof(macro_data, rebalance_date)
     if selection.record is None:
-        return None, 1.0, None, selection.warnings + [
-            f"neutral macro multiplier used for {date_text}"
-        ]
+        return (
+            None,
+            1.0,
+            None,
+            selection.warnings + [f"neutral macro multiplier used for {date_text}"],
+        )
 
     indicator_names = [
         "pmi",
@@ -327,9 +384,7 @@ def _future_fundamental_warnings(
     future_reports = int((report_date > rebalance_date).fillna(False).sum())
     warnings: list[str] = []
     if missing:
-        warnings.append(
-            f"{symbol} ignored {missing} fundamental rows without available_date"
-        )
+        warnings.append(f"{symbol} ignored {missing} fundamental rows without available_date")
     if future_available:
         warnings.append(
             f"{symbol} ignored {future_available} rows published after {rebalance_date.date()}"
@@ -355,13 +410,41 @@ def _prepare_price_frame(
         frame["volume"] = pd.NA
     frame["volume"] = pd.to_numeric(frame["volume"], errors="coerce")
     frame = frame[
-        frame["date"].between(
-            pd.Timestamp(start_date), pd.Timestamp(end_date), inclusive="both"
-        )
+        frame["date"].between(pd.Timestamp(start_date), pd.Timestamp(end_date), inclusive="both")
     ]
     frame = frame.dropna(subset=["date", "close"])
     frame = frame[frame["close"] > 0]
     return frame.sort_values("date").drop_duplicates("date", keep="last").reset_index(drop=True)
+
+
+def _price_window_coverage(
+    data: pd.DataFrame,
+    start_date: str,
+    end_date: str,
+) -> tuple[bool, str]:
+    frame = pd.DataFrame(data)
+    if "date" not in frame:
+        return False, "lacks a date column"
+    dates = pd.to_datetime(frame["date"], errors="coerce").dropna()
+    if dates.empty:
+        return False, "contains no valid dates"
+    requested_start = pd.Timestamp(start_date)
+    requested_end = pd.Timestamp(end_date)
+    tolerance = pd.Timedelta(days=PRICE_WINDOW_EDGE_TOLERANCE_CALENDAR_DAYS)
+    actual_start = pd.Timestamp(dates.min())
+    actual_end = pd.Timestamp(dates.max())
+    if actual_start > min(requested_end, requested_start + tolerance):
+        return (
+            False,
+            f"starts at {actual_start.date()}, after requested fetch start "
+            f"{requested_start.date()}",
+        )
+    if actual_end < max(requested_start, requested_end - tolerance):
+        return (
+            False,
+            f"ends at {actual_end.date()}, before requested fetch end " f"{requested_end.date()}",
+        )
+    return True, ""
 
 
 def _aligned_trading_dates(
@@ -370,14 +453,47 @@ def _aligned_trading_dates(
     end_date: str,
 ) -> pd.DatetimeIndex:
     closes = {
-        symbol: _prepare_price_frame(frame, start_date, end_date)
-        .set_index("date")["close"]
+        symbol: _prepare_price_frame(frame, start_date, end_date).set_index("date")["close"]
         for symbol, frame in price_data.items()
     }
-    matrix = pd.concat(closes, axis=1).sort_index().ffill().dropna(how="any")
+    matrix = pd.concat(closes, axis=1, sort=False).sort_index().dropna(how="any")
     if matrix.empty:
         raise RealResearchError("price matrix is empty after candidate alignment")
     return pd.DatetimeIndex(matrix.index)
+
+
+def _price_alignment_summary(
+    price_data: Mapping[str, pd.DataFrame],
+    start_date: str,
+    end_date: str,
+) -> dict[str, object]:
+    closes = {
+        symbol: _prepare_price_frame(frame, start_date, end_date).set_index("date")["close"]
+        for symbol, frame in price_data.items()
+    }
+    matrix = pd.concat(closes, axis=1, sort=False).sort_index()
+    filled = matrix.ffill(limit=MAX_FORWARD_FILL_TRADING_DAYS)
+    fill_mask = matrix.isna() & filled.notna()
+    unresolved = filled.isna()
+    common_real_dates = matrix.dropna(how="any").index
+    return {
+        "forward_fill_applied": bool(fill_mask.any().any()),
+        "forward_fill_value_count": int(fill_mask.sum().sum()),
+        "forward_fill_limit_trading_days": MAX_FORWARD_FILL_TRADING_DAYS,
+        "unresolved_missing_value_count": int(unresolved.sum().sum()),
+        "common_real_trading_date_count": int(len(common_real_dates)),
+        "execution_dates_require_real_bars_for_all_symbols": True,
+    }
+
+
+def _signal_date_before(
+    aligned_trading_dates: pd.DatetimeIndex,
+    execution_date: pd.Timestamp,
+) -> Optional[pd.Timestamp]:
+    prior = aligned_trading_dates[aligned_trading_dates < execution_date]
+    if prior.empty:
+        return None
+    return pd.Timestamp(prior[-1]).normalize()
 
 
 def _tradability_warnings(
@@ -443,15 +559,23 @@ def _cache_metadata(
     cache_path: Path,
     config: RealResearchConfig,
     fetched_at: datetime,
+    fetch_start_date: Optional[str] = None,
+    fetch_end_date: Optional[str] = None,
     **extras: object,
 ) -> dict[str, object]:
+    resolved_fetch_start = fetch_start_date or config.start_date
+    resolved_fetch_end = fetch_end_date or config.end_date
     metadata: dict[str, object] = {
         "data_type": data_type,
         "symbol": symbol,
         "source": source,
         "cache_path": str(cache_path),
-        "start_date": config.start_date,
-        "end_date": config.end_date,
+        "start_date": resolved_fetch_start,
+        "end_date": resolved_fetch_end,
+        "fetch_start_date": resolved_fetch_start,
+        "fetch_end_date": resolved_fetch_end,
+        "research_start_date": config.start_date,
+        "research_end_date": config.end_date,
         "fetched_at": fetched_at.isoformat(),
         "sha256": _sha256(cache_path),
     }
@@ -480,39 +604,60 @@ def _load_price_data(
     fetched_at: datetime,
 ) -> tuple[pd.DataFrame, dict[str, object], list[str]]:
     cache = ParquetCache(config.cache_directory / "prices")
-    cache_path = cache.path_for(
-        symbol, config.start_date, config.end_date, config.price_adjust
-    )
+    fetch_start = config.price_fetch_start_date
+    fetch_end = config.end_date
+    cache_path = cache.path_for(symbol, fetch_start, fetch_end, config.price_adjust)
+    cache_preexisting = cache_path.exists()
+    cache_used = False
+    cache_written = False
     warnings: list[str] = []
     source = provider.__class__.__name__
     frame: Optional[pd.DataFrame] = None
 
     if cache_path.exists():
         try:
-            frame = cache.read(
-                symbol, config.start_date, config.end_date, config.price_adjust
-            )
-            source = str(_read_cache_metadata(cache_path).get("source") or source)
+            frame = cache.read(symbol, fetch_start, fetch_end, config.price_adjust)
+            frame = _prepare_price_frame(frame, fetch_start, fetch_end)
+            covered, coverage_reason = _price_window_coverage(frame, fetch_start, fetch_end)
+            if not covered:
+                warnings.append(
+                    f"{symbol} price cache does not cover fetch window; "
+                    f"provider retry used: {coverage_reason}"
+                )
+                frame = None
+            else:
+                cache_used = True
+                source = str(_read_cache_metadata(cache_path).get("source") or source)
         except Exception as exc:
             warnings.append(f"{symbol} price cache unreadable; provider retry used: {exc}")
+            frame = None
 
     if frame is None:
         frame = provider.get_daily(
             symbol,
-            config.start_date,
-            config.end_date,
+            fetch_start,
+            fetch_end,
             adjust=config.price_adjust,
         )
-        cache.write(
-            frame, symbol, config.start_date, config.end_date, config.price_adjust
-        )
+        frame = _prepare_price_frame(frame, fetch_start, fetch_end)
+        covered, coverage_reason = _price_window_coverage(frame, fetch_start, fetch_end)
+        if not covered:
+            raise ValueError(
+                f"provider data does not cover requested price fetch window: " f"{coverage_reason}"
+            )
+        if cache_preexisting:
+            warnings.append(
+                f"{symbol} provider retry result was not cached because an "
+                "existing cache file was preserved"
+            )
+        else:
+            cache.write(frame, symbol, fetch_start, fetch_end, config.price_adjust)
+            cache_written = True
 
-    clean = _prepare_price_frame(frame, config.start_date, config.end_date)
+    clean = _prepare_price_frame(frame, fetch_start, fetch_end)
     quality = check_price_quality(clean)
     warnings.extend(f"{symbol} price quality error: {item}" for item in quality.errors)
-    warnings.extend(
-        f"{symbol} price quality warning: {item}" for item in quality.warnings
-    )
+    warnings.extend(f"{symbol} price quality warning: {item}" for item in quality.warnings)
     warnings.extend(_price_state_warnings(symbol, clean))
     metadata = _cache_metadata(
         "price",
@@ -521,10 +666,18 @@ def _load_price_data(
         cache_path,
         config,
         fetched_at,
+        fetch_start_date=fetch_start,
+        fetch_end_date=fetch_end,
         adjust=config.price_adjust,
         rows=len(clean),
+        actual_start_date=(clean["date"].min().strftime("%Y-%m-%d") if not clean.empty else None),
+        actual_end_date=(clean["date"].max().strftime("%Y-%m-%d") if not clean.empty else None),
+        cache_status=(
+            "hit" if cache_used else "written" if cache_written else "preserved_existing"
+        ),
     )
-    _write_cache_metadata(cache_path, metadata)
+    if cache_written:
+        _write_cache_metadata(cache_path, metadata)
     return clean, metadata, warnings
 
 
@@ -536,10 +689,15 @@ def _load_fundamental_data(
 ) -> tuple[FundamentalProviderResult, dict[str, object], list[str]]:
     directory = config.cache_directory / "fundamentals"
     directory.mkdir(parents=True, exist_ok=True)
+    fetch_start = config.fundamental_fetch_start_date
+    fetch_end = config.end_date
     cache_path = directory / (
-        f"{_safe_part(symbol)}_{_compact_date(config.start_date)}_"
-        f"{_compact_date(config.end_date)}.parquet"
+        f"{_safe_part(symbol)}_{_compact_date(fetch_start)}_" f"{_compact_date(fetch_end)}.parquet"
     )
+    cache_preexisting = cache_path.exists()
+    cache_used = False
+    cache_written = False
+    provider_fetched = False
     warnings: list[str] = []
     provider_result: Optional[FundamentalProviderResult] = None
 
@@ -552,21 +710,34 @@ def _load_fundamental_data(
                 point_in_time=bool(sidecar.get("point_in_time", False)),
                 warnings=list(sidecar.get("warnings", [])),
             )
+            cache_used = True
         except Exception as exc:
-            warnings.append(
-                f"{symbol} fundamental cache unreadable; provider retry used: {exc}"
-            )
+            warnings.append(f"{symbol} fundamental cache unreadable; provider retry used: {exc}")
 
     if provider_result is None:
-        provider_result = provider.get_fundamentals(
-            symbol, config.start_date, config.end_date
-        )
+        provider_result = provider.get_fundamentals(symbol, fetch_start, fetch_end)
+        provider_fetched = True
         if not isinstance(provider_result, FundamentalProviderResult):
             raise TypeError("fundamental provider must return FundamentalProviderResult")
-        provider_result.data = normalize_fundamental_data(provider_result.data)
-        provider_result.data.to_parquet(cache_path, index=False)
 
-    provider_result.data = normalize_fundamental_data(provider_result.data)
+    provider_result.data, validation_warnings = validate_fundamental_history(provider_result.data)
+    provider_result.warnings = _dedupe_warnings(
+        list(provider_result.warnings) + validation_warnings
+    )
+    provider_result.point_in_time = bool(
+        provider_result.point_in_time
+        and not provider_result.data.empty
+        and provider_result.data["available_date"].notna().all()
+    )
+    if provider_fetched:
+        if cache_preexisting:
+            warnings.append(
+                f"{symbol} fundamental provider retry result was not cached "
+                "because an existing cache file was preserved"
+            )
+        else:
+            provider_result.data.to_parquet(cache_path, index=False)
+            cache_written = True
     metadata = _cache_metadata(
         "fundamental",
         symbol,
@@ -574,11 +745,27 @@ def _load_fundamental_data(
         cache_path,
         config,
         fetched_at,
+        fetch_start_date=fetch_start,
+        fetch_end_date=fetch_end,
         rows=len(provider_result.data),
         point_in_time=provider_result.point_in_time,
         warnings=provider_result.warnings,
+        actual_report_start_date=(
+            provider_result.data["report_date"].min().strftime("%Y-%m-%d")
+            if provider_result.data["report_date"].notna().any()
+            else None
+        ),
+        actual_report_end_date=(
+            provider_result.data["report_date"].max().strftime("%Y-%m-%d")
+            if provider_result.data["report_date"].notna().any()
+            else None
+        ),
+        cache_status=(
+            "hit" if cache_used else "written" if cache_written else "preserved_existing"
+        ),
     )
-    _write_cache_metadata(cache_path, metadata)
+    if cache_written:
+        _write_cache_metadata(cache_path, metadata)
     return provider_result, metadata, warnings
 
 
@@ -615,9 +802,7 @@ def _raw_value_available(value: object) -> bool:
 
 def _factor_data_counts(score: FactorScore) -> tuple[int, int]:
     optional = FACTOR_OPTIONAL_RAW_FIELDS.get(score.factor_name, set())
-    values = [
-        value for name, value in score.raw_values.items() if name not in optional
-    ]
+    values = [value for name, value in score.raw_values.items() if name not in optional]
     available_count = sum(_raw_value_available(value) for value in values)
     return available_count, len(values) - available_count
 
@@ -645,19 +830,11 @@ def _calculate_factor_scores(
         "quality": quality_factor(symbol, financial, as_of_date),
         "momentum": momentum_factor(symbol, price_history, as_of_date),
         "low_vol": low_vol_factor(symbol, price_history, as_of_date),
-        "overbought_oversold": overbought_oversold_factor(
-            symbol, price_history, as_of_date
-        ),
+        "overbought_oversold": overbought_oversold_factor(symbol, price_history, as_of_date),
     }
-    selected = {
-        name: scores[name] for name, weight in weights.items() if weight > 0
-    }
-    availability = {
-        name: _factor_score_available(score) for name, score in selected.items()
-    }
-    available_scores = {
-        name: score for name, score in selected.items() if availability[name]
-    }
+    selected = {name: scores[name] for name, weight in weights.items() if weight > 0}
+    availability = {name: _factor_score_available(score) for name, score in selected.items()}
+    available_scores = {name: score for name, score in selected.items() if availability[name]}
     if not available_scores:
         return None, selected, availability
 
@@ -672,14 +849,14 @@ def _calculate_factor_scores(
     excluded = sorted(name for name, available in availability.items() if not available)
     if excluded:
         composite.warnings.append(
-            "excluded unavailable factors and renormalized weights: "
-            + ", ".join(excluded)
+            "excluded unavailable factors and renormalized weights: " + ", ".join(excluded)
         )
     return composite, selected, availability
 
 
 def _factor_snapshot_row(
-    rebalance_date: pd.Timestamp,
+    signal_date: pd.Timestamp,
+    execution_date: pd.Timestamp,
     symbol: str,
     composite: Optional[CompositeFactorScore],
     factor_scores: Mapping[str, FactorScore],
@@ -697,16 +874,16 @@ def _factor_snapshot_row(
         + (list(composite.warnings) if composite is not None else [])
     )
     row: dict[str, object] = {
-        "rebalance_date": rebalance_date,
+        "rebalance_date": execution_date,
+        "signal_date": signal_date,
+        "execution_date": execution_date,
         "symbol": symbol,
         "composite_score": composite.score if composite is not None else None,
         "composite_weights": json.dumps(
             composite.weights if composite is not None else {},
             sort_keys=True,
         ),
-        "fundamental_report_date": (
-            fundamental.report_date if fundamental is not None else None
-        ),
+        "fundamental_report_date": (fundamental.report_date if fundamental is not None else None),
         "fundamental_available_date": (
             fundamental.available_date if fundamental is not None else None
         ),
@@ -726,37 +903,30 @@ def _factor_snapshot_row(
 
 def _candidate_for_date(
     symbol: str,
-    rebalance_date: pd.Timestamp,
+    signal_date: pd.Timestamp,
+    execution_date: pd.Timestamp,
     price_data: pd.DataFrame,
     fundamental_result: FundamentalProviderResult,
     factor_weights: Mapping[str, float],
     macro_available_date: Optional[str],
 ) -> tuple[Optional[StockCandidate], dict[str, object], list[str]]:
-    price_history = price_data[price_data["date"] <= rebalance_date].copy()
-    warnings = _tradability_warnings(symbol, price_data, rebalance_date)
-    warnings.extend(
-        _future_fundamental_warnings(
-            symbol, fundamental_result.data, rebalance_date
-        )
-    )
-    fundamental = latest_fundamental_asof(
-        fundamental_result.data, symbol, rebalance_date
-    )
+    price_history = price_data[price_data["date"] <= signal_date].copy()
+    warnings = _tradability_warnings(symbol, price_data, execution_date)
+    warnings.extend(_future_fundamental_warnings(symbol, fundamental_result.data, signal_date))
+    fundamental = latest_fundamental_asof(fundamental_result.data, symbol, signal_date)
     if fundamental is None:
         warnings.append(
-            f"{symbol} has no fundamental record available by {rebalance_date.date()}"
+            f"{symbol} has no fundamental record available by signal date " f"{signal_date.date()}"
         )
     if not fundamental_result.point_in_time:
-        warnings.append(
-            f"{symbol} fundamental source is not verified point-in-time"
-        )
+        warnings.append(f"{symbol} fundamental source is not verified point-in-time")
 
     composite, factor_scores, factor_availability = _calculate_factor_scores(
         symbol,
         price_history,
         fundamental,
         factor_weights,
-        rebalance_date,
+        signal_date,
     )
     factor_warnings = _dedupe_warnings(
         [
@@ -767,13 +937,14 @@ def _candidate_for_date(
         + (list(composite.warnings) if composite is not None else [])
     )
     warnings.extend(
-        f"{symbol} {rebalance_date.date()} factor warning: {warning}"
+        f"{symbol} signal {signal_date.date()} factor warning: {warning}"
         for warning in factor_warnings
     )
     if composite is None:
         candidate = None
         warnings.append(
-            f"{symbol} has no available factor data at {rebalance_date.date()}; "
+            f"{symbol} has no available factor data at signal date "
+            f"{signal_date.date()}; "
             "candidate rejected"
         )
     else:
@@ -789,7 +960,8 @@ def _candidate_for_date(
             warnings=list(composite.warnings),
         )
     snapshot = _factor_snapshot_row(
-        rebalance_date,
+        signal_date,
+        execution_date,
         symbol,
         composite,
         factor_scores,
@@ -803,6 +975,39 @@ def _candidate_for_date(
     return candidate, snapshot, warnings
 
 
+def _skipped_signal_snapshot(
+    execution_date: pd.Timestamp,
+    symbol: str,
+    factor_weights: Mapping[str, float],
+    reason: str,
+) -> dict[str, object]:
+    row: dict[str, object] = {
+        "rebalance_date": execution_date,
+        "signal_date": None,
+        "execution_date": execution_date,
+        "symbol": symbol,
+        "composite_score": None,
+        "composite_weights": "{}",
+        "fundamental_report_date": None,
+        "fundamental_available_date": None,
+        "fundamental_point_in_time": False,
+        "macro_available_date": None,
+        "warnings": reason,
+        "target_weight": 0.0,
+        "selected": False,
+        "factor_rejection_reason": reason,
+        "macro_regime": None,
+    }
+    for factor_name, weight in factor_weights.items():
+        if weight <= 0:
+            continue
+        row[f"{factor_name}_score"] = None
+        row[f"{factor_name}_available"] = False
+        row[f"{factor_name}_raw_available_count"] = 0
+        row[f"{factor_name}_raw_missing_count"] = 0
+    return row
+
+
 def _build_weight_schedule(
     config: RealResearchConfig,
     price_data: Mapping[str, pd.DataFrame],
@@ -810,13 +1015,15 @@ def _build_weight_schedule(
     macro_data: pd.DataFrame,
     universe_provider: object,
 ) -> tuple[dict[pd.Timestamp, dict[str, float]], pd.DataFrame, list[str]]:
-    trading_dates = _aligned_trading_dates(
-        price_data, config.start_date, config.end_date
+    aligned_fetch_dates = _aligned_trading_dates(
+        price_data, config.price_fetch_start_date, config.end_date
     )
-    rebalance_dates = generate_rebalance_dates(
-        trading_dates, config.rebalance_frequency
-    )
-    if rebalance_dates.empty:
+    research_dates = aligned_fetch_dates[
+        (aligned_fetch_dates >= pd.Timestamp(config.start_date))
+        & (aligned_fetch_dates <= pd.Timestamp(config.end_date))
+    ]
+    execution_dates = generate_rebalance_dates(research_dates, config.rebalance_frequency)
+    if execution_dates.empty:
         raise RealResearchError("no rebalance dates available for the research window")
 
     schedule: dict[pd.Timestamp, dict[str, float]] = {}
@@ -824,26 +1031,44 @@ def _build_weight_schedule(
     warnings: list[str] = []
     all_symbols = list(price_data)
 
-    for rebalance_date in rebalance_dates:
-        date_text = rebalance_date.strftime("%Y-%m-%d")
-        universe = _universe_snapshot(universe_provider, date_text)
+    for execution_date in execution_dates:
+        execution_text = execution_date.strftime("%Y-%m-%d")
+        signal_date = _signal_date_before(aligned_fetch_dates, execution_date)
+        if signal_date is None:
+            reason = (
+                f"no aligned signal date exists before execution date "
+                f"{execution_text}; period remains cash"
+            )
+            warnings.append(reason)
+            schedule[execution_date] = {symbol: 0.0 for symbol in all_symbols}
+            snapshots.extend(
+                _skipped_signal_snapshot(
+                    execution_date,
+                    symbol,
+                    config.factor_weights,
+                    reason,
+                )
+                for symbol in all_symbols
+            )
+            continue
+
+        signal_text = signal_date.strftime("%Y-%m-%d")
+        universe = _universe_snapshot(universe_provider, signal_text)
         warnings.extend(universe.warnings)
         if not universe.point_in_time:
             warnings.append(
-                f"universe at {date_text} is not verified historical membership"
+                f"universe at signal date {signal_text} is not verified " "historical membership"
             )
 
-        eligible_symbols = [
-            symbol for symbol in universe.symbols if symbol in price_data
-        ]
+        eligible_symbols = [symbol for symbol in universe.symbols if symbol in price_data]
         missing_prices = sorted(set(universe.symbols) - set(eligible_symbols))
         warnings.extend(
-            f"{symbol} excluded at {date_text}: price data unavailable"
+            f"{symbol} excluded for execution {execution_text}: price data unavailable"
             for symbol in missing_prices
         )
 
-        macro_score, macro_multiplier, macro_available_date, macro_warnings = (
-            _macro_asof(macro_data, rebalance_date)
+        macro_score, macro_multiplier, macro_available_date, macro_warnings = _macro_asof(
+            macro_data, signal_date
         )
         warnings.extend(macro_warnings)
         period_candidates: list[StockCandidate] = []
@@ -859,7 +1084,8 @@ def _build_weight_schedule(
                 )
             candidate, snapshot, candidate_warnings = _candidate_for_date(
                 symbol,
-                rebalance_date,
+                signal_date,
+                execution_date,
                 price_data[symbol],
                 fundamental_result,
                 config.factor_weights,
@@ -872,7 +1098,7 @@ def _build_weight_schedule(
 
         if period_candidates:
             warnings.append(
-                f"industry classification unavailable at {date_text}; "
+                f"industry classification unavailable at signal date {signal_text}; "
                 "unknown-industry constraint is conservative"
             )
         portfolio = build_factor_portfolio(
@@ -881,15 +1107,15 @@ def _build_weight_schedule(
             macro_regime=macro_score,
             macro_multiplier=macro_multiplier,
         )
-        warnings.extend(f"{date_text}: {item}" for item in portfolio.warnings)
+        warnings.extend(f"execution {execution_text}: {item}" for item in portfolio.warnings)
         if not portfolio.target_weights:
             warnings.append(
-                f"no eligible target holdings at {date_text}; period remains cash"
+                f"no eligible target holdings for execution {execution_text}; "
+                "period remains cash"
             )
 
-        schedule[rebalance_date] = {
-            symbol: float(portfolio.target_weights.get(symbol, 0.0))
-            for symbol in all_symbols
+        schedule[execution_date] = {
+            symbol: float(portfolio.target_weights.get(symbol, 0.0)) for symbol in all_symbols
         }
         for snapshot in period_snapshots:
             symbol = str(snapshot["symbol"])
@@ -926,29 +1152,21 @@ def _load_benchmark_data(
 ) -> tuple[pd.DataFrame, dict[str, object], list[str]]:
     cache = ParquetCache(config.cache_directory / "benchmarks")
     cache_symbol = f"benchmark_{symbol}"
-    cache_path = cache.path_for(
-        cache_symbol, config.start_date, config.end_date, "none"
-    )
+    cache_path = cache.path_for(cache_symbol, config.start_date, config.end_date, "none")
     warnings: list[str] = []
     source = provider.__class__.__name__
     frame: Optional[pd.DataFrame] = None
 
     if cache_path.exists():
         try:
-            frame = cache.read(
-                cache_symbol, config.start_date, config.end_date, "none"
-            )
+            frame = cache.read(cache_symbol, config.start_date, config.end_date, "none")
             source = str(_read_cache_metadata(cache_path).get("source") or source)
         except Exception as exc:
-            warnings.append(
-                f"{symbol} benchmark cache unreadable; provider retry used: {exc}"
-            )
+            warnings.append(f"{symbol} benchmark cache unreadable; provider retry used: {exc}")
 
     if frame is None:
         frame = provider.get_daily(symbol, config.start_date, config.end_date)
-        cache.write(
-            frame, cache_symbol, config.start_date, config.end_date, "none"
-        )
+        cache.write(frame, cache_symbol, config.start_date, config.end_date, "none")
 
     clean = _prepare_price_frame(frame, config.start_date, config.end_date)
     metadata = _cache_metadata(
@@ -1035,21 +1253,15 @@ def _factor_coverage_by_rebalance(
     frame = pd.DataFrame(factor_snapshots).copy()
     if frame.empty:
         return {}
-    frame["rebalance_date"] = pd.to_datetime(
-        frame["rebalance_date"], errors="coerce"
-    )
+    frame["rebalance_date"] = pd.to_datetime(frame["rebalance_date"], errors="coerce")
     summary: dict[str, dict[str, dict[str, float | int]]] = {}
-    for rebalance_date, period in frame.dropna(
-        subset=["rebalance_date"]
-    ).groupby("rebalance_date"):
+    for rebalance_date, period in frame.dropna(subset=["rebalance_date"]).groupby("rebalance_date"):
         date_text = pd.Timestamp(rebalance_date).strftime("%Y-%m-%d")
         factor_summary: dict[str, dict[str, float | int]] = {}
         for factor_name in factor_names:
             availability_column = f"{factor_name}_available"
             if availability_column in period:
-                available_count = int(
-                    period[availability_column].fillna(False).astype(bool).sum()
-                )
+                available_count = int(period[availability_column].fillna(False).astype(bool).sum())
             else:
                 available_count = 0
             total_count = len(period)
@@ -1057,18 +1269,14 @@ def _factor_coverage_by_rebalance(
             factor_summary[factor_name] = {
                 "available_count": available_count,
                 "missing_count": missing_count,
-                "coverage_ratio": (
-                    available_count / total_count if total_count else 0.0
-                ),
+                "coverage_ratio": (available_count / total_count if total_count else 0.0),
             }
         summary[date_text] = factor_summary
     return summary
 
 
 def _overall_factor_coverage(
-    coverage_by_rebalance: Mapping[
-        str, Mapping[str, Mapping[str, float | int]]
-    ],
+    coverage_by_rebalance: Mapping[str, Mapping[str, Mapping[str, float | int]]],
     factor_names: Mapping[str, float],
 ) -> dict[str, dict[str, float | int]]:
     summary: dict[str, dict[str, float | int]] = {}
@@ -1085,9 +1293,7 @@ def _overall_factor_coverage(
         summary[factor_name] = {
             "available_count": available_count,
             "missing_count": missing_count,
-            "coverage_ratio": (
-                available_count / total_count if total_count else 0.0
-            ),
+            "coverage_ratio": (available_count / total_count if total_count else 0.0),
         }
     return summary
 
@@ -1124,21 +1330,15 @@ def _build_coverage_summary(
     warning_count: int,
 ) -> dict[str, Any]:
     successful_price_symbols = sorted(price_data)
-    failed_price_symbols = sorted(
-        set(config.candidate_symbols) - set(successful_price_symbols)
-    )
+    failed_price_symbols = sorted(set(config.candidate_symbols) - set(successful_price_symbols))
     successful_fundamental_symbols = sorted(
-        symbol
-        for symbol, result in fundamental_results.items()
-        if not result.data.empty
+        symbol for symbol, result in fundamental_results.items() if not result.data.empty
     )
     failed_fundamental_symbols = sorted(
         set(successful_price_symbols) - set(successful_fundamental_symbols)
     )
-    benchmark_status, available_benchmarks, unavailable_benchmarks = (
-        _benchmark_coverage_status(
-            benchmark_metrics, config.benchmark_symbols
-        )
+    benchmark_status, available_benchmarks, unavailable_benchmarks = _benchmark_coverage_status(
+        benchmark_metrics, config.benchmark_symbols
     )
     holdings_count_by_rebalance = {
         pd.Timestamp(date).strftime("%Y-%m-%d"): sum(
@@ -1147,9 +1347,7 @@ def _build_coverage_summary(
         for date, weights in sorted(weight_schedule.items())
     }
     active_factor_weights = {
-        name: weight
-        for name, weight in config.factor_weights.items()
-        if weight > 0
+        name: weight for name, weight in config.factor_weights.items() if weight > 0
     }
     factor_coverage_by_rebalance = _factor_coverage_by_rebalance(
         factor_snapshots, active_factor_weights
@@ -1184,9 +1382,8 @@ def _determine_run_status(
     coverage_summary: Mapping[str, Any],
     min_holdings: int,
 ) -> tuple[str, list[str]]:
-    if (
-        not coverage_summary.get("successful_price_symbols")
-        or not coverage_summary.get("rebalance_count")
+    if not coverage_summary.get("successful_price_symbols") or not coverage_summary.get(
+        "rebalance_count"
     ):
         return "failed", ["required price or rebalance coverage is empty"]
 
@@ -1204,8 +1401,7 @@ def _determine_run_status(
 
     factor_coverage = coverage_summary.get("factor_coverage_overall", {})
     if any(
-        float(values.get("coverage_ratio", 0.0))
-        < MIN_FACTOR_COVERAGE_RATIO
+        float(values.get("coverage_ratio", 0.0)) < MIN_FACTOR_COVERAGE_RATIO
         for values in factor_coverage.values()
     ):
         reasons.append("one or more configured factors have insufficient coverage")
@@ -1272,10 +1468,12 @@ def _run_manifest(
     run_status: str,
     coverage_summary: Mapping[str, Any],
     run_status_reasons: list[str],
+    price_alignment: Mapping[str, object],
 ) -> dict[str, object]:
     if run_status not in RUN_STATUSES:
         raise ValueError(f"unsupported run_status: {run_status}")
     return {
+        "artifact_schema_version": "2.0",
         "run_time": run_time.isoformat(),
         "git_commit": git_commit,
         "experiment_name": config.experiment_name,
@@ -1287,6 +1485,51 @@ def _run_manifest(
             "start_date": config.start_date,
             "end_date": config.end_date,
         },
+        "research_window": {
+            "start_date": config.start_date,
+            "end_date": config.end_date,
+        },
+        "metrics_window": {
+            "start_date": config.start_date,
+            "end_date": config.end_date,
+        },
+        "fetch_windows": {
+            "prices": {
+                "start_date": config.price_fetch_start_date,
+                "end_date": config.end_date,
+            },
+            "fundamentals": {
+                "start_date": config.fundamental_fetch_start_date,
+                "end_date": config.end_date,
+            },
+            "benchmarks": {
+                "start_date": config.start_date,
+                "end_date": config.end_date,
+            },
+            "macro": {
+                "description": (
+                    "The configured local CSV is loaded as supplied; each signal "
+                    "date selects only records already available by that date."
+                ),
+                "selection_end_date": config.end_date,
+            },
+        },
+        "factor_lookbacks": factor_lookback_manifest(),
+        "signal_execution_policy": {
+            "signal_date_rule": ("latest aligned real trading date strictly before execution_date"),
+            "execution_date_rule": (
+                "scheduled rebalance date inside the research window with real "
+                "close bars for every loaded portfolio symbol"
+            ),
+            "signal_price_field": "close",
+            "execution_price_field": "close",
+            "weights_effective_rule": (
+                "weights are established at execution_date close and affect P&L "
+                "only after that execution price"
+            ),
+            "signal_lag_trading_days": 1,
+        },
+        "price_alignment": dict(price_alignment),
         "config_summary": {
             "candidate_count": len(config.candidate_symbols),
             "benchmark_symbols": config.benchmark_symbols,
@@ -1294,6 +1537,7 @@ def _run_manifest(
             "price_adjust": config.price_adjust,
             "factor_weights": config.factor_weights,
             "portfolio_constraints": asdict(config.portfolio_constraints),
+            "history_lookback": asdict(config.history_lookback),
         },
         "point_in_time_limitations": point_in_time_limitations,
         "survivorship_bias_risk": (
@@ -1367,10 +1611,7 @@ def _prepare_market_inputs(
             fundamentals[symbol] = result
             source_records.append(metadata)
             warnings.extend(item_warnings)
-            warnings.extend(
-                f"{symbol} fundamental warning: {item}"
-                for item in result.warnings
-            )
+            warnings.extend(f"{symbol} fundamental warning: {item}" for item in result.warnings)
         except Exception as exc:
             warning = f"{symbol} fundamental provider failed: {exc}"
             warnings.append(warning)
@@ -1429,9 +1670,7 @@ def _run_portfolio_backtest(
     metrics["annual_return_method"] = (
         "first_valid_equity_to_year_end_for_first_year_then_year_end_to_year_end"
     )
-    metrics["excluded_partial_years"] = sorted(
-        set(equity_years) - set(included_annual_years)
-    )
+    metrics["excluded_partial_years"] = sorted(set(equity_years) - set(included_annual_years))
     metrics["rebalance_frequency"] = config.rebalance_frequency
     metrics["start_date"] = config.start_date
     metrics["end_date"] = config.end_date
@@ -1464,29 +1703,21 @@ def run_real_data_research(
 
     try:
         resolved_price_provider = price_provider or AShareDataProvider()
-        resolved_fundamental_provider = (
-            fundamental_provider or AShareFundamentalProvider()
-        )
+        resolved_fundamental_provider = fundamental_provider or AShareFundamentalProvider()
     except ImportError as exc:
         raise RealDataAccessError(f"real-data provider is unavailable: {exc}") from exc
-    resolved_universe_provider = universe_provider or FixedStockUniverse(
-        config.candidate_symbols
-    )
+    resolved_universe_provider = universe_provider or FixedStockUniverse(config.candidate_symbols)
 
     warnings: list[str] = []
-    price_data, fundamental_results, source_records, input_warnings = (
-        _prepare_market_inputs(
-            config,
-            resolved_price_provider,
-            resolved_fundamental_provider,
-            started_at,
-        )
+    price_data, fundamental_results, source_records, input_warnings = _prepare_market_inputs(
+        config,
+        resolved_price_provider,
+        resolved_fundamental_provider,
+        started_at,
     )
     warnings.extend(input_warnings)
 
-    macro_data, macro_source, macro_warnings = _load_macro_data(
-        config, macro_provider
-    )
+    macro_data, macro_source, macro_warnings = _load_macro_data(config, macro_provider)
     warnings.extend(macro_warnings)
     source_records.append(
         {
@@ -1517,9 +1748,12 @@ def run_real_data_research(
         resolved_universe_provider,
     )
     warnings.extend(schedule_warnings)
-    backtest_result, metrics = _run_portfolio_backtest(
-        config, price_data, weight_schedule
+    price_alignment = _price_alignment_summary(
+        price_data,
+        config.price_fetch_start_date,
+        config.end_date,
     )
+    backtest_result, metrics = _run_portfolio_backtest(config, price_data, weight_schedule)
 
     try:
         resolved_index_provider = index_provider or AShareIndexProvider()
@@ -1544,9 +1778,7 @@ def run_real_data_research(
         source_records.extend(benchmark_sources)
         warnings.extend(benchmark_warnings)
 
-    limitations = _point_in_time_limitations(
-        config, fundamental_results, macro_data
-    )
+    limitations = _point_in_time_limitations(config, fundamental_results, macro_data)
     warnings = _dedupe_warnings(warnings)
     coverage_summary = _build_coverage_summary(
         config,
@@ -1572,6 +1804,7 @@ def run_real_data_research(
         run_status,
         coverage_summary,
         run_status_reasons,
+        price_alignment,
     )
     artifacts = write_research_artifacts(
         config.output_directory,

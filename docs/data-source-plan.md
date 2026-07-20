@@ -292,7 +292,17 @@ data/cache/600519_20090101_20241231_qfq.parquet
 - 股票、基本面和基准缓存写入 `data/real_cache/`，并保存来源、区间、拉取时间、口径、行数和摘要 metadata。
 - 完整运行结果写入 `data/research_runs/<run_id>/`，两个目录均不提交到 Git。
 
-调仓日的数据选择必须满足 `available_date <= rebalance_date`。详细配置、运行命令和数据限制见 `docs/real-data-research.md`。
+P0 数据窗口加固后，价格 provider 与缓存键使用
+`research_start_date - history_lookback.price_calendar_days` 至
+`research_end_date`；基本面 provider 使用
+`research_start_date - history_lookback.fundamental_years` 至
+`research_end_date`。缓存 metadata 同时记录 fetch 与 research 两组边界。
+同键价格缓存只有确实覆盖 fetch window 时才能复用，覆盖不足会重试 provider
+或明确失败，且不会覆盖已有缓存文件。
+
+决策时点的数据选择必须满足 `available_date <= signal_date`，其中 signal date
+严格早于 execution date；基本面还必须满足 `report_date <= signal_date`。
+详细配置、运行命令和数据限制见 `docs/real-data-research.md`。
 
 ## 13. 行情缺口稳定性规则
 

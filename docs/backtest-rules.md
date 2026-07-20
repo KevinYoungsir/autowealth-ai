@@ -250,9 +250,22 @@ result = backtester.run(
 
 `PortfolioBacktester.run_weight_schedule` 是现有 `run` 的兼容扩展，不改变原有固定目标权重入口。真实研究流水线按每个年度或五年调仓日提供独立目标权重映射，未入选标的在该期显式设为 0，以便退出旧持仓。
 
-每期目标权重只能由调仓日当时可获得的数据生成。流水线先截断价格历史，再按 `available_date <= rebalance_date` 选择财报和宏观记录，随后计算因子与目标权重。年度和五年调仓日期均从回测实际对齐后的交易日索引生成。
+每期目标权重只能由 execution date 前的 signal date 当时可获得的数据生成。
+signal date 是严格早于 execution date、且所有已加载组合标的都有真实行情的
+最近对齐交易日。价格输入限定为 `date <= signal_date`，基本面同时满足
+`report_date <= signal_date` 与 `available_date <= signal_date`，宏观数据也按
+signal date 做 as-of 选择。
 
-当前兼容入口仍使用已有收盘价成交与成本模型。停牌、涨跌停、ST、退市、成交容量和公司行动尚未被完整执行级建模，相关异常只形成 warning，不能据此声称为严格可成交回测。完整限制见 `docs/real-data-research.md`。
+当前兼容入口仍使用已有收盘价成交与成本模型。execution date 当日先按旧
+持仓计算收盘净值，再在该收盘价执行调仓；新权重从该收盘价之后生效，
+因此不会取得 execution 当日已经发生的价格变化。权重调度中的日期是明确
+execution dates，不再由 backtester 二次生成。
+
+价格矩阵最多前向填充 5 个组合交易日用于估值对齐，禁止无限沿用陈旧价格。
+真实流水线只在所有已加载标的具有 execution date 真实 bar 时生成调仓计划；
+缺失 bar、零成交量等情况继续形成可交易性 warning。停牌、涨跌停、ST、
+退市、成交容量和公司行动尚未被完整执行级建模，不能据此声称为严格可成交
+回测。完整限制见 `docs/real-data-research.md`。
 
 ## 16. 年度收益首年口径
 

@@ -13,11 +13,18 @@ from autowealth.factors.schema import (
     average_available,
     score_higher_better,
 )
+from autowealth.factors.readiness import (
+    MOMENTUM_RECENT_SKIP_DAYS,
+    MOMENTUM_SIX_MONTH_DAYS,
+    MOMENTUM_SIX_MONTH_MIN_CLOSES,
+    MOMENTUM_TWELVE_MONTH_DAYS,
+    MOMENTUM_TWELVE_MONTH_MIN_CLOSES,
+    insufficient_sample_warning,
+)
 
-
-RECENT_REVERSAL_SKIP_DAYS = 21
-SIX_MONTH_DAYS = 126
-TWELVE_MONTH_DAYS = 252
+RECENT_REVERSAL_SKIP_DAYS = MOMENTUM_RECENT_SKIP_DAYS
+SIX_MONTH_DAYS = MOMENTUM_SIX_MONTH_DAYS
+TWELVE_MONTH_DAYS = MOMENTUM_TWELVE_MONTH_DAYS
 
 
 def momentum_factor(symbol: str, price_data: pd.DataFrame, as_of_date: str) -> FactorScore:
@@ -35,9 +42,19 @@ def momentum_factor(symbol: str, price_data: pd.DataFrame, as_of_date: str) -> F
         "momentum_6m_ex_1m": score_higher_better(six_month, -0.2, 0.5),
         "momentum_12m_ex_1m": score_higher_better(twelve_month, -0.3, 0.8),
     }
-    warnings = [
-        f"missing {name}; score degraded" for name, value in raw_values.items() if value is None
-    ]
+    requirements = {
+        "momentum_6m_ex_1m": MOMENTUM_SIX_MONTH_MIN_CLOSES,
+        "momentum_12m_ex_1m": MOMENTUM_TWELVE_MONTH_MIN_CLOSES,
+    }
+    warnings = []
+    for name, value in raw_values.items():
+        if value is not None:
+            continue
+        minimum = requirements[name]
+        if len(prices) < minimum:
+            warnings.append(insufficient_sample_warning(name, len(prices), minimum))
+        else:
+            warnings.append(f"missing {name}; score degraded")
     return FactorScore(
         symbol=symbol,
         factor_name="momentum",
@@ -65,4 +82,3 @@ def _momentum(prices: pd.Series, lookback_days: int, skip_days: int) -> Optional
     if start_price <= 0:
         return None
     return float(end_price / start_price - 1)
-

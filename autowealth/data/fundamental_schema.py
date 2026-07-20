@@ -7,7 +7,6 @@ from typing import Mapping, Optional
 
 import pandas as pd
 
-
 FUNDAMENTAL_COLUMNS = [
     "symbol",
     "report_date",
@@ -76,19 +75,61 @@ def normalize_fundamental_data(data: pd.DataFrame) -> pd.DataFrame:
     normalized = normalized[FUNDAMENTAL_COLUMNS]
     normalized["symbol"] = normalized["symbol"].astype("string")
     normalized["report_date"] = pd.to_datetime(normalized["report_date"], errors="coerce")
-    normalized["available_date"] = pd.to_datetime(
-        normalized["available_date"], errors="coerce"
-    )
-    normalized["fetched_at"] = pd.to_datetime(
-        normalized["fetched_at"], errors="coerce", utc=True
-    )
+    normalized["available_date"] = pd.to_datetime(normalized["available_date"], errors="coerce")
+    normalized["fetched_at"] = pd.to_datetime(normalized["fetched_at"], errors="coerce", utc=True)
     for column in FUNDAMENTAL_NUMERIC_COLUMNS:
         normalized[column] = pd.to_numeric(normalized[column], errors="coerce")
 
     normalized["source"] = normalized["source"].fillna("unknown").astype(str)
     return normalized.sort_values(
-        ["symbol", "available_date", "report_date"], na_position="last"
+        ["symbol", "available_date", "report_date"],
+        na_position="last",
+        kind="mergesort",
     ).reset_index(drop=True)
+
+
+def validate_fundamental_history(
+    data: pd.DataFrame,
+) -> tuple[pd.DataFrame, list[str]]:
+    """Validate publication order and resolve exact report duplicates.
+
+    Rows whose publication date precedes the report period are retained for
+    audit but their ``available_date`` is invalidated, so as-of selection cannot
+    consume them. Exact report/publication duplicates keep the row with the
+    latest fetched timestamp, then the last stable source row.
+    """
+    normalized = normalize_fundamental_data(data)
+    warnings: list[str] = []
+
+    invalid_order = (
+        normalized["available_date"].notna()
+        & normalized["report_date"].notna()
+        & (normalized["available_date"] < normalized["report_date"])
+    )
+    invalid_count = int(invalid_order.sum())
+    if invalid_count:
+        warnings.append(
+            f"invalidated {invalid_count} fundamental rows with "
+            "available_date earlier than report_date"
+        )
+        normalized.loc[invalid_order, "available_date"] = pd.NaT
+
+    normalized = normalized.sort_values(
+        ["symbol", "report_date", "available_date", "fetched_at", "source"],
+        na_position="last",
+        kind="mergesort",
+    )
+    duplicate_keys = ["symbol", "report_date", "available_date"]
+    duplicate_mask = normalized.duplicated(duplicate_keys, keep="last")
+    duplicate_count = int(duplicate_mask.sum())
+    if duplicate_count:
+        warnings.append(
+            f"removed {duplicate_count} duplicate fundamental rows; "
+            "kept latest fetched_at then last stable source row"
+        )
+        normalized = normalized.loc[~duplicate_mask]
+
+    return normalize_fundamental_data(normalized), warnings
 
 
 def eligible_fundamentals_asof(

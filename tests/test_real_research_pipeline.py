@@ -8,24 +8,30 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 import yaml
 
+import autowealth.research.real_pipeline as real_pipeline_module
 from autowealth.backtest.metrics import annual_returns
 from autowealth.data.ashare_provider import AShareDataProvider
+from autowealth.data.cache import ParquetCache
 from autowealth.data.fundamental_provider import (
     AShareFundamentalProvider,
     FundamentalProviderResult,
 )
-from autowealth.data.fundamental_schema import latest_fundamental_asof
+from autowealth.data.fundamental_schema import (
+    latest_fundamental_asof,
+    validate_fundamental_history,
+)
 from autowealth.data.index_provider import AShareIndexProvider
 from autowealth.data.quality import check_price_quality
 from autowealth.data.universe import UniverseSnapshot
 from autowealth.research.artifacts import REQUIRED_ARTIFACT_FILES
 from autowealth.research.real_pipeline import (
+    RealResearchError,
     load_real_research_config,
     run_real_data_research,
 )
-
 
 BENCHMARK_METRICS = {
     "annualized_return",
@@ -38,14 +44,14 @@ BENCHMARK_METRICS = {
 
 
 def _price_frame(symbol: str) -> pd.DataFrame:
-    dates = pd.bdate_range("2010-01-04", "2020-01-10")
+    dates = pd.bdate_range("2008-01-02", "2020-01-10")
     offset = 0.0 if symbol.endswith("1") else 8.0
     trend = np.linspace(0.0, 45.0, len(dates))
     cycle = np.sin(np.arange(len(dates)) / 40.0) * 1.5
     close = 40.0 + offset + trend + cycle
     volume = np.full(len(dates), 1_000_000.0)
     if symbol == "600001":
-        volume[0] = 0.0
+        volume[250] = 0.0
     return pd.DataFrame(
         {
             "date": dates,
@@ -117,6 +123,7 @@ def _fundamental_frame(symbol: str) -> pd.DataFrame:
 class MockPriceProvider:
     def __init__(self) -> None:
         self.calls: list[str] = []
+        self.windows: list[tuple[str, str, str]] = []
 
     def get_daily(
         self,
@@ -126,17 +133,20 @@ class MockPriceProvider:
         adjust: str = "none",
     ) -> pd.DataFrame:
         self.calls.append(symbol)
+        self.windows.append((symbol, start_date, end_date))
         return _price_frame(symbol)
 
 
 class MockFundamentalProvider:
     def __init__(self) -> None:
         self.calls: list[str] = []
+        self.windows: list[tuple[str, str, str]] = []
 
     def get_fundamentals(
         self, symbol: str, start_date: str, end_date: str
     ) -> FundamentalProviderResult:
         self.calls.append(symbol)
+        self.windows.append((symbol, start_date, end_date))
         return FundamentalProviderResult(
             data=_fundamental_frame(symbol),
             source="mock_fundamental",
@@ -200,9 +210,7 @@ class MockIndexProvider:
     def __init__(self) -> None:
         self.calls: list[str] = []
 
-    def get_daily(
-        self, symbol: str, start_date: str, end_date: str
-    ) -> pd.DataFrame:
+    def get_daily(self, symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
         self.calls.append(symbol)
         return _price_frame(symbol)
 
@@ -226,9 +234,7 @@ class FailingPriceProvider(MockPriceProvider):
 
 
 class FailingIndexProvider(MockIndexProvider):
-    def get_daily(
-        self, symbol: str, start_date: str, end_date: str
-    ) -> pd.DataFrame:
+    def get_daily(self, symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
         self.calls.append(symbol)
         raise RuntimeError("mock benchmark endpoint unavailable")
 
@@ -247,7 +253,11 @@ class MissingValuationFundamentalProvider(MockFundamentalProvider):
         return result
 
 
-def _write_config(tmp_path: Path, frequency: str) -> Path:
+def _write_config(
+    tmp_path: Path,
+    frequency: str,
+    history_lookback: object = None,
+) -> Path:
     config = {
         "experiment_name": f"offline_{frequency}_research",
         "start_date": "2010-01-04",
@@ -281,6 +291,8 @@ def _write_config(tmp_path: Path, frequency: str) -> Path:
         "cache_directory": str(tmp_path / "cache"),
         "output_directory": str(tmp_path / "runs"),
     }
+    if history_lookback is not None:
+        config["history_lookback"] = history_lookback
     path = tmp_path / f"{frequency}.yaml"
     path.write_text(
         yaml.safe_dump(config, sort_keys=False, allow_unicode=True),
@@ -328,6 +340,44 @@ def test_baseline_config_parses() -> None:
     assert config.rebalance_frequency == "yearly"
     assert len(config.candidate_symbols) >= 5
     assert config.price_adjust == "none"
+    assert config.history_lookback.price_calendar_days == 450
+    assert config.history_lookback.fundamental_years == 5
+
+
+def test_legacy_config_uses_safe_history_lookback_defaults(tmp_path: Path) -> None:
+    config = load_real_research_config(_write_config(tmp_path, "yearly"))
+
+    assert config.history_lookback.price_calendar_days == 450
+    assert config.history_lookback.fundamental_years == 5
+
+
+def test_history_lookback_parses_explicit_values(tmp_path: Path) -> None:
+    config = load_real_research_config(
+        _write_config(
+            tmp_path,
+            "yearly",
+            {"price_calendar_days": 500, "fundamental_years": 7},
+        )
+    )
+
+    assert config.history_lookback.price_calendar_days == 500
+    assert config.history_lookback.fundamental_years == 7
+
+
+@pytest.mark.parametrize(
+    "history_lookback",
+    [
+        {"price_calendar_days": -1, "fundamental_years": 5},
+        {"price_calendar_days": 450.0, "fundamental_years": 5},
+        {"price_calendar_days": 450, "fundamental_years": "5"},
+    ],
+)
+def test_history_lookback_rejects_negative_or_non_integer_values(
+    tmp_path: Path,
+    history_lookback: object,
+) -> None:
+    with pytest.raises(RealResearchError, match="non-negative integer"):
+        load_real_research_config(_write_config(tmp_path, "yearly", history_lookback))
 
 
 def test_available_date_blocks_future_fundamental_rows() -> None:
@@ -344,25 +394,75 @@ def test_available_date_blocks_future_fundamental_rows() -> None:
     assert after_release.pe == 1.0
 
 
+def test_missing_available_date_is_not_point_in_time_eligible() -> None:
+    data = _fundamental_frame("600001").iloc[[0]].copy()
+    data["available_date"] = pd.NaT
+
+    assert latest_fundamental_asof(data, "600001", "2010-01-04") is None
+
+
+def test_available_date_before_report_date_is_invalidated_with_warning() -> None:
+    data = _fundamental_frame("600001").iloc[[0]].copy()
+    data["report_date"] = "2009-12-31"
+    data["available_date"] = "2009-12-01"
+
+    validated, warnings = validate_fundamental_history(data)
+
+    assert validated["available_date"].isna().all()
+    assert any("available_date earlier than report_date" in warning for warning in warnings)
+    assert latest_fundamental_asof(validated, "600001", "2010-01-04") is None
+
+
+def test_duplicate_fundamental_reports_use_auditable_latest_fetched_rule() -> None:
+    first = _fundamental_frame("600001").iloc[[0]].copy()
+    second = first.copy()
+    first["fetched_at"] = "2024-01-01T00:00:00Z"
+    second["fetched_at"] = "2025-01-01T00:00:00Z"
+    first["roe"] = 0.1
+    second["roe"] = 0.2
+
+    validated, warnings = validate_fundamental_history(
+        pd.concat([first, second], ignore_index=True)
+    )
+
+    assert len(validated) == 1
+    assert validated.iloc[0]["roe"] == 0.2
+    assert any("duplicate fundamental rows" in warning for warning in warnings)
+
+
 def test_yearly_pipeline_is_point_in_time_and_writes_complete_artifacts(
     tmp_path: Path,
 ) -> None:
-    result, prices, fundamentals, universe, indexes = _run_offline(
-        tmp_path, "yearly"
-    )
+    result, prices, fundamentals, universe, indexes = _run_offline(tmp_path, "yearly")
 
     rebalance_years = [int(date[:4]) for date in result.target_weights_by_date]
     assert rebalance_years == list(range(2010, 2021))
     assert set(prices.calls) == {"600001", "000002"}
     assert set(fundamentals.calls) == {"600001", "000002"}
+    assert {
+        (symbol, result.config.price_fetch_start_date, result.config.end_date)
+        for symbol in result.config.candidate_symbols
+    } == set(prices.windows)
+    assert {
+        (
+            symbol,
+            result.config.fundamental_fetch_start_date,
+            result.config.end_date,
+        )
+        for symbol in result.config.candidate_symbols
+    } == set(fundamentals.windows)
     assert len(universe.calls) == len(result.target_weights_by_date)
     assert indexes.calls == ["000300"]
 
     snapshots = result.factor_snapshots.copy()
-    snapshot_dates = pd.to_datetime(snapshots["rebalance_date"])
+    snapshot_dates = pd.to_datetime(snapshots["execution_date"])
+    signal_dates = pd.to_datetime(snapshots["signal_date"])
+    assert (signal_dates < snapshot_dates).all()
+    assert (pd.to_datetime(snapshots["rebalance_date"]) == snapshot_dates).all()
     available_dates = pd.to_datetime(snapshots["fundamental_available_date"])
-    assert (available_dates <= snapshot_dates).all()
+    assert (available_dates <= signal_dates).all()
     first_period = snapshots[snapshot_dates == pd.Timestamp("2010-01-04")]
+    assert set(pd.to_datetime(first_period["signal_date"])) == {pd.Timestamp("2010-01-01")}
     assert set(first_period["fundamental_available_date"]) == {"2009-04-30"}
 
     artifact_names = {path.name for path in result.run_directory.iterdir()}
@@ -380,9 +480,33 @@ def test_yearly_pipeline_is_point_in_time_and_writes_complete_artifacts(
     assert not result.benchmark_curve.empty
     assert not result.equity_curve.empty
     assert "2010" in result.metrics["annual_returns"]
-    assert result.metrics["annual_return_method"].startswith(
-        "first_valid_equity_to_year_end"
+    assert result.metrics["annual_return_method"].startswith("first_valid_equity_to_year_end")
+    assert result.equity_curve.index.min() >= pd.Timestamp(result.config.start_date)
+    assert all(int(year) >= 2010 for year in result.metrics["annual_returns"])
+    assert all(int(month[:4]) >= 2010 for month in result.metrics["monthly_returns"])
+
+    trades = pd.read_parquet(result.artifacts.files["trades.parquet"])
+    holdings = pd.read_parquet(result.artifacts.files["holdings.parquet"])
+    assert pd.to_datetime(trades["date"]).min() >= pd.Timestamp("2010-01-04")
+    assert pd.to_datetime(holdings["date"]).min() >= pd.Timestamp("2010-01-04")
+
+    manifest = json.loads(result.artifacts.files["run_manifest.json"].read_text(encoding="utf-8"))
+    assert manifest["artifact_schema_version"] == "2.0"
+    assert manifest["research_window"] == manifest["metrics_window"]
+    assert manifest["fetch_windows"]["prices"]["start_date"] == (
+        result.config.price_fetch_start_date
     )
+    assert manifest["fetch_windows"]["fundamentals"]["start_date"] == (
+        result.config.fundamental_fetch_start_date
+    )
+    assert manifest["signal_execution_policy"]["signal_lag_trading_days"] == 1
+    assert manifest["factor_lookbacks"]["max_drawdown"]["minimum_observations"] == 253
+
+    config_artifact = json.loads(result.artifacts.files["config.json"].read_text(encoding="utf-8"))
+    assert config_artifact["history_lookback"] == {
+        "price_calendar_days": 450,
+        "fundamental_years": 5,
+    }
     assert result.run_status == "success"
 
 
@@ -394,6 +518,142 @@ def test_five_year_pipeline_generates_five_year_schedule(tmp_path: Path) -> None
     assert result.metrics["rebalance_frequency"] == "five_year"
 
 
+def test_execution_date_close_is_not_passed_to_price_factors(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    observed: list[tuple[pd.Timestamp, pd.Timestamp]] = []
+    original = real_pipeline_module.overbought_oversold_factor
+
+    def recording_factor(symbol, price_data, as_of_date):
+        observed.append(
+            (
+                pd.Timestamp(as_of_date),
+                pd.to_datetime(price_data["date"]).max(),
+            )
+        )
+        return original(symbol, price_data, as_of_date)
+
+    monkeypatch.setattr(
+        real_pipeline_module,
+        "overbought_oversold_factor",
+        recording_factor,
+    )
+    result, *_ = _run_offline(tmp_path, "yearly")
+
+    assert observed
+    assert all(max_price_date <= signal_date for signal_date, max_price_date in observed)
+    execution_by_signal = {
+        pd.Timestamp(row.signal_date): pd.Timestamp(row.execution_date)
+        for row in result.factor_snapshots.itertuples()
+    }
+    assert all(signal_date < execution_by_signal[signal_date] for signal_date, _ in observed)
+
+
+def test_signal_date_uses_prior_aligned_trading_bar_not_calendar_day() -> None:
+    aligned_dates = pd.DatetimeIndex(pd.to_datetime(["2009-12-31", "2010-01-04", "2010-01-05"]))
+
+    signal_date = real_pipeline_module._signal_date_before(
+        aligned_dates,
+        pd.Timestamp("2010-01-04"),
+    )
+
+    assert signal_date == pd.Timestamp("2009-12-31")
+
+
+def test_aligned_dates_require_real_bars_for_every_loaded_symbol() -> None:
+    first = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2024-01-02", "2024-01-03", "2024-01-04"]),
+            "close": [10.0, 10.1, 10.2],
+        }
+    )
+    second = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2024-01-02", "2024-01-04"]),
+            "close": [20.0, 20.2],
+        }
+    )
+
+    aligned = real_pipeline_module._aligned_trading_dates(
+        {"600001": first, "000002": second},
+        "2024-01-02",
+        "2024-01-04",
+    )
+
+    assert aligned.tolist() == [
+        pd.Timestamp("2024-01-02"),
+        pd.Timestamp("2024-01-04"),
+    ]
+
+
+def test_execution_without_prior_signal_date_remains_cash(tmp_path: Path) -> None:
+    config_path = _write_config(
+        tmp_path,
+        "yearly",
+        {"price_calendar_days": 0, "fundamental_years": 5},
+    )
+    raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    raw["end_date"] = "2010-12-31"
+    config_path.write_text(
+        yaml.safe_dump(raw, sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
+    )
+
+    result = run_real_data_research(
+        config_path,
+        price_provider=MockPriceProvider(),
+        fundamental_provider=MockFundamentalProvider(),
+        universe_provider=MockUniverseProvider(raw["candidate_symbols"]),
+        macro_provider=MockMacroProvider(),
+        index_provider=MockIndexProvider(),
+        git_commit="test-commit",
+    )
+
+    first_weights = next(iter(result.target_weights_by_date.values()))
+    assert sum(first_weights.values()) == 0.0
+    assert result.factor_snapshots["signal_date"].isna().all()
+    assert not result.factor_snapshots["selected"].any()
+    assert any("no aligned signal date" in warning for warning in result.warnings)
+    assert result.equity_curve.nunique() == 1
+
+
+def test_price_cache_key_uses_fetch_window_and_incomplete_cache_is_preserved(
+    tmp_path: Path,
+) -> None:
+    config_path = _write_config(tmp_path, "yearly")
+    config = load_real_research_config(config_path)
+    cache = ParquetCache(config.cache_directory / "prices")
+    incomplete = _price_frame("600001")
+    incomplete = incomplete[incomplete["date"] >= pd.Timestamp(config.start_date)].reset_index(
+        drop=True
+    )
+    cache_path = cache.write(
+        incomplete,
+        "600001",
+        config.price_fetch_start_date,
+        config.end_date,
+        config.price_adjust,
+    )
+    original_bytes = cache_path.read_bytes()
+    price_provider = MockPriceProvider()
+
+    result = run_real_data_research(
+        config_path,
+        price_provider=price_provider,
+        fundamental_provider=MockFundamentalProvider(),
+        universe_provider=MockUniverseProvider(config.candidate_symbols),
+        macro_provider=MockMacroProvider(),
+        index_provider=MockIndexProvider(),
+        git_commit="test-commit",
+    )
+
+    assert f"_{pd.Timestamp(config.price_fetch_start_date):%Y%m%d}_" in cache_path.name
+    assert "600001" in price_provider.calls
+    assert cache_path.read_bytes() == original_bytes
+    assert any("price cache does not cover fetch window" in warning for warning in result.warnings)
+
+
 def test_partial_coverage_sets_status_and_structures_benchmark_failure(
     tmp_path: Path,
 ) -> None:
@@ -401,9 +661,7 @@ def test_partial_coverage_sets_status_and_structures_benchmark_failure(
         _write_partial_config(tmp_path),
         price_provider=FailingPriceProvider("600003"),
         fundamental_provider=MockFundamentalProvider(),
-        universe_provider=MockUniverseProvider(
-            ["600001", "000002", "600003"]
-        ),
+        universe_provider=MockUniverseProvider(["600001", "000002", "600003"]),
         macro_provider=EmptyMacroProvider(),
         index_provider=FailingIndexProvider(),
         git_commit="test-commit",
@@ -418,21 +676,15 @@ def test_partial_coverage_sets_status_and_structures_benchmark_failure(
     assert coverage["benchmark_status"] == "unavailable"
     assert coverage["macro_observation_count"] == 0
     assert coverage["rebalance_count"] == len(result.target_weights_by_date)
-    assert all(
-        count < 3 for count in coverage["holdings_count_by_rebalance"].values()
-    )
+    assert all(count < 3 for count in coverage["holdings_count_by_rebalance"].values())
     assert coverage["warning_count"] == len(result.warnings)
 
-    manifest = json.loads(
-        result.artifacts.files["run_manifest.json"].read_text(encoding="utf-8")
-    )
+    manifest = json.loads(result.artifacts.files["run_manifest.json"].read_text(encoding="utf-8"))
     assert manifest["run_status"] == "partial_success"
     assert manifest["coverage_summary"] == coverage
 
     benchmark_payload = json.loads(
-        result.artifacts.files["benchmark_metrics.json"].read_text(
-            encoding="utf-8"
-        )
+        result.artifacts.files["benchmark_metrics.json"].read_text(encoding="utf-8")
     )
     assert benchmark_payload["000300"] == {
         "status": "unavailable",
@@ -478,6 +730,19 @@ def test_normal_extended_holiday_is_not_a_severe_price_gap() -> None:
     assert not any("gaps exceeding" in warning for warning in report.warnings)
 
 
+def test_factor_coverage_availability_uses_scored_raw_inputs() -> None:
+    one_point = _price_frame("600001").iloc[[0]].copy()
+    score = real_pipeline_module.low_vol_factor(
+        "600001",
+        one_point,
+        "2010-01-04",
+    )
+
+    assert score.raw_values["annualized_volatility"] is None
+    assert score.raw_values["max_drawdown"] is None
+    assert not real_pipeline_module._factor_score_available(score)
+
+
 def test_missing_valuation_factor_is_excluded_and_weights_are_renormalized(
     tmp_path: Path,
 ) -> None:
@@ -511,9 +776,7 @@ def test_missing_valuation_factor_is_excluded_and_weights_are_renormalized(
         "missing_count": len(snapshots),
         "coverage_ratio": 0.0,
     }
-    assert any(
-        "excluded unavailable factors" in warning for warning in result.warnings
-    )
+    assert any("excluded unavailable factors" in warning for warning in result.warnings)
 
 
 def test_import_does_not_initialize_network_providers(monkeypatch) -> None:

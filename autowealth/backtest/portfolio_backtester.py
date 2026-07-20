@@ -23,6 +23,8 @@ from autowealth.backtest.metrics import (
 from autowealth.backtest.rebalance import generate_rebalance_dates
 from autowealth.data.ashare_provider import AShareDataProvider
 
+MAX_FORWARD_FILL_TRADING_DAYS = 5
+
 
 @dataclass
 class PortfolioBacktestResult:
@@ -128,18 +130,16 @@ class PortfolioBacktester:
             portfolio_value = self._portfolio_value(cash, shares, row)
 
             if date in rebalance_dates:
-                rebalance_result = self._rebalance(date, row, portfolio_value, cash, shares, weights)
+                rebalance_result = self._rebalance(
+                    date, row, portfolio_value, cash, shares, weights
+                )
                 cash = rebalance_result["cash"]
                 shares = rebalance_result["shares"]
                 trade_log.extend(rebalance_result["trades"])
-                holdings_snapshots.append(
-                    self._holdings_snapshot(date, cash, shares, row, weights)
-                )
+                holdings_snapshots.append(self._holdings_snapshot(date, cash, shares, row, weights))
                 turnover_numerator += rebalance_result["turnover_value"]
 
-            equity_points.append(
-                {"date": date, "equity": self._portfolio_value(cash, shares, row)}
-            )
+            equity_points.append({"date": date, "equity": self._portfolio_value(cash, shares, row)})
 
         equity_curve = pd.DataFrame(equity_points).set_index("date")["equity"]
         returns = daily_returns(equity_curve)
@@ -168,9 +168,9 @@ class PortfolioBacktester:
     ) -> Dict[str, object]:
         """Run a backtest with a point-in-time target-weight schedule.
 
-        This is a backward-compatible companion to ``run``. Every generated
-        rebalance date must have one target-weight mapping. Symbols omitted from
-        a period mapping receive a zero target weight for that rebalance.
+        This is a backward-compatible companion to ``run``. Every execution
+        date is supplied by the schedule. Symbols omitted from a period mapping
+        receive a zero target weight for that execution.
         """
         if not target_weights_by_date:
             raise ValueError("target_weights_by_date cannot be empty")
@@ -193,13 +193,13 @@ class PortfolioBacktester:
             price_data,
             adjust,
         )
-        rebalance_dates = pd.DatetimeIndex(
-            generate_rebalance_dates(prices.index, self.rebalance_frequency)
-        ).normalize()
-        missing_dates = [date for date in rebalance_dates if date not in schedule]
-        if missing_dates:
-            formatted = ", ".join(date.strftime("%Y-%m-%d") for date in missing_dates)
-            raise ValueError(f"target weight schedule missing rebalance dates: {formatted}")
+        rebalance_dates = pd.DatetimeIndex(sorted(schedule)).normalize()
+        missing_price_dates = [date for date in rebalance_dates if date not in prices.index]
+        if missing_price_dates:
+            formatted = ", ".join(date.strftime("%Y-%m-%d") for date in missing_price_dates)
+            raise ValueError(
+                f"target weight schedule dates are absent from the price matrix: {formatted}"
+            )
 
         shares = {symbol: 0.0 for symbol in sorted(symbols)}
         cash = self.initial_capital
@@ -213,8 +213,7 @@ class PortfolioBacktester:
             portfolio_value = self._portfolio_value(cash, shares, row)
             if date.normalize() in rebalance_date_set:
                 period_weights = {
-                    symbol: schedule[date.normalize()].get(symbol, 0.0)
-                    for symbol in shares
+                    symbol: schedule[date.normalize()].get(symbol, 0.0) for symbol in shares
                 }
                 rebalance_result = self._rebalance(
                     date,
@@ -232,9 +231,7 @@ class PortfolioBacktester:
                 )
                 turnover_numerator += rebalance_result["turnover_value"]
 
-            equity_points.append(
-                {"date": date, "equity": self._portfolio_value(cash, shares, row)}
-            )
+            equity_points.append({"date": date, "equity": self._portfolio_value(cash, shares, row)})
 
         equity_curve = pd.DataFrame(equity_points).set_index("date")["equity"]
         returns = daily_returns(equity_curve)
@@ -307,8 +304,8 @@ class PortfolioBacktester:
                 raise ValueError(f"no price data available for {symbol}")
             frames[symbol] = data.set_index("date")["close"].sort_index()
 
-        prices = pd.concat(frames, axis=1).sort_index()
-        prices = prices.ffill().dropna(how="any")
+        prices = pd.concat(frames, axis=1, sort=False).sort_index()
+        prices = prices.ffill(limit=MAX_FORWARD_FILL_TRADING_DAYS).dropna(how="any")
         if prices.empty:
             raise ValueError("price matrix is empty after alignment")
         return prices
@@ -357,7 +354,9 @@ class PortfolioBacktester:
             new_shares[symbol] -= shares_to_sell
             turnover_value += trade_value
             trades.append(
-                self._trade_record(date, symbol, "sell", shares_to_sell, prices[symbol], trade_value, cost)
+                self._trade_record(
+                    date, symbol, "sell", shares_to_sell, prices[symbol], trade_value, cost
+                )
             )
 
         buy_orders = []
@@ -380,7 +379,9 @@ class PortfolioBacktester:
             new_shares[symbol] += shares_to_buy
             turnover_value += trade_value
             trades.append(
-                self._trade_record(date, symbol, "buy", shares_to_buy, prices[symbol], trade_value, cost)
+                self._trade_record(
+                    date, symbol, "buy", shares_to_buy, prices[symbol], trade_value, cost
+                )
             )
 
         return {
@@ -430,4 +431,3 @@ class PortfolioBacktester:
             "trade_value": float(trade_value),
             "cost": float(cost),
         }
-
