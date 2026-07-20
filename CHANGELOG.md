@@ -11,10 +11,22 @@
 - 添加更多技术指标（OBV、ATR、DMI）
 - 支持加密货币分析
 - 添加回测系统
+- v0.16.0 P0 增加价格与基本面 warm-up 配置、四层窗口 manifest 以及
+  factor snapshot 的 `signal_date` / `execution_date` 审计字段。
 
 ### 优化
 - 提升数据分析性能
 - 优化可视化界面
+- 真实研究信号改用 execution date 前一个组合对齐真实交易日，收盘调仓权重
+  只影响成交后的收益区间；正式净值与指标继续严格限定在 research window。
+- 因子最小样本要求集中管理，样本不足的输入标记为 unavailable，coverage 与
+  实际参与评分的数据保持一致。
+- 价格缓存按实际 fetch window 区分并验证覆盖，价格估值前向填充限制为 5 个
+  组合交易日。
+
+### 安全
+- P0 不修改历史 research run，不访问真实网络，不调用 DeepSeek，不执行交易，
+  不新增参数寻优或当前估值回填。
 
 ## [0.15.1] - 2026-07-17
 

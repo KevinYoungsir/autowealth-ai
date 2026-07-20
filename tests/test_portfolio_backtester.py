@@ -10,7 +10,6 @@ import pytest
 
 from autowealth.backtest import PortfolioBacktester
 
-
 SYMBOLS = ["600519", "000001", "600036", "600900", "000858"]
 
 
@@ -69,7 +68,9 @@ def test_weight_sum_cannot_exceed_one():
 
 
 def test_performance_metric_fields_are_complete():
-    result = make_backtester().run({symbol: 0.2 for symbol in SYMBOLS}, price_data=make_price_data())
+    result = make_backtester().run(
+        {symbol: 0.2 for symbol in SYMBOLS}, price_data=make_price_data()
+    )
 
     expected_fields = {
         "equity_curve",
@@ -121,3 +122,65 @@ def test_max_position_weight_constraint():
     with pytest.raises(ValueError, match="max_position_weight"):
         make_backtester(max_position_weight=0.15).run(weights, price_data=make_price_data())
 
+
+def test_scheduled_weights_take_effect_after_execution_close():
+    dates = pd.to_datetime(["2024-01-02", "2024-01-03", "2024-01-04"])
+    price_data = {
+        "600001": pd.DataFrame(
+            {
+                "date": dates,
+                "close": [100.0, 200.0, 220.0],
+            }
+        )
+    }
+    backtester = PortfolioBacktester(
+        initial_capital=1_000.0,
+        start_date="2024-01-02",
+        end_date="2024-01-04",
+        rebalance_frequency="yearly",
+        commission=0.0,
+        stamp_tax=0.0,
+        slippage=0.0,
+        max_position_weight=1.0,
+    )
+
+    result = backtester.run_weight_schedule(
+        {pd.Timestamp("2024-01-03"): {"600001": 1.0}},
+        price_data=price_data,
+    )
+
+    equity = result["equity_curve"]
+    assert equity.loc[pd.Timestamp("2024-01-02")] == pytest.approx(1_000.0)
+    assert equity.loc[pd.Timestamp("2024-01-03")] == pytest.approx(1_000.0)
+    assert equity.loc[pd.Timestamp("2024-01-04")] == pytest.approx(1_100.0)
+    assert result["trade_log"].iloc[0]["date"] == pd.Timestamp("2024-01-03")
+    assert result["trade_log"].iloc[0]["price"] == pytest.approx(200.0)
+
+
+def test_price_alignment_does_not_forward_fill_without_limit():
+    dates = pd.bdate_range("2024-01-02", periods=8)
+    price_data = {
+        "600001": pd.DataFrame({"date": dates, "close": 10.0}),
+        "000002": pd.DataFrame(
+            {
+                "date": [dates[0], dates[-1]],
+                "close": [20.0, 21.0],
+            }
+        ),
+    }
+    backtester = PortfolioBacktester(
+        initial_capital=1_000.0,
+        start_date=dates[0].strftime("%Y-%m-%d"),
+        end_date=dates[-1].strftime("%Y-%m-%d"),
+        rebalance_frequency="yearly",
+        commission=0.0,
+        stamp_tax=0.0,
+        slippage=0.0,
+        max_position_weight=1.0,
+    )
+
+    with pytest.raises(ValueError, match="absent from the price matrix"):
+        backtester.run_weight_schedule(
+            {dates[-2]: {"600001": 0.5, "000002": 0.5}},
+            price_data=price_data,
+        )

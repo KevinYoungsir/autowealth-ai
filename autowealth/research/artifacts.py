@@ -13,7 +13,6 @@ from typing import Any, Mapping, Optional, Union
 
 import pandas as pd
 
-
 PathLike = Union[str, Path]
 
 REQUIRED_ARTIFACT_FILES = {
@@ -105,9 +104,7 @@ def write_research_artifacts(
     _write_json(files["warnings.json"], {"warnings": warnings})
 
     _equity_frame(equity_curve).to_parquet(files["equity_curve.parquet"], index=False)
-    _benchmark_frame(benchmark_curve).to_parquet(
-        files["benchmark_curve.parquet"], index=False
-    )
+    _benchmark_frame(benchmark_curve).to_parquet(files["benchmark_curve.parquet"], index=False)
     _nonempty_schema(
         holdings,
         ["date", "equity", "cash", "cash_weight"],
@@ -120,6 +117,8 @@ def write_research_artifacts(
         factor_snapshots,
         [
             "rebalance_date",
+            "signal_date",
+            "execution_date",
             "symbol",
             "composite_score",
             "fundamental_report_date",
@@ -165,9 +164,7 @@ def _json_ready(value: Any) -> Any:
     if isinstance(value, float) and not math.isfinite(value):
         return None
     if value is pd.NA or (
-        value is not None
-        and not isinstance(value, (str, bytes))
-        and _is_na(value)
+        value is not None and not isinstance(value, (str, bytes)) and _is_na(value)
     ):
         return None
     return value
