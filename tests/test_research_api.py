@@ -2,6 +2,7 @@ import json
 import os
 import sys
 from datetime import datetime, timezone
+from numbers import Number
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -13,6 +14,7 @@ import pandas as pd
 import pytest
 
 from autowealth.api.research_server import app, create_research_app
+from autowealth.i18n.warning_presenter import present_warnings
 from autowealth.research import (
     mock_candidate_symbols,
     mock_factor_scores,
@@ -264,7 +266,13 @@ def test_real_run_report_is_deterministic_and_preserves_limitations(
     ), patch(
         "requests.post",
         side_effect=AssertionError("external network must not be called"),
-    ) as post:
+    ) as post, patch(
+        "autowealth.agents.deepseek_research_agent.DeepSeekResearchAgent.__init__",
+        side_effect=AssertionError("DeepSeek must not be initialized"),
+    ), patch(
+        "autowealth.backtest.portfolio_backtester.PortfolioBacktester.run",
+        side_effect=AssertionError("backtest and trade simulation must not run"),
+    ):
         response = real_runs_client.get(
             f"/research/runs/{REAL_RUN_ID}/report"
         )
@@ -272,6 +280,8 @@ def test_real_run_report_is_deterministic_and_preserves_limitations(
     assert response.status_code == 200
     payload = response.json()
     assert payload["run_id"] == REAL_RUN_ID
+    assert payload["locale"] == "en-US"
+    assert response.headers["content-language"] == "en-US"
     assert payload["data_source"] == "real_artifacts"
     assert payload["generated_mode"] == "deterministic"
     assert payload["run_status"] == "partial_success"
@@ -295,6 +305,119 @@ def test_real_run_report_is_deterministic_and_preserves_limitations(
     report_text = json.dumps(payload, ensure_ascii=False)
     assert all(phrase not in report_text for phrase in restricted)
     post.assert_not_called()
+
+
+def test_real_run_report_locales_preserve_machine_fields_and_numbers(
+    real_runs_client: TestClient,
+    real_runs_root: Path,
+):
+    run_directory = real_runs_root / REAL_RUN_ID
+    source_files = [
+        "run_manifest.json",
+        "metrics.json",
+        "benchmark_metrics.json",
+        "warnings.json",
+        "holdings.parquet",
+        "factor_snapshots.parquet",
+        "trades.parquet",
+    ]
+    before = {
+        filename: (run_directory / filename).read_bytes()
+        for filename in source_files
+    }
+
+    zh_response = real_runs_client.get(
+        f"/research/runs/{REAL_RUN_ID}/report?locale=zh-CN"
+    )
+    en_response = real_runs_client.get(
+        f"/research/runs/{REAL_RUN_ID}/report?locale=en-US"
+    )
+
+    assert zh_response.status_code == 200
+    assert en_response.status_code == 200
+    assert zh_response.headers["content-language"] == "zh-CN"
+    assert en_response.headers["content-language"] == "en-US"
+    zh = zh_response.json()
+    en = en_response.json()
+    assert zh["locale"] == "zh-CN"
+    assert en["locale"] == "en-US"
+    assert "研究运行" in zh["executive_summary"]["summary"]
+    assert "Run" in en["executive_summary"]["summary"]
+    assert zh["benchmark_review"]["summary"] == (
+        "基准数据暂不可用，当前无法得出相对表现结论。"
+    )
+    assert zh["macro_review"]["summary"] == (
+        "由于缺少可用宏观数据，本次研究使用中性回退值。"
+    )
+    assert zh["research_boundaries"]["summary"] == (
+        "本报告仅用于研究与教育，不构成投资建议、交易指令或收益承诺；"
+        "历史研究结果不代表未来表现。"
+    )
+
+    for field in ("run_id", "data_source", "generated_mode", "run_status", "benchmark_status"):
+        assert zh[field] == en[field]
+    assert _numeric_values(zh) == _numeric_values(en)
+    assert [flag["code"] for flag in zh["risk_flags"]] == [
+        flag["code"] for flag in en["risk_flags"]
+    ]
+    assert [flag["category"] for flag in zh["risk_flags"]] == [
+        flag["category"] for flag in en["risk_flags"]
+    ]
+    assert [flag["severity"] for flag in zh["risk_flags"]] == [
+        flag["severity"] for flag in en["risk_flags"]
+    ]
+
+    zh_evidence = zh["data_quality_review"]["evidence"]
+    en_evidence = en["data_quality_review"]["evidence"]
+    assert zh_evidence["warnings"] == en_evidence["warnings"]
+    assert len(zh_evidence["warnings"]) == 3
+    assert [item["source_message"] for item in zh_evidence["warning_presentations"]] == zh_evidence["warnings"]
+    assert [item["source_message"] for item in en_evidence["warning_presentations"]] == en_evidence["warnings"]
+    assert before == {
+        filename: (run_directory / filename).read_bytes()
+        for filename in source_files
+    }
+
+
+def test_real_run_report_rejects_unsupported_locale(
+    real_runs_client: TestClient,
+):
+    response = real_runs_client.get(
+        f"/research/runs/{REAL_RUN_ID}/report?locale=fr-FR"
+    )
+
+    assert response.status_code == 422
+
+
+def test_warning_presentations_preserve_193_source_messages():
+    warnings = [f"price provider warning {index}" for index in range(193)]
+
+    presentations = present_warnings(warnings, "zh-CN")
+
+    assert len(presentations) == 193
+    assert [item["source_message"] for item in presentations] == warnings
+    assert all(item["category"] == "price_provider" for item in presentations)
+
+
+def _numeric_values(
+    value: object,
+    path: tuple[str, ...] = (),
+) -> dict[tuple[str, ...], float]:
+    if isinstance(value, bool):
+        return {}
+    if isinstance(value, Number):
+        return {path: float(value)}
+    if isinstance(value, dict):
+        result: dict[tuple[str, ...], float] = {}
+        for key, item in value.items():
+            result.update(_numeric_values(item, (*path, str(key))))
+        return result
+    if isinstance(value, list):
+        result = {}
+        for index, item in enumerate(value):
+            result.update(_numeric_values(item, (*path, str(index))))
+        return result
+    return {}
 
 
 def test_real_run_report_rejects_invalid_run_id(

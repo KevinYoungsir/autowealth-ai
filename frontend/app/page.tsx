@@ -19,6 +19,7 @@ import {
   RunLimitationsPanel,
   WarningSummaryPanel
 } from "@/components/real-run-sections";
+import { ui } from "@/i18n";
 
 export default function DashboardPage() {
   const {
@@ -41,9 +42,9 @@ export default function DashboardPage() {
     <div className="space-y-5">
       <DataSourceBanner source={dataSource} summary={realDetail?.summary} />
       <SectionHeader
-        eyebrow="Dashboard"
-        title="研究总览"
-        description={real ? `${real.summary.experiment_name} 的只读研究 artifacts。` : "基于本地 mock 研究 API 的演示快照。"}
+        eyebrow={ui.pages.dashboard.eyebrow}
+        title={ui.pages.dashboard.title}
+        description={real ? ui.pages.dashboard.realDescription(real.summary.experiment_name) : ui.pages.dashboard.mockDescription}
         status={health}
         loading={loading}
         error={error}
@@ -54,7 +55,7 @@ export default function DashboardPage() {
           {real.summary.run_status !== "failed" ? (
             <>
               <RealMetricGrid detail={real} />
-              <EquityPanel equityCurve={realEquity?.points ?? []} subtitle="Real artifact equity curve" />
+              <EquityPanel equityCurve={realEquity?.points ?? []} subtitle={ui.panels.realEquityCurve} />
             </>
           ) : null}
           {realHoldings ? <RealHoldingsPanel data={realHoldings} /> : null}

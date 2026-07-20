@@ -15,6 +15,7 @@ import {
   RealResearchReportPanel,
   ResearchReportMetadata
 } from "@/components/real-research-report";
+import { ui } from "@/i18n";
 
 export default function ResearchNotesPage() {
   const {
@@ -44,21 +45,21 @@ export default function ResearchNotesPage() {
   const isReal = dataSource === "real_artifacts";
   const isMock = dataSource === "mock_demo";
   const title = isReal
-    ? "真实研究复核报告"
+    ? ui.pages.researchNotes.realTitle
     : isMock
-      ? "演示研究报告"
-      : "研究报告不可用";
+      ? ui.pages.researchNotes.mockTitle
+      : ui.pages.researchNotes.unavailableTitle;
   const description = isReal
-    ? "基于所选 run_id 已落盘 artifacts 生成的确定性、只读复核。"
+    ? ui.pages.researchNotes.realDescription
     : isMock
-      ? "无真实运行时使用离线演示数据生成的 mock 结构化复核。"
-      : "研究 API 当前不可用，页面不会把占位内容标记为真实报告。";
+      ? ui.pages.researchNotes.mockDescription
+      : ui.pages.researchNotes.unavailableDescription;
 
   return (
     <div className="space-y-5">
       <DataSourceBanner source={dataSource} summary={realDetail?.summary} />
       <SectionHeader
-        eyebrow="Research Notes"
+        eyebrow={ui.pages.researchNotes.eyebrow}
         title={title}
         description={description}
         status={health}
@@ -70,11 +71,12 @@ export default function ResearchNotesPage() {
         runId={realReport?.run_id ?? selectedRunId ?? (isMock ? "mock_demo" : "unavailable")}
         runStatus={realReport?.run_status ?? realDetail?.summary.run_status ?? (isMock ? "demo" : "unavailable")}
         generatedMode={realReport?.generated_mode ?? (isReal ? "deterministic" : isMock ? "mock" : "unavailable")}
+        locale={realReport?.locale ?? "zh-CN"}
       />
       {realDetail ? <RunLimitationsPanel detail={realDetail} /> : null}
       {dataSource === "mock_demo" ? (
         <section className="rounded-lg border border-signal-cyan/25 bg-signal-cyan/5 p-4 text-sm text-slate-300">
-          当前没有可用真实运行，页面显示 mock_demo 演示复核；它不代表真实 artifacts 的结论。
+          {ui.pages.researchNotes.mockDisclosure}
         </section>
       ) : null}
       {isReal && realReport ? (
@@ -82,14 +84,14 @@ export default function ResearchNotesPage() {
       ) : isReal ? (
         <section className="panel p-5 text-sm text-slate-400">
           {reportLoading
-            ? "正在读取所选 run_id 的真实研究复核报告。"
-            : reportError ?? "真实研究复核报告尚未返回。"}
+            ? ui.pages.researchNotes.loadingReal
+            : reportError ?? ui.pages.researchNotes.waitingReal}
         </section>
       ) : isMock ? (
         <ResearchReportPanel report={mockReport} />
       ) : (
         <section className="panel p-5 text-sm text-slate-500">
-          研究 API 不可用，当前没有可展示的研究报告。
+          {ui.pages.researchNotes.unavailable}
         </section>
       )}
       {isMock ? <ResearchBoundary /> : null}

@@ -7,6 +7,13 @@ from typing import Any, Mapping
 
 import pandas as pd
 
+from autowealth.i18n import (
+    DEFAULT_REPORT_LOCALE,
+    SupportedLocale,
+    message,
+    present_persisted_text,
+)
+from autowealth.i18n.warning_presenter import present_warnings
 from autowealth.research.run_store import ResearchRunStore, aggregate_warnings
 
 
@@ -19,13 +26,6 @@ REPORT_SOURCE_ARTIFACTS = (
     "factor_snapshots.parquet",
     "trades.parquet",
 )
-
-RESEARCH_BOUNDARY = (
-    "This report is for research and education only. It is not investment "
-    "advice, a trading instruction, or a return promise; historical results "
-    "do not determine future performance."
-)
-
 
 @dataclass(frozen=True)
 class _ArtifactInputs:
@@ -59,6 +59,13 @@ def _strings(value: object) -> list[str]:
     if not isinstance(value, (list, tuple)):
         return []
     return [str(item) for item in value if str(item).strip()]
+
+
+def _localized_strings(
+    value: object,
+    locale: SupportedLocale,
+) -> list[str]:
+    return [present_persisted_text(item, locale) for item in _strings(value)]
 
 
 def _optional_float(value: object) -> float | None:
@@ -142,6 +149,7 @@ def _benchmark_status(benchmark_metrics: Mapping[str, Any]) -> str:
 def _benchmark_review(
     benchmark_metrics: Mapping[str, Any],
     manifest_status: object,
+    locale: SupportedLocale,
 ) -> tuple[str, dict[str, Any]]:
     artifact_status = _benchmark_status(benchmark_metrics)
     persisted_status = str(manifest_status or artifact_status)
@@ -159,19 +167,17 @@ def _benchmark_review(
         entries[str(symbol)] = entry
         if entry.get("status") == "unavailable":
             unavailable[str(symbol)] = str(
-                entry.get("reason") or "No benchmark reason was persisted."
+                entry.get("reason")
+                or message(locale, "benchmark_reason_missing")
             )
-    summary = (
-        "The persisted benchmark is unavailable; no benchmark return is "
-        "inferred or fabricated."
-        if status == "unavailable"
-        else "Persisted benchmark metrics are available for deterministic review."
-        if status == "available"
-        else "Only part of the requested benchmark set is available."
-    )
+    summary_key = {
+        "unavailable": "benchmark_unavailable_summary",
+        "available": "benchmark_available_summary",
+        "partial": "benchmark_partial_summary",
+    }[status]
     return status, _section(
         status,
-        summary,
+        message(locale, summary_key),
         evidence={
             "manifest_status": persisted_status,
             "artifact_status": artifact_status,
@@ -179,7 +185,7 @@ def _benchmark_review(
             "unavailable_reasons": unavailable,
         },
         limitations=(
-            ["Relative performance cannot be assessed while the benchmark is unavailable."]
+            [message(locale, "benchmark_relative_limitation")]
             if status != "available"
             else []
         ),
@@ -311,7 +317,10 @@ def _trade_evidence(frame: pd.DataFrame) -> dict[str, Any]:
     }
 
 
-def _performance_review(metrics: Mapping[str, Any]) -> dict[str, Any]:
+def _performance_review(
+    metrics: Mapping[str, Any],
+    locale: SupportedLocale,
+) -> dict[str, Any]:
     core_names = (
         "annualized_return",
         "total_return",
@@ -326,17 +335,23 @@ def _performance_review(metrics: Mapping[str, Any]) -> dict[str, Any]:
     }
     available_count = sum(value is not None for value in core_metrics.values())
     observations = [
-        f"{name}={value:.6f}"
+        message(
+            locale,
+            "performance_observation",
+            label=message(locale, f"metric_{name}"),
+            name=name,
+            value=value,
+        )
         for name, value in core_metrics.items()
         if value is not None
     ]
     return _section(
         "available" if available_count else "unavailable",
-        (
-            "Performance values are reproduced from metrics.json and are not "
-            "re-estimated by the report endpoint."
+        message(
+            locale,
+            "performance_available_summary"
             if available_count
-            else "No persisted core performance metric is available."
+            else "performance_unavailable_summary",
         ),
         evidence={
             "core_metrics": core_metrics,
@@ -348,15 +363,14 @@ def _performance_review(metrics: Mapping[str, Any]) -> dict[str, Any]:
             ),
         },
         observations=observations,
-        limitations=[
-            "Metrics reflect the persisted backtest period, assumptions and data coverage only."
-        ],
+        limitations=[message(locale, "performance_limitation")],
     )
 
 
 def _macro_review(
     coverage: Mapping[str, Any],
     factor_snapshots: pd.DataFrame,
+    locale: SupportedLocale,
 ) -> dict[str, Any]:
     observation_count = _optional_int(coverage.get("macro_observation_count")) or 0
     data = pd.DataFrame(factor_snapshots)
@@ -378,10 +392,11 @@ def _macro_review(
             }
         )
     status = "available" if observation_count > 0 else "neutral_fallback"
-    summary = (
-        "Persisted macro observations were available to the research run."
+    summary = message(
+        locale,
+        "macro_available_summary"
         if observation_count > 0
-        else "No persisted macro observation was available; the run disclosed a neutral fallback."
+        else "macro_neutral_summary",
     )
     return _section(
         status,
@@ -392,7 +407,7 @@ def _macro_review(
             "macro_available_dates": available_dates,
         },
         limitations=(
-            ["Macro-cycle interpretation is limited because no as-of observation was persisted."]
+            [message(locale, "macro_missing_limitation")]
             if observation_count == 0
             else []
         ),
@@ -401,6 +416,7 @@ def _macro_review(
 
 def _risk_flags(
     *,
+    locale: SupportedLocale,
     run_status: str,
     benchmark_status: str,
     warning_count: int,
@@ -436,49 +452,61 @@ def _risk_flags(
             "run_not_complete",
             "run_status",
             "high" if run_status == "failed" else "medium",
-            "Research run is not complete",
-            f"The persisted run_status is {run_status} and must remain visible.",
+            message(locale, "risk_run_title"),
+            message(
+                locale,
+                "risk_run_description",
+                run_status=run_status,
+            ),
             {
                 "run_status": run_status,
                 "reasons": _strings(manifest.get("run_status_reasons")),
             },
-            "Resolve or explicitly accept every persisted run-status reason before comparison.",
+            message(locale, "risk_run_review"),
         )
     if benchmark_status != "available":
         add(
             "benchmark_not_available",
             "benchmark",
             "medium",
-            "Benchmark comparison is incomplete",
-            f"The persisted benchmark status is {benchmark_status}.",
+            message(locale, "risk_benchmark_title"),
+            message(
+                locale,
+                "risk_benchmark_description",
+                benchmark_status=benchmark_status,
+            ),
             {"benchmark_status": benchmark_status},
-            "Restore a compatible benchmark artifact before drawing relative-performance conclusions.",
+            message(locale, "risk_benchmark_review"),
         )
     if warning_count:
         add(
             "persisted_warnings",
             "data_quality",
             "high" if warning_count >= 100 else "medium",
-            "Persisted warnings require review",
-            f"The run contains {warning_count} persisted warnings.",
+            message(locale, "risk_warnings_title"),
+            message(
+                locale,
+                "risk_warnings_description",
+                warning_count=warning_count,
+            ),
             {
                 "warning_count": warning_count,
                 "manifest_warning_count": reported_warning_count,
             },
-            "Review warning categories and original warning text; do not infer missing observations.",
+            message(locale, "risk_warnings_review"),
         )
     if reported_warning_count is not None and reported_warning_count != warning_count:
         add(
             "warning_count_mismatch",
             "consistency",
             "medium",
-            "Warning counts differ",
-            "The manifest warning count differs from warnings.json.",
+            message(locale, "risk_warning_mismatch_title"),
+            message(locale, "risk_warning_mismatch_description"),
             {
                 "manifest_warning_count": reported_warning_count,
                 "actual_warning_count": warning_count,
             },
-            "Reconcile artifact generation before treating the run as internally consistent.",
+            message(locale, "risk_warning_mismatch_review"),
         )
 
     price_coverage = _optional_float(coverage.get("price_coverage_ratio"))
@@ -487,15 +515,19 @@ def _risk_flags(
             "incomplete_price_coverage",
             "price_data",
             "high" if price_coverage < 0.5 else "medium",
-            "Candidate price coverage is incomplete",
-            f"Persisted price coverage is {price_coverage:.2%}.",
+            message(locale, "risk_price_title"),
+            message(
+                locale,
+                "risk_price_description",
+                price_coverage=price_coverage,
+            ),
             {
                 "price_coverage_ratio": price_coverage,
                 "failed_price_symbols": _strings(
                     coverage.get("failed_price_symbols")
                 ),
             },
-            "Assess how excluded symbols alter universe representativeness and portfolio concentration.",
+            message(locale, "risk_price_review"),
         )
 
     if (_optional_int(coverage.get("macro_observation_count")) or 0) == 0:
@@ -503,10 +535,10 @@ def _risk_flags(
             "macro_neutral_fallback",
             "macro_data",
             "medium",
-            "Macro input used a neutral fallback",
-            "No macro observation was persisted for the run.",
+            message(locale, "risk_macro_title"),
+            message(locale, "risk_macro_description"),
             {"macro_observation_count": 0},
-            "Treat macro-regime interpretation as unavailable, not neutral evidence.",
+            message(locale, "risk_macro_review"),
         )
 
     constraints = _mapping(
@@ -524,10 +556,10 @@ def _risk_flags(
             "holdings_below_minimum",
             "portfolio_constraints",
             "medium",
-            "One or more rebalances are below min_holdings",
-            "Persisted holding counts do not satisfy the configured minimum.",
+            message(locale, "risk_holdings_title"),
+            message(locale, "risk_holdings_description"),
             {"min_holdings": min_holdings, "below_minimum": below_minimum},
-            "Review concentration and the data exclusions that reduced eligible holdings.",
+            message(locale, "risk_holdings_review"),
         )
 
     factor_coverage = _mapping(coverage.get("factor_coverage_overall"))
@@ -543,99 +575,111 @@ def _risk_flags(
             "insufficient_factor_coverage",
             "factor_data",
             "medium",
-            "Configured factor coverage is insufficient",
-            "At least one persisted factor coverage ratio is below the run threshold.",
+            message(locale, "risk_factor_title"),
+            message(locale, "risk_factor_description"),
             {"threshold": threshold, "factors": insufficient},
-            "Use saved availability and effective weights; never replace missing factors with fabricated values.",
+            message(locale, "risk_factor_review"),
         )
     return flags
 
 
 def _counterarguments(
     *,
+    locale: SupportedLocale,
     coverage: Mapping[str, Any],
     benchmark_status: str,
     manifest: Mapping[str, Any],
 ) -> list[dict[str, Any]]:
     arguments = [
         {
-            "topic": "Universe representativeness",
-            "argument": (
-                "A fixed or incompletely covered universe can make the historical "
-                "portfolio look more robust than a point-in-time investable universe."
-            ),
+            "topic": message(locale, "counter_universe_topic"),
+            "argument": message(locale, "counter_universe_argument"),
             "evidence_needed": [
-                "historical constituent membership",
-                "delisting and ST history",
-                "failed-symbol attribution",
+                message(locale, "counter_universe_evidence_1"),
+                message(locale, "counter_universe_evidence_2"),
+                message(locale, "counter_universe_evidence_3"),
             ],
-            "affected_assumptions": ["survivorship bias", "investable universe"],
-            "research_value": "Tests whether results depend on today's surviving securities.",
+            "affected_assumptions": [
+                message(locale, "counter_universe_assumption_1"),
+                message(locale, "counter_universe_assumption_2"),
+            ],
+            "research_value": message(locale, "counter_universe_value"),
         },
         {
-            "topic": "Data availability and factor degradation",
-            "argument": (
-                "Factor scores based on reduced inputs may not be comparable across "
-                "symbols or rebalance dates even when weights are re-normalized."
-            ),
+            "topic": message(locale, "counter_factor_topic"),
+            "argument": message(locale, "counter_factor_argument"),
             "evidence_needed": [
-                "factor coverage by rebalance",
-                "effective composite weights",
-                "point-in-time fundamental availability",
+                message(locale, "counter_factor_evidence_1"),
+                message(locale, "counter_factor_evidence_2"),
+                message(locale, "counter_factor_evidence_3"),
             ],
-            "affected_assumptions": ["factor comparability", "missing-data handling"],
-            "research_value": "Separates model behavior from changing data coverage.",
+            "affected_assumptions": [
+                message(locale, "counter_factor_assumption_1"),
+                message(locale, "counter_factor_assumption_2"),
+            ],
+            "research_value": message(locale, "counter_factor_value"),
         },
         {
-            "topic": "Execution realism",
-            "argument": (
-                "Persisted trades do not prove that all historical orders were executable "
-                "under exact suspension, price-limit and liquidity conditions."
-            ),
+            "topic": message(locale, "counter_execution_topic"),
+            "argument": message(locale, "counter_execution_argument"),
             "evidence_needed": [
-                "historical suspension state",
-                "price-limit state",
-                "capacity and volume constraints",
+                message(locale, "counter_execution_evidence_1"),
+                message(locale, "counter_execution_evidence_2"),
+                message(locale, "counter_execution_evidence_3"),
             ],
-            "affected_assumptions": ["fill availability", "transaction-cost realism"],
-            "research_value": "Challenges whether backtest fills could have occurred as modeled.",
+            "affected_assumptions": [
+                message(locale, "counter_execution_assumption_1"),
+                message(locale, "counter_execution_assumption_2"),
+            ],
+            "research_value": message(locale, "counter_execution_value"),
         },
     ]
     if benchmark_status != "available":
         arguments.append(
             {
-                "topic": "Missing benchmark context",
-                "argument": (
-                    "Absolute performance cannot establish relative value when the "
-                    "requested benchmark is unavailable."
-                ),
-                "evidence_needed": ["compatible benchmark curve", "benchmark metrics"],
-                "affected_assumptions": ["relative performance", "market regime comparison"],
-                "research_value": "Prevents absolute returns from being interpreted without market context.",
+                "topic": message(locale, "counter_benchmark_topic"),
+                "argument": message(locale, "counter_benchmark_argument"),
+                "evidence_needed": [
+                    message(locale, "counter_benchmark_evidence_1"),
+                    message(locale, "counter_benchmark_evidence_2"),
+                ],
+                "affected_assumptions": [
+                    message(locale, "counter_benchmark_assumption_1"),
+                    message(locale, "counter_benchmark_assumption_2"),
+                ],
+                "research_value": message(locale, "counter_benchmark_value"),
             }
         )
     if (_optional_int(coverage.get("macro_observation_count")) or 0) == 0:
         arguments.append(
             {
-                "topic": "Macro regime not observed",
-                "argument": (
-                    "A neutral fallback is an absence-of-data treatment, not evidence "
-                    "that the macro environment was neutral."
-                ),
-                "evidence_needed": ["as-of macro observations", "publication dates"],
-                "affected_assumptions": ["macro multiplier", "regime interpretation"],
-                "research_value": "Avoids assigning economic meaning to a fallback value.",
+                "topic": message(locale, "counter_macro_topic"),
+                "argument": message(locale, "counter_macro_argument"),
+                "evidence_needed": [
+                    message(locale, "counter_macro_evidence_1"),
+                    message(locale, "counter_macro_evidence_2"),
+                ],
+                "affected_assumptions": [
+                    message(locale, "counter_macro_assumption_1"),
+                    message(locale, "counter_macro_assumption_2"),
+                ],
+                "research_value": message(locale, "counter_macro_value"),
             }
         )
     survivor = str(manifest.get("survivorship_bias_risk") or "")
     if survivor:
-        arguments[0]["persisted_evidence"] = survivor
+        arguments[0]["persisted_evidence"] = present_persisted_text(
+            survivor,
+            locale,
+        )
+        arguments[0]["persisted_evidence_source"] = survivor
     return arguments
 
 
 def build_real_research_report(
     store: ResearchRunStore,
     run_id: str,
+    locale: SupportedLocale = DEFAULT_REPORT_LOCALE,
 ) -> dict[str, Any]:
     """Build a deterministic report from one immutable research run."""
     inputs = _read_artifacts(store, run_id)
@@ -644,6 +688,10 @@ def build_real_research_report(
     coverage = _mapping(manifest.get("coverage_summary"))
     run_status = str(manifest.get("run_status") or "partial_success")
     run_status_reasons = _strings(manifest.get("run_status_reasons"))
+    localized_run_status_reasons = _localized_strings(
+        manifest.get("run_status_reasons"),
+        locale,
+    )
 
     warning_summary = aggregate_warnings(
         inputs.warnings_payload,
@@ -657,6 +705,7 @@ def build_real_research_report(
     benchmark_status, benchmark_review = _benchmark_review(
         inputs.benchmark_metrics,
         coverage.get("benchmark_status"),
+        locale,
     )
     factor_coverage = _mapping(coverage.get("factor_coverage_overall"))
     factor_evidence = _factor_evidence(
@@ -682,14 +731,13 @@ def build_real_research_report(
     )
     factor_review = _section(
         factor_status,
-        (
-            "The persisted factor snapshot artifact contains no records."
+        message(
+            locale,
+            "factor_empty_summary"
             if factor_record_count == 0
-            else "Persisted factor snapshots contain one or more coverage ratios "
-            "below the configured threshold. Missing values are not converted "
-            "into fabricated scores by this report."
+            else "factor_insufficient_summary"
             if insufficient_factors
-            else "Persisted factor snapshots and coverage are available for review."
+            else "factor_available_summary",
         ),
         evidence={
             **factor_evidence,
@@ -699,24 +747,24 @@ def build_real_research_report(
                 coverage.get("factor_coverage_by_rebalance")
             ),
         },
-        limitations=[
-            "Factor comparability depends on point-in-time input coverage and saved effective weights."
-        ],
+        limitations=[message(locale, "factor_limitation")],
     )
 
     holdings_evidence = _holdings_evidence(inputs.holdings)
     trade_evidence = _trade_evidence(inputs.trades)
     actual_categories = dict(warning_summary["categories"])
+    warning_presentations = present_warnings(warnings, locale)
     data_quality_status = (
         "warnings_present" if warning_count else "no_persisted_warnings"
     )
     data_quality_review = _section(
         data_quality_status,
-        (
-            f"The run contains {warning_count} persisted warnings; all original "
-            "warning strings are included in this response."
+        message(
+            locale,
+            "data_quality_warnings_summary"
             if warning_count
-            else "warnings.json contains no persisted warning strings."
+            else "data_quality_empty_summary",
+            warning_count=warning_count,
         ),
         evidence={
             "warning_count": warning_count,
@@ -724,6 +772,7 @@ def build_real_research_report(
             "warning_categories": actual_categories,
             "warning_samples": dict(warning_summary["samples"]),
             "warnings": warnings,
+            "warning_presentations": warning_presentations,
             "price_coverage_ratio": _optional_float(
                 coverage.get("price_coverage_ratio")
             ),
@@ -737,11 +786,18 @@ def build_real_research_report(
             "holdings": holdings_evidence,
             "trades": trade_evidence,
             "source_artifacts": list(REPORT_SOURCE_ARTIFACTS),
+            "source_point_in_time_limitations": _strings(
+                manifest.get("point_in_time_limitations")
+            ),
         },
-        limitations=_strings(manifest.get("point_in_time_limitations")),
+        limitations=_localized_strings(
+            manifest.get("point_in_time_limitations"),
+            locale,
+        ),
     )
 
     risk_flags = _risk_flags(
+        locale=locale,
         run_status=run_status,
         benchmark_status=benchmark_status,
         warning_count=warning_count,
@@ -749,21 +805,23 @@ def build_real_research_report(
         coverage=coverage,
         manifest=manifest,
     )
-    performance_review = _performance_review(metrics)
-    macro_review = _macro_review(coverage, inputs.factor_snapshots)
+    performance_review = _performance_review(metrics, locale)
+    macro_review = _macro_review(coverage, inputs.factor_snapshots, locale)
 
     executive_summary = _section(
         run_status,
-        (
-            f"Run {run_id} is preserved as {run_status}. The report is a "
-            "deterministic review of persisted artifacts and does not replace "
-            "the underlying research evidence."
+        message(
+            locale,
+            "executive_summary",
+            run_id=run_id,
+            run_status=run_status,
         ),
         evidence={
             "run_id": run_id,
             "manifest_run_id": manifest.get("run_id"),
             "run_status": run_status,
             "run_status_reasons": run_status_reasons,
+            "localized_run_status_reasons": localized_run_status_reasons,
             "benchmark_status": benchmark_status,
             "warning_count": warning_count,
             "price_coverage_ratio": _optional_float(
@@ -775,11 +833,23 @@ def build_real_research_report(
             "rebalance_count": _optional_int(coverage.get("rebalance_count")),
         },
         observations=[
-            f"run_status={run_status}",
-            f"benchmark_status={benchmark_status}",
-            f"warning_count={warning_count}",
+            message(
+                locale,
+                "observation_run_status",
+                run_status=run_status,
+            ),
+            message(
+                locale,
+                "observation_benchmark_status",
+                benchmark_status=benchmark_status,
+            ),
+            message(
+                locale,
+                "observation_warning_count",
+                warning_count=warning_count,
+            ),
         ],
-        limitations=run_status_reasons,
+        limitations=localized_run_status_reasons,
     )
 
     point_in_time_limitations = _strings(
@@ -788,12 +858,18 @@ def build_real_research_report(
     survivorship_bias_risk = str(
         manifest.get("survivorship_bias_risk") or ""
     )
-    boundary_limitations = list(point_in_time_limitations)
+    boundary_limitations = [
+        present_persisted_text(item, locale)
+        for item in point_in_time_limitations
+    ]
     if survivorship_bias_risk:
-        boundary_limitations.append(survivorship_bias_risk)
+        boundary_limitations.append(
+            present_persisted_text(survivorship_bias_risk, locale)
+        )
 
     return {
         "run_id": run_id,
+        "locale": locale,
         "data_source": "real_artifacts",
         "generated_mode": "deterministic",
         "run_status": run_status,
@@ -807,13 +883,14 @@ def build_real_research_report(
         "macro_review": macro_review,
         "data_quality_review": data_quality_review,
         "counterarguments": _counterarguments(
+            locale=locale,
             coverage=coverage,
             benchmark_status=benchmark_status,
             manifest=manifest,
         ),
         "research_boundaries": _section(
             "research_only",
-            RESEARCH_BOUNDARY,
+            message(locale, "research_boundary"),
             evidence={
                 "read_only": True,
                 "artifacts_modified": False,
@@ -822,6 +899,8 @@ def build_real_research_report(
                 "parameter_optimization_performed": False,
                 "generated_mode": "deterministic",
                 "source_artifacts": list(REPORT_SOURCE_ARTIFACTS),
+                "source_point_in_time_limitations": point_in_time_limitations,
+                "source_survivorship_bias_risk": survivorship_bias_risk,
             },
             limitations=boundary_limitations,
         ),

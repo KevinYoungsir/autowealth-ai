@@ -18,12 +18,7 @@ import type {
   ResearchRunSummary,
   ResearchWarningsResponse
 } from "@/lib/types";
-
-const statusLabels = {
-  success: "完整运行",
-  partial_success: "部分完成",
-  failed: "运行失败"
-};
+import { machineLabel, runReasonLabel, ui } from "@/i18n";
 
 export function DataSourceBanner({
   source,
@@ -33,26 +28,27 @@ export function DataSourceBanner({
   summary?: ResearchRunSummary;
 }) {
   const isReal = source === "real_artifacts";
-  const label = isReal ? "real_artifacts" : source === "mock_demo" ? "演示数据" : "API 不可用";
+  const label = machineLabel("dataSource", source);
   return (
     <section className="panel flex flex-wrap items-center justify-between gap-3 px-4 py-3">
       <div className="flex items-center gap-3">
         <Database className={isReal ? "h-4 w-4 text-signal-green" : "h-4 w-4 text-signal-amber"} />
         <div>
-          <div className="text-xs text-slate-500">数据来源</div>
+          <div className="text-xs text-slate-500">{ui.common.dataSource}</div>
           <div className="text-sm font-semibold text-slate-100">{label}</div>
+          <div className="mt-0.5 font-mono text-xs text-slate-500">{source}</div>
         </div>
       </div>
       {summary ? (
         <div className="flex flex-wrap items-center gap-3 text-xs text-slate-400">
           <span className="font-mono">{summary.run_id}</span>
-          <span>{summary.start_date} 至 {summary.end_date}</span>
+          <span>{ui.common.dateRange(summary.start_date, summary.end_date)}</span>
           <span className={summary.run_status === "success" ? "text-signal-green" : "text-signal-amber"}>
-            {statusLabels[summary.run_status]}
+            {machineLabel("runStatus", summary.run_status)} <span className="font-mono text-slate-500">({summary.run_status})</span>
           </span>
         </div>
       ) : (
-        <div className="text-xs text-slate-500">当前内容不是已落盘的真实研究运行</div>
+        <div className="text-xs text-slate-500">{source === "mock_demo" ? ui.pages.researchNotes.mockDisclosure : ui.errors.apiUnavailable}</div>
       )}
     </section>
   );
@@ -65,14 +61,14 @@ export function RealMetricGrid({ detail }: { detail: ResearchRunDetail }) {
     ? coverageValues.reduce((sum, item) => sum + item.coverage_ratio, 0) / coverageValues.length
     : null;
   const items = [
-    ["年化收益", formatPercent(summary.annualized_return)],
-    ["总收益", formatPercent(summary.total_return)],
-    ["最大回撤", formatPercent(summary.max_drawdown)],
-    ["夏普比率", formatNumber(summary.sharpe_ratio)],
-    ["价格覆盖率", formatPercent(summary.price_coverage_ratio)],
-    ["因子覆盖率", formatPercent(factorCoverage)],
-    ["Warning", String(summary.warning_count)],
-    ["换手率", formatPercent(metrics.turnover)]
+    [ui.metrics.annualized_return, formatPercent(summary.annualized_return)],
+    [ui.metrics.total_return, formatPercent(summary.total_return)],
+    [ui.metrics.max_drawdown, formatPercent(summary.max_drawdown)],
+    [ui.metrics.sharpe_ratio, formatNumber(summary.sharpe_ratio)],
+    [ui.metrics.price_coverage_ratio, formatPercent(summary.price_coverage_ratio)],
+    [ui.metrics.factor_coverage_ratio, formatPercent(factorCoverage)],
+    [ui.metrics.warning_count, String(summary.warning_count)],
+    [ui.metrics.turnover, formatPercent(metrics.turnover)]
   ];
   return (
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -95,10 +91,19 @@ export function RunLimitationsPanel({ detail }: { detail: ResearchRunDetail }) {
     <section className="rounded-lg border border-signal-amber/30 bg-signal-amber/10 p-4">
       <div className="flex items-center gap-2 text-sm font-semibold text-signal-amber">
         <ShieldAlert className="h-4 w-4" />
-        {statusLabels[detail.summary.run_status]}
+        {machineLabel("runStatus", detail.summary.run_status)}
+        <span className="font-mono text-xs text-slate-500">({detail.summary.run_status})</span>
       </div>
       <ul className="mt-3 grid gap-2 text-sm text-slate-300 md:grid-cols-2">
-        {reasons.map((reason) => <li key={reason}>{reason}</li>)}
+        {reasons.map((reason) => (
+          <li key={reason}>
+            <div>{runReasonLabel(reason)}</div>
+            <details className="mt-1 text-xs text-slate-500">
+              <summary className="cursor-pointer">{ui.report.viewRawDetails}</summary>
+              <div className="mt-1 break-words font-mono">{reason}</div>
+            </details>
+          </li>
+        ))}
       </ul>
     </section>
   );
@@ -117,14 +122,14 @@ export function RealReturnsPanel({
     <section className="panel p-5">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <h2 className="text-base font-semibold text-slate-50">收益与基准</h2>
-          <div className="mt-1 text-xs text-slate-500">年度、最近月度与基准可用状态</div>
+          <h2 className="text-base font-semibold text-slate-50">{ui.panels.returnsAndBenchmark}</h2>
+          <div className="mt-1 text-xs text-slate-500">{ui.panels.returnSubtitle}</div>
         </div>
         <BarChart3 className="h-4 w-4 text-signal-cyan" />
       </div>
       <div className="mt-4 grid gap-5 xl:grid-cols-2">
         <div>
-          <div className="text-xs text-slate-500">年度收益</div>
+          <div className="text-xs text-slate-500">{ui.panels.annualReturns}</div>
           <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
             {annual.map(([period, value]) => (
               <div key={period} className="panel-soft p-3">
@@ -135,7 +140,7 @@ export function RealReturnsPanel({
           </div>
         </div>
         <div>
-          <div className="text-xs text-slate-500">最近月度收益</div>
+          <div className="text-xs text-slate-500">{ui.panels.recentMonthlyReturns}</div>
           <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
             {monthly.map(([period, value]) => (
               <div key={period} className="panel-soft p-3">
@@ -147,9 +152,13 @@ export function RealReturnsPanel({
         </div>
       </div>
       <div className="mt-5 border-t border-white/10 pt-4 text-sm text-slate-300">
-        基准状态：<span className={benchmark?.status === "available" ? "text-signal-green" : "text-signal-amber"}>{benchmark?.status ?? detail.summary.benchmark_status}</span>
+        {ui.panels.benchmarkStatus}：<span className={benchmark?.status === "available" ? "text-signal-green" : "text-signal-amber"}>{machineLabel("availability", benchmark?.status ?? detail.summary.benchmark_status)}</span>
+        <span className="ml-2 font-mono text-xs text-slate-500">({benchmark?.status ?? detail.summary.benchmark_status})</span>
         {benchmark && Object.keys(benchmark.reasons).length ? (
-          <span className="ml-3 text-slate-500">{Object.values(benchmark.reasons).join("；")}</span>
+          <details className="ml-3 inline-block text-slate-500">
+            <summary className="cursor-pointer">{ui.report.viewRawDetails}</summary>
+            <div className="mt-2 break-words font-mono text-xs">{Object.values(benchmark.reasons).join("；")}</div>
+          </details>
         ) : null}
       </div>
     </section>
@@ -166,17 +175,17 @@ export function RealHoldingsPanel({ data }: { data: ResearchHoldingsResponse }) 
     <section className="panel p-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-base font-semibold text-slate-50">最近调仓持仓</h2>
-          <div className="mt-1 text-xs text-slate-500">{latestDate ?? "暂无调仓记录"}</div>
+          <h2 className="text-base font-semibold text-slate-50">{ui.panels.latestHoldings}</h2>
+          <div className="mt-1 text-xs text-slate-500">{latestDate ?? ui.panels.noRebalance}</div>
         </div>
         <div className={meetsMinimum ? "text-xs text-signal-green" : "text-xs text-signal-amber"}>
-          {count} / min {data.min_holdings ?? "--"}
+          {count} / {ui.panels.minimumHoldingCount(data.min_holdings)}
         </div>
       </div>
       <div className="mt-4 overflow-x-auto rounded-lg border border-white/10">
         <table className="w-full min-w-[560px] text-left text-sm">
           <thead className="bg-white/[0.04] text-xs text-slate-500">
-            <tr><th className="px-4 py-3">股票代码</th><th className="px-4 py-3">权重</th><th className="px-4 py-3">份额</th><th className="px-4 py-3">调仓日期</th></tr>
+            <tr><th className="px-4 py-3">{ui.tables.symbol}</th><th className="px-4 py-3">{ui.tables.weight}</th><th className="px-4 py-3">{ui.tables.shares}</th><th className="px-4 py-3">{ui.tables.rebalanceDate}</th></tr>
           </thead>
           <tbody className="divide-y divide-white/10">
             {rows.map((row) => (
@@ -191,8 +200,8 @@ export function RealHoldingsPanel({ data }: { data: ResearchHoldingsResponse }) 
         </table>
       </div>
       <div className="mt-4 flex gap-5 text-sm text-slate-400">
-        <span>现金比例 {formatPercent(cashWeight)}</span>
-        <span className={meetsMinimum ? "text-signal-green" : "text-signal-amber"}>{meetsMinimum ? "达到最小持仓数" : "低于最小持仓数"}</span>
+        <span>{ui.panels.cashRatio} {formatPercent(cashWeight)}</span>
+        <span className={meetsMinimum ? "text-signal-green" : "text-signal-amber"}>{meetsMinimum ? ui.panels.meetsMinimum : ui.panels.belowMinimum}</span>
       </div>
     </section>
   );
@@ -207,16 +216,16 @@ export function FactorCoveragePanel({ data }: { data: ResearchFactorsResponse })
   return (
     <section className="panel p-5">
       <div className="flex items-center justify-between gap-3">
-        <div><h2 className="text-base font-semibold text-slate-50">因子覆盖率</h2><div className="mt-1 text-xs text-slate-500">全运行覆盖与最近实际复合权重</div></div>
+        <div><h2 className="text-base font-semibold text-slate-50">{ui.panels.factorCoverage}</h2><div className="mt-1 text-xs text-slate-500">{ui.panels.factorCoverageSubtitle}</div></div>
         <Gauge className="h-4 w-4 text-signal-cyan" />
       </div>
       <div className="mt-4 overflow-x-auto rounded-lg border border-white/10">
         <table className="w-full min-w-[620px] text-left text-sm">
-          <thead className="bg-white/[0.04] text-xs text-slate-500"><tr><th className="px-4 py-3">因子</th><th className="px-4 py-3">Available</th><th className="px-4 py-3">Missing</th><th className="px-4 py-3">Coverage</th><th className="px-4 py-3">实际权重</th></tr></thead>
+          <thead className="bg-white/[0.04] text-xs text-slate-500"><tr><th className="px-4 py-3">{ui.tables.factor}</th><th className="px-4 py-3">{ui.tables.available}</th><th className="px-4 py-3">{ui.tables.missing}</th><th className="px-4 py-3">{ui.tables.coverage}</th><th className="px-4 py-3">{ui.tables.effectiveWeight}</th></tr></thead>
           <tbody className="divide-y divide-white/10">
             {Object.entries(data.coverage_overall).map(([factor, coverage]) => (
               <tr key={factor}>
-                <td className="px-4 py-3 text-slate-100">{factor}</td>
+                <td className="px-4 py-3 text-slate-100">{machineLabel("factor", factor)}<div className="mt-1 font-mono text-xs text-slate-500">{factor}</div></td>
                 <td className="px-4 py-3 font-mono text-slate-300">{coverage.available_count}</td>
                 <td className="px-4 py-3 font-mono text-slate-300">{coverage.missing_count}</td>
                 <td className="px-4 py-3 font-mono text-slate-300">{formatPercent(coverage.coverage_ratio)}</td>
@@ -227,7 +236,7 @@ export function FactorCoveragePanel({ data }: { data: ResearchFactorsResponse })
         </table>
       </div>
       {Object.entries(data.coverage_overall).some(([, item]) => item.missing_count > 0) ? (
-        <div className="mt-4 flex items-center gap-2 text-sm text-signal-amber"><AlertTriangle className="h-4 w-4" />存在缺失因子输入，复合权重以 artifacts 中的实际权重为准。</div>
+        <div className="mt-4 flex items-center gap-2 text-sm text-signal-amber"><AlertTriangle className="h-4 w-4" />{ui.panels.factorMissingNotice}</div>
       ) : null}
     </section>
   );
@@ -238,12 +247,12 @@ export function MacroArtifactPanel({ detail }: { detail: ResearchRunDetail }) {
   const count = toNumber(coverage.macro_observation_count) ?? 0;
   return (
     <section className="panel p-5">
-      <div className="flex items-center justify-between"><div><h2 className="text-base font-semibold text-slate-50">宏观数据状态</h2><div className="mt-1 text-xs text-slate-500">真实运行 manifest</div></div><Waves className="h-4 w-4 text-signal-cyan" /></div>
+      <div className="flex items-center justify-between"><div><h2 className="text-base font-semibold text-slate-50">{ui.panels.macroDataStatus}</h2><div className="mt-1 text-xs text-slate-500">{ui.panels.realManifest}</div></div><Waves className="h-4 w-4 text-signal-cyan" /></div>
       <div className="mt-5 grid gap-3 sm:grid-cols-2">
-        <div className="panel-soft p-4"><div className="text-xs text-slate-500">宏观观测数量</div><div className="mt-2 text-2xl font-semibold text-slate-50">{count}</div></div>
-        <div className="panel-soft p-4"><div className="text-xs text-slate-500">仓位乘数状态</div><div className={count === 0 ? "mt-2 text-lg font-semibold text-signal-amber" : "mt-2 text-lg font-semibold text-signal-green"}>{count === 0 ? "使用中性乘数" : "使用已公布宏观记录"}</div></div>
+        <div className="panel-soft p-4"><div className="text-xs text-slate-500">{ui.panels.macroObservationCount}</div><div className="mt-2 text-2xl font-semibold text-slate-50">{count}</div></div>
+        <div className="panel-soft p-4"><div className="text-xs text-slate-500">{ui.panels.multiplierStatus}</div><div className={count === 0 ? "mt-2 text-lg font-semibold text-signal-amber" : "mt-2 text-lg font-semibold text-signal-green"}>{count === 0 ? ui.panels.neutralFallbackUsed : ui.panels.publishedMacroUsed}</div></div>
       </div>
-      {count === 0 ? <div className="mt-4 text-sm text-slate-400">当前运行没有真实宏观观察值，结果中的宏观调整不应被解释为有效宏观判断。</div> : null}
+      {count === 0 ? <div className="prose-copy mt-4 text-sm text-slate-400">{ui.panels.macroMissingExplanation}</div> : null}
     </section>
   );
 }
@@ -252,12 +261,15 @@ export function WarningSummaryPanel({ data }: { data: ResearchWarningsResponse }
   const categories = Object.entries(data.summary.categories).filter(([, count]) => count > 0);
   return (
     <section className="panel p-5">
-      <div className="flex items-center justify-between"><div><h2 className="text-base font-semibold text-slate-50">Warning 摘要</h2><div className="mt-1 text-xs text-slate-500">共 {data.summary.total} 条，不默认展开全部内容</div></div><AlertTriangle className="h-4 w-4 text-signal-amber" /></div>
+      <div className="flex items-center justify-between"><div><h2 className="text-base font-semibold text-slate-50">{ui.panels.warningSummary}</h2><div className="mt-1 text-xs text-slate-500">{ui.panels.warningSummarySubtitle(data.summary.total)}</div></div><AlertTriangle className="h-4 w-4 text-signal-amber" /></div>
       <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {categories.map(([category, count]) => (
           <div key={category} className="panel-soft p-4">
-            <div className="flex justify-between gap-3"><span className="text-sm text-slate-200">{category}</span><span className="font-mono text-sm text-signal-amber">{count}</span></div>
-            <div className="mt-3 space-y-2 text-xs leading-5 text-slate-500">{(data.summary.samples[category] ?? []).map((sample) => <div key={sample}>{sample}</div>)}</div>
+            <div className="flex justify-between gap-3"><span className="text-sm text-slate-200">{machineLabel("warningCategory", category)}<span className="ml-2 font-mono text-xs text-slate-500">{category}</span></span><span className="font-mono text-sm text-signal-amber">{count}</span></div>
+            <details className="mt-3 text-xs leading-5 text-slate-500">
+              <summary className="cursor-pointer">{ui.report.viewRawDetails}</summary>
+              <div className="mt-2 space-y-2 font-mono">{(data.summary.samples[category] ?? []).map((sample) => <div className="break-words" key={sample}>{sample}</div>)}</div>
+            </details>
           </div>
         ))}
       </div>

@@ -295,6 +295,7 @@ class ArtifactCounterArgument(BaseModel):
 
 class RealResearchReportResponse(BaseModel):
     run_id: str
+    locale: Literal["zh-CN", "en-US"]
     data_source: Literal["real_artifacts"] = "real_artifacts"
     generated_mode: Literal["deterministic"] = "deterministic"
     run_status: Literal["success", "partial_success", "failed"]

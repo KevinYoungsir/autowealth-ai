@@ -82,8 +82,16 @@ export type ArtifactRiskFlag = RiskFlag & {
   title: string;
 };
 
+export type WarningPresentation = {
+  source_message: string;
+  display_message: string;
+  category: string;
+  category_label: string;
+};
+
 export type RealResearchReport = {
   run_id: string;
+  locale: "zh-CN" | "en-US";
   data_source: "real_artifacts";
   generated_mode: "deterministic";
   run_status: RunStatus;

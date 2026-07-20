@@ -12,6 +12,7 @@ import {
   RealHoldingsPanel,
   RunLimitationsPanel
 } from "@/components/real-run-sections";
+import { ui } from "@/i18n";
 
 export default function PortfolioPage() {
   const {
@@ -29,9 +30,9 @@ export default function PortfolioPage() {
     <div className="space-y-5">
       <DataSourceBanner source={dataSource} summary={real?.summary} />
       <SectionHeader
-        eyebrow="Portfolio"
-        title="当前组合"
-        description="展示研究目标权重、现金仓位与候选过滤记录。"
+        eyebrow={ui.pages.portfolio.eyebrow}
+        title={ui.pages.portfolio.title}
+        description={ui.pages.portfolio.description}
         status={health}
         loading={loading}
         error={error}

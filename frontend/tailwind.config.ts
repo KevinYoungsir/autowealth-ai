@@ -8,6 +8,27 @@ const config: Config = {
   ],
   theme: {
     extend: {
+      fontFamily: {
+        sans: [
+          "PingFang SC",
+          "Microsoft YaHei UI",
+          "Microsoft YaHei",
+          "Noto Sans CJK SC",
+          "Source Han Sans SC",
+          "system-ui",
+          "-apple-system",
+          "BlinkMacSystemFont",
+          "Segoe UI",
+          "sans-serif"
+        ],
+        mono: [
+          "JetBrains Mono",
+          "SFMono-Regular",
+          "Consolas",
+          "Liberation Mono",
+          "monospace"
+        ]
+      },
       colors: {
         ink: {
           950: "#080b10",
