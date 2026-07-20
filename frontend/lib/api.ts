@@ -12,6 +12,7 @@ import type {
   ResearchRunListResponse,
   ResearchWarningsResponse
 } from "./types";
+import { ui, type AppLocale } from "@/i18n";
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
@@ -24,7 +25,7 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   });
 
   if (!response.ok) {
-    throw new Error(`Research API request failed: ${response.status}`);
+    throw new Error(ui.errors.apiRequestFailed(response.status));
   }
 
   return response.json() as Promise<T>;
@@ -87,8 +88,11 @@ export function fetchResearchWarnings(runId: string): Promise<ResearchWarningsRe
   );
 }
 
-export function fetchResearchReport(runId: string): Promise<RealResearchReport> {
+export function fetchResearchReport(
+  runId: string,
+  locale: AppLocale = "zh-CN"
+): Promise<RealResearchReport> {
   return fetchJson<RealResearchReport>(
-    `/api/research/runs/${encodeURIComponent(runId)}/report`
+    `/api/research/runs/${encodeURIComponent(runId)}/report?locale=${encodeURIComponent(locale)}`
   );
 }

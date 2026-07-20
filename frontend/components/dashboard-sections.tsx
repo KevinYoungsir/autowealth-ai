@@ -14,6 +14,7 @@ import {
 import { EquityCurveChart, WeightBars } from "./charts";
 import { formatNumber, formatPercent, formatWeight, toNumber } from "@/lib/format";
 import type { DeepSeekReport, EquityPoint, HealthResponse } from "@/lib/types";
+import { machineLabel, ui } from "@/i18n";
 
 export function SectionHeader({
   eyebrow,
@@ -40,7 +41,7 @@ export function SectionHeader({
         </div>
         <div className="flex flex-col items-end gap-2">
           <div className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-slate-300">
-            {loading ? "Syncing" : status?.status === "ok" ? "API online" : "API pending"}
+            {loading ? ui.common.syncing : status?.status === "ok" ? ui.common.apiOnline : ui.common.apiPending}
           </div>
           {error ? <div className="max-w-md text-right text-xs text-signal-red">{error}</div> : null}
         </div>
@@ -52,31 +53,31 @@ export function SectionHeader({
 export function MetricGrid({ metrics }: { metrics?: Record<string, any> }) {
   const items = [
     {
-      label: "年化收益",
+      label: ui.metrics.annualized_return,
       value: formatPercent(metrics?.annualized_return),
       icon: LineChart,
       accent: "text-signal-teal"
     },
     {
-      label: "最大回撤",
+      label: ui.metrics.max_drawdown,
       value: formatPercent(metrics?.max_drawdown),
       icon: Shield,
       accent: "text-signal-red"
     },
     {
-      label: "夏普比率",
+      label: ui.metrics.sharpe_ratio,
       value: formatNumber(metrics?.sharpe_ratio),
       icon: Gauge,
       accent: "text-signal-cyan"
     },
     {
-      label: "卡玛比率",
+      label: ui.metrics.calmar_ratio,
       value: formatNumber(metrics?.calmar_ratio),
       icon: Scale,
       accent: "text-signal-amber"
     },
     {
-      label: "现金仓位",
+      label: ui.metrics.cash_weight,
       value: formatPercent(metrics?.cash_weight),
       icon: CircleDollarSign,
       accent: "text-signal-green"
@@ -108,7 +109,7 @@ export function MetricGrid({ metrics }: { metrics?: Record<string, any> }) {
 export function EquityPanel({
   equityCurve,
   tall = false,
-  subtitle = "Mock research equity curve"
+  subtitle = ui.panels.mockEquityCurve
 }: {
   equityCurve: EquityPoint[];
   tall?: boolean;
@@ -116,7 +117,7 @@ export function EquityPanel({
 }) {
   return (
     <section className="panel p-5">
-      <PanelTitle title="权益曲线" subtitle={subtitle} icon={LineChart} />
+      <PanelTitle title={ui.panels.equityCurve} subtitle={subtitle} icon={LineChart} />
       <div className="mt-4">
         <EquityCurveChart points={equityCurve} height={tall ? 360 : 285} />
       </div>
@@ -129,7 +130,7 @@ export function AllocationPanel({ weights }: { weights: Record<string, number> }
 
   return (
     <section className="panel p-5">
-      <PanelTitle title="目标持仓权重" subtitle={`现金仓位 ${formatWeight(cashWeight)}`} icon={WalletCards} />
+      <PanelTitle title={ui.panels.targetWeights} subtitle={`${ui.metrics.cash_weight} ${formatWeight(cashWeight)}`} icon={WalletCards} />
       <div className="mt-5">
         <WeightBars weights={weights} />
       </div>
@@ -154,15 +155,15 @@ export function HoldingTablePanel({
 
   return (
     <section className="panel p-5">
-      <PanelTitle title="组合明细" subtitle={`${rows.length} 个研究标的`} icon={WalletCards} />
+      <PanelTitle title={ui.panels.portfolioDetails} subtitle={ui.common.symbols(rows.length)} icon={WalletCards} />
       <div className="mt-4 overflow-hidden rounded-lg border border-white/10">
         <table className="w-full min-w-[520px] text-left text-sm">
-          <thead className="bg-white/[0.04] text-xs uppercase tracking-[0.14em] text-slate-500">
+          <thead className="bg-white/[0.04] text-xs text-slate-500">
             <tr>
-              <th className="px-4 py-3">Symbol</th>
-              <th className="px-4 py-3">Weight</th>
-              <th className="px-4 py-3">Score</th>
-              <th className="px-4 py-3">State</th>
+              <th className="px-4 py-3">{ui.tables.symbol}</th>
+              <th className="px-4 py-3">{ui.tables.weight}</th>
+              <th className="px-4 py-3">{ui.tables.score}</th>
+              <th className="px-4 py-3">{ui.tables.state}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-white/8">
@@ -173,7 +174,7 @@ export function HoldingTablePanel({
                 <td className="px-4 py-3 font-mono">{formatNumber(row.score, 1)}</td>
                 <td className="px-4 py-3">
                   <span className="rounded-lg border border-signal-teal/25 bg-signal-teal/10 px-2 py-1 text-xs text-signal-teal">
-                    research target
+                    {ui.panels.researchTarget}
                   </span>
                 </td>
               </tr>
@@ -194,17 +195,25 @@ export function RejectionPanel({
 }) {
   return (
     <section className="panel p-5">
-      <PanelTitle title="候选过滤记录" subtitle={`${Object.keys(rejected).length} 条记录`} icon={AlertTriangle} />
+      <PanelTitle title={ui.panels.candidateFilters} subtitle={ui.common.records(Object.keys(rejected).length)} icon={AlertTriangle} />
       <div className="mt-4 grid gap-3 md:grid-cols-2">
         {Object.entries(rejected).map(([symbol, reason]) => (
           <div key={symbol} className="panel-soft p-4">
             <div className="font-mono text-sm text-slate-100">{symbol}</div>
-            <div className="mt-2 text-sm text-slate-400">{reason}</div>
+            <div className="mt-2 text-sm text-slate-300">{ui.panels.rejectedCandidate}</div>
+            <details className="mt-2 text-xs text-slate-500">
+              <summary className="cursor-pointer">{ui.panels.originalTechnicalReason}</summary>
+              <div className="mt-2 break-words font-mono">{reason}</div>
+            </details>
           </div>
         ))}
         {warnings.map((warning) => (
           <div key={warning} className="panel-soft p-4 text-sm text-slate-400">
-            {warning}
+            <div className="text-slate-300">{ui.panels.pipelineWarning}</div>
+            <details className="mt-2 text-xs text-slate-500">
+              <summary className="cursor-pointer">{ui.report.viewRawDetails}</summary>
+              <div className="mt-2 break-words font-mono">{warning}</div>
+            </details>
           </div>
         ))}
       </div>
@@ -217,7 +226,7 @@ export function FactorSnapshotPanel({ factor }: { factor?: Record<string, any> }
 
   return (
     <section className="panel p-5">
-      <PanelTitle title="因子分布" subtitle="Composite score buckets" icon={Gauge} />
+      <PanelTitle title={ui.panels.factorDistribution} subtitle={ui.panels.compositeBuckets} icon={Gauge} />
       <div className="mt-5 grid grid-cols-3 gap-3">
         {[
           ["gte_80", "80+"],
@@ -231,9 +240,9 @@ export function FactorSnapshotPanel({ factor }: { factor?: Record<string, any> }
         ))}
       </div>
       <div className="mt-5 grid gap-3 sm:grid-cols-3">
-        <SmallStat label="Mean" value={formatNumber(factor?.mean_score, 1)} />
-        <SmallStat label="Min" value={formatNumber(factor?.min_score, 1)} />
-        <SmallStat label="Max" value={formatNumber(factor?.max_score, 1)} />
+        <SmallStat label={ui.panels.mean} value={formatNumber(factor?.mean_score, 1)} />
+        <SmallStat label={ui.panels.minimum} value={formatNumber(factor?.min_score, 1)} />
+        <SmallStat label={ui.panels.maximum} value={formatNumber(factor?.max_score, 1)} />
       </div>
     </section>
   );
@@ -244,7 +253,7 @@ export function FactorTablePanel({ scores }: { scores: Record<string, number> })
 
   return (
     <section className="panel p-5">
-      <PanelTitle title="评分排行" subtitle={`${rows.length} 个候选评分`} icon={Gauge} />
+      <PanelTitle title={ui.panels.scoreRanking} subtitle={ui.common.candidates(rows.length)} icon={Gauge} />
       <div className="mt-4 space-y-3">
         {rows.map(([symbol, score]) => (
           <div key={symbol} className="grid grid-cols-[82px_1fr_64px] items-center gap-3">
@@ -263,12 +272,12 @@ export function FactorTablePanel({ scores }: { scores: Record<string, number> })
 export function MacroSnapshotPanel({ macro }: { macro?: Record<string, any> }) {
   return (
     <section className="panel p-5">
-      <PanelTitle title="宏观状态" subtitle="Research regime snapshot" icon={Shield} />
+      <PanelTitle title={ui.panels.macroState} subtitle={ui.panels.macroSnapshot} icon={Shield} />
       <div className="mt-5 grid gap-3 sm:grid-cols-2">
-        <SmallStat label="Regime" value={String(macro?.regime ?? "--")} />
-        <SmallStat label="Multiplier" value={formatNumber(macro?.equity_position_multiplier, 2)} />
-        <SmallStat label="Growth" value={formatNumber(macro?.growth_score, 1)} />
-        <SmallStat label="External Risk" value={formatNumber(macro?.external_risk_score, 1)} />
+        <SmallStat label={ui.panels.regime} value={machineLabel("macroRegime", String(macro?.regime ?? "not_provided"))} technicalValue={String(macro?.regime ?? "not_provided")} />
+        <SmallStat label={ui.panels.multiplier} value={formatNumber(macro?.equity_position_multiplier, 2)} />
+        <SmallStat label={ui.panels.growth} value={formatNumber(macro?.growth_score, 1)} />
+        <SmallStat label={ui.panels.externalRisk} value={formatNumber(macro?.external_risk_score, 1)} />
       </div>
     </section>
   );
@@ -276,17 +285,17 @@ export function MacroSnapshotPanel({ macro }: { macro?: Record<string, any> }) {
 
 export function MacroDetailPanel({ macro }: { macro?: Record<string, any> }) {
   const metrics = [
-    ["growth_score", "经济增长"],
-    ["inflation_score", "通胀环境"],
-    ["liquidity_score", "流动性"],
-    ["credit_score", "信用周期"],
-    ["policy_score", "政策环境"],
-    ["external_risk_score", "外部风险"]
+    ["growth_score", ui.panels.growthDimension],
+    ["inflation_score", ui.panels.inflationDimension],
+    ["liquidity_score", ui.panels.liquidityDimension],
+    ["credit_score", ui.panels.creditDimension],
+    ["policy_score", ui.panels.policyDimension],
+    ["external_risk_score", ui.panels.externalRiskDimension]
   ];
 
   return (
     <section className="panel p-5">
-      <PanelTitle title="宏观维度" subtitle="0-100 research scale" icon={Shield} />
+      <PanelTitle title={ui.panels.macroDimensions} subtitle={ui.panels.researchScale} icon={Shield} />
       <div className="mt-4 grid gap-3 md:grid-cols-2">
         {metrics.map(([key, label]) => {
           const value = toNumber(macro?.[key]) ?? 0;
@@ -308,16 +317,16 @@ export function MacroDetailPanel({ macro }: { macro?: Record<string, any> }) {
 }
 
 export function ReturnPlaceholderPanel() {
-  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const months = ["1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月"];
 
   return (
     <section className="panel p-5">
-      <PanelTitle title="月度 / 年度收益" subtitle="Reserved return matrix" icon={LineChart} />
+      <PanelTitle title={ui.panels.monthlyAnnualReturns} subtitle={ui.panels.reservedReturns} icon={LineChart} />
       <div className="mt-4 grid grid-cols-3 gap-3 md:grid-cols-6 xl:grid-cols-12">
         {months.map((month) => (
           <div key={month} className="panel-soft p-3 text-center">
             <div className="text-xs text-slate-500">{month}</div>
-            <div className="mt-2 text-sm text-slate-300">待接入</div>
+            <div className="mt-2 text-sm text-slate-300">{ui.panels.pendingIntegration}</div>
           </div>
         ))}
       </div>
@@ -325,7 +334,7 @@ export function ReturnPlaceholderPanel() {
         {["2021", "2022", "2023", "2024"].map((year) => (
           <div key={year} className="panel-soft p-4">
             <div className="text-xs text-slate-500">{year}</div>
-            <div className="mt-2 text-lg font-semibold text-slate-300">待接入</div>
+            <div className="mt-2 text-lg font-semibold text-slate-300">{ui.panels.pendingIntegration}</div>
           </div>
         ))}
       </div>
@@ -337,9 +346,9 @@ export function ResearchReportPanel({ report }: { report: DeepSeekReport | null 
   return (
     <div className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
       <section className="panel p-5">
-        <PanelTitle title="研究摘要" subtitle={report?.metadata?.model ? `model ${report.metadata.model}` : "mock"} icon={BrainCircuit} />
-        <p className="mt-4 text-sm leading-6 text-slate-300">
-          {report?.research_note?.summary ?? "等待 mock 研究报告"}
+        <PanelTitle title={ui.panels.mockResearchSummary} subtitle={report?.metadata?.model ? `${ui.common.technicalValue} ${report.metadata.model}` : ui.panels.mockModel} icon={BrainCircuit} />
+        <p className="prose-copy mt-4 text-sm leading-7 text-slate-300">
+          {report?.research_note?.summary ?? ui.panels.waitingMockReport}
         </p>
         <div className="mt-5 space-y-3">
           {(report?.research_note?.key_points ?? []).map((point) => (
@@ -352,14 +361,17 @@ export function ResearchReportPanel({ report }: { report: DeepSeekReport | null 
       </section>
 
       <section className="panel p-5">
-        <PanelTitle title="风险复核" subtitle={`${report?.risk_flags?.length ?? 0} flags`} icon={AlertTriangle} />
+        <PanelTitle title={ui.panels.riskReview} subtitle={ui.common.flags(report?.risk_flags?.length ?? 0)} icon={AlertTriangle} />
         <div className="mt-4 grid gap-3">
           {(report?.risk_flags ?? []).map((flag) => (
             <div key={`${flag.category}-${flag.description}`} className="panel-soft p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-sm font-semibold text-slate-100">{flag.category}</div>
+                <div>
+                  <div className="text-sm font-semibold text-slate-100">{machineLabel("warningCategory", flag.category)}</div>
+                  <div className="mt-1 font-mono text-xs text-slate-500">{flag.category}</div>
+                </div>
                 <span className="rounded-lg border border-signal-amber/30 bg-signal-amber/10 px-2 py-1 text-xs text-signal-amber">
-                  {flag.severity}
+                  {machineLabel("severity", flag.severity)} <span className="font-mono text-slate-500">({flag.severity})</span>
                 </span>
               </div>
               <div className="mt-2 text-sm text-slate-400">{flag.description}</div>
@@ -370,13 +382,13 @@ export function ResearchReportPanel({ report }: { report: DeepSeekReport | null 
       </section>
 
       <section className="panel p-5 xl:col-span-2">
-        <PanelTitle title="反方观点" subtitle={`${report?.counter_arguments?.length ?? 0} items`} icon={Scale} />
+        <PanelTitle title={ui.panels.counterargumentReview} subtitle={ui.common.items(report?.counter_arguments?.length ?? 0)} icon={Scale} />
         <div className="mt-4 grid gap-3 lg:grid-cols-3">
           {(report?.counter_arguments ?? []).map((item) => (
             <div key={item.topic} className="panel-soft p-4">
               <div className="text-sm font-semibold text-slate-100">{item.topic}</div>
               <div className="mt-2 text-sm leading-6 text-slate-400">{item.argument}</div>
-              <div className="mt-4 text-xs uppercase tracking-[0.14em] text-slate-500">Evidence</div>
+              <div className="mt-4 text-xs text-slate-500">{ui.panels.evidence}</div>
               <ul className="mt-2 space-y-1 text-xs text-slate-400">
                 {item.evidence_needed.map((evidence) => (
                   <li key={evidence}>{evidence}</li>
@@ -393,7 +405,7 @@ export function ResearchReportPanel({ report }: { report: DeepSeekReport | null 
 export function ResearchBoundary() {
   return (
     <section className="rounded-lg border border-signal-amber/20 bg-signal-amber/8 p-4 text-sm leading-6 text-slate-300">
-      当前看板仅展示研究实验、mock 数据与结构化复核结果；历史指标不代表未来表现，不构成投资建议或交易指令。
+      {ui.common.researchBoundary}
     </section>
   );
 }
@@ -420,11 +432,12 @@ function PanelTitle({
   );
 }
 
-function SmallStat({ label, value }: { label: string; value: string }) {
+function SmallStat({ label, value, technicalValue }: { label: string; value: string; technicalValue?: string }) {
   return (
     <div className="panel-soft p-4">
-      <div className="text-xs uppercase tracking-[0.14em] text-slate-500">{label}</div>
+      <div className="text-xs text-slate-500">{label}</div>
       <div className="mt-2 text-lg font-semibold text-slate-100">{value}</div>
+      {technicalValue ? <div className="mt-1 font-mono text-xs text-slate-500">{technicalValue}</div> : null}
     </div>
   );
 }

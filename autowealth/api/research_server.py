@@ -12,12 +12,13 @@ from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional
 
 import pandas as pd
-from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
+from fastapi import APIRouter, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from autowealth.agents.deepseek_research_agent import DeepSeekResearchAgent
+from autowealth.i18n import DEFAULT_REPORT_LOCALE, SupportedLocale
 from autowealth.api.research_models import (
     DeepSeekMockReportResponse,
     EquityPoint,
@@ -178,11 +179,15 @@ async def research_run_detail(
 async def research_run_report(
     run_id: str,
     request: Request,
+    response: Response,
+    locale: SupportedLocale = Query(DEFAULT_REPORT_LOCALE),
 ) -> RealResearchReportResponse:
     report = build_real_research_report(
         _request_run_store(request),
         run_id,
+        locale=locale,
     )
+    response.headers["Content-Language"] = locale
     return RealResearchReportResponse(**report)
 
 

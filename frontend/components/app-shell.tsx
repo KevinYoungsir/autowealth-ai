@@ -15,15 +15,16 @@ import {
   Waves
 } from "lucide-react";
 import { useResearchData } from "./research-data-provider";
+import { machineLabel, ui } from "@/i18n";
 
 const navItems = [
-  { href: "/", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/backtest", label: "Backtest", icon: BarChart3 },
-  { href: "/portfolio", label: "Portfolio", icon: PieChart },
-  { href: "/factors", label: "Factors", icon: Gauge },
-  { href: "/macro", label: "Macro", icon: Waves },
-  { href: "/research-notes", label: "Research Notes", icon: BrainCircuit },
-  { href: "/system-status", label: "系统状态", icon: Server }
+  { href: "/", label: ui.navigation.dashboard, icon: LayoutDashboard },
+  { href: "/backtest", label: ui.navigation.backtest, icon: BarChart3 },
+  { href: "/portfolio", label: ui.navigation.portfolio, icon: PieChart },
+  { href: "/factors", label: ui.navigation.factors, icon: Gauge },
+  { href: "/macro", label: ui.navigation.macro, icon: Waves },
+  { href: "/research-notes", label: ui.navigation.researchNotes, icon: BrainCircuit },
+  { href: "/system-status", label: ui.navigation.systemStatus, icon: Server }
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -37,12 +38,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     selectedRunId,
     selectRun
   } = useResearchData();
-  const sourceLabel =
-    dataSource === "real_artifacts"
-      ? "真实研究 artifacts"
-      : dataSource === "mock_demo"
-        ? "演示数据"
-        : "API 不可用";
+  const sourceLabel = machineLabel("dataSource", dataSource);
+  const apiStatus = health?.status ?? "unknown";
 
   return (
     <div className="relative min-h-screen bg-ink-950 text-slate-100">
@@ -53,7 +50,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
           <div>
             <div className="text-sm font-semibold text-slate-50">AutoWealth</div>
-            <div className="text-xs text-slate-400">Research cockpit</div>
+            <div className="text-xs text-slate-400">{ui.brand.subtitle}</div>
           </div>
         </div>
         <nav className="space-y-1">
@@ -85,14 +82,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <div className="flex items-center gap-3">
               <ShieldCheck className="h-5 w-5 text-signal-green" aria-hidden="true" />
               <div>
-                <div className="text-sm font-semibold text-slate-100">outlook.xin prototype</div>
-                <div className="text-xs text-slate-500">研究展示 · {sourceLabel} · 非交易系统</div>
+                <div className="text-sm font-semibold text-slate-100">{ui.brand.environment}</div>
+                <div className="text-xs text-slate-500">{ui.brand.context} · {sourceLabel}</div>
               </div>
             </div>
             <div className="flex items-center gap-2">
               {runList.length > 0 ? (
                 <select
-                  aria-label="选择研究运行"
+                  aria-label={ui.common.selectRun}
                   value={selectedRunId ?? ""}
                   onChange={(event) => void selectRun(event.target.value)}
                   className="h-9 max-w-[280px] rounded-lg border border-white/10 bg-ink-900 px-3 text-xs text-slate-200"
@@ -106,16 +103,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 </select>
               ) : null}
               <span className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-slate-300">
-                {sourceLabel} · API {health?.status ?? "unknown"}
+                {sourceLabel} <span className="font-mono text-slate-500">({dataSource})</span>
+                {" · API "}{machineLabel("serviceStatus", apiStatus)}
+                <span className="font-mono text-slate-500"> ({apiStatus})</span>
               </span>
               <button
                 type="button"
                 onClick={() => void refresh()}
+                aria-label={ui.aria.refresh}
                 className="inline-flex h-9 items-center gap-2 rounded-lg border border-signal-teal/30 bg-signal-teal/10 px-3 text-sm text-slate-100 transition hover:bg-signal-teal/15 disabled:cursor-wait disabled:opacity-60"
                 disabled={loading}
               >
                 <RefreshCw className={["h-4 w-4", loading ? "animate-spin" : ""].join(" ")} aria-hidden="true" />
-                <span>Refresh</span>
+                <span>{ui.common.refresh}</span>
               </button>
             </div>
           </div>

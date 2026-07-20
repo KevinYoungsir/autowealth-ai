@@ -14,6 +14,7 @@ import {
 } from "@/components/dashboard-sections";
 import { useResearchData } from "@/components/research-data-provider";
 import { DataSourceBanner } from "@/components/real-run-sections";
+import { machineLabel, ui } from "@/i18n";
 
 export default function SystemStatusPage() {
   const {
@@ -33,30 +34,34 @@ export default function SystemStatusPage() {
 
   const statusItems = [
     {
-      label: "前端运行状态",
-      value: "running",
-      detail: "Next.js 页面已加载",
+      label: ui.system.frontendStatus,
+      value: machineLabel("serviceStatus", "running"),
+      technicalValue: "running",
+      detail: ui.system.frontendLoaded,
       healthy: true,
       icon: Activity
     },
     {
-      label: "API 运行状态",
-      value: apiAvailable ? health?.status ?? "ok" : "unavailable",
-      detail: apiAvailable ? health?.service ?? "Research API" : "未收到有效健康响应",
+      label: ui.system.apiStatus,
+      value: machineLabel("serviceStatus", apiAvailable ? health?.status ?? "ok" : "unavailable"),
+      technicalValue: apiAvailable ? health?.status ?? "ok" : "unavailable",
+      detail: apiAvailable ? health?.service ?? "Research API" : ui.system.noHealthResponse,
       healthy: apiAvailable,
       icon: Server
     },
     {
-      label: "Research runs",
-      value: health?.research_runs_available ? "available" : "unavailable",
-      detail: health?.latest_run_available ? "存在已落盘运行" : "没有可用的最新运行",
+      label: ui.system.researchRuns,
+      value: machineLabel("availability", health?.research_runs_available ? "available" : "unavailable"),
+      technicalValue: health?.research_runs_available ? "available" : "unavailable",
+      detail: health?.latest_run_available ? ui.system.persistedRunAvailable : ui.system.noLatestRun,
       healthy: health?.research_runs_available === true,
       icon: Database
     },
     {
-      label: "API 地址摘要",
+      label: ui.system.apiTarget,
       value: summarizeApiTarget(),
-      detail: "仅显示协议类别和公开主机，不显示变量原值",
+      technicalValue: null,
+      detail: ui.system.apiTargetDetail,
       healthy: apiTargetConfigured(),
       icon: Globe2
     }
@@ -66,9 +71,9 @@ export default function SystemStatusPage() {
     <div className="space-y-5">
       <DataSourceBanner source={dataSource} summary={realDetail?.summary} />
       <SectionHeader
-        eyebrow="System Status"
-        title="部署与数据状态"
-        description="只读检查前端、研究 API 和已落盘运行，不触发研究任务。"
+        eyebrow={ui.pages.systemStatus.eyebrow}
+        title={ui.pages.systemStatus.title}
+        description={ui.pages.systemStatus.description}
         status={health}
         loading={loading}
         error={error}
@@ -78,9 +83,9 @@ export default function SystemStatusPage() {
         <section className="rounded-lg border border-signal-amber/30 bg-signal-amber/10 p-4 text-sm text-slate-200">
           <div className="flex items-center gap-2 font-semibold text-signal-amber">
             <AlertTriangle className="h-4 w-4" aria-hidden="true" />
-            暂无真实研究运行
+            {ui.system.noRealRunsTitle}
           </div>
-          <p className="mt-2 text-slate-400">API 已启动且运行目录可访问，当前看板使用明确标记的演示数据。</p>
+          <p className="mt-2 text-slate-400">{ui.system.noRealRunsDetail}</p>
         </section>
       ) : null}
 
@@ -96,6 +101,9 @@ export default function SystemStatusPage() {
               <div className={item.healthy ? "mt-4 text-lg font-semibold text-signal-green" : "mt-4 text-lg font-semibold text-signal-amber"}>
                 {item.value}
               </div>
+              {item.technicalValue ? (
+                <div className="mt-1 font-mono text-xs text-slate-500">{item.technicalValue}</div>
+              ) : null}
               <p className="mt-2 text-xs leading-5 text-slate-500">{item.detail}</p>
             </section>
           );
@@ -105,20 +113,21 @@ export default function SystemStatusPage() {
       <section className="panel p-5">
         <div className="flex items-center justify-between gap-3 border-b border-white/10 pb-4">
           <div>
-            <h2 className="text-base font-semibold text-slate-50">最近运行状态</h2>
-            <p className="mt-1 text-xs text-slate-500">仅显示公开研究摘要字段</p>
+            <h2 className="text-base font-semibold text-slate-50">{ui.system.latestRun}</h2>
+            <p className="mt-1 text-xs text-slate-500">{ui.system.publicFieldsOnly}</p>
           </div>
           {latest ? <CheckCircle2 className="h-4 w-4 text-signal-green" aria-hidden="true" /> : <AlertTriangle className="h-4 w-4 text-signal-amber" aria-hidden="true" />}
         </div>
         <dl className="grid gap-x-8 md:grid-cols-2">
-          <StatusRow label="数据来源" value={dataSource} />
-          <StatusRow label="最新 run_id" value={latest?.run_id ?? "暂无"} mono />
-          <StatusRow label="最新 run_status" value={latest?.run_status ?? "暂无"} />
-          <StatusRow label="Benchmark" value={latest?.benchmark_status ?? "暂无"} />
-          <StatusRow label="Warning 数量" value={latest ? String(latest.warning_count) : "0"} />
+          <StatusRow label={ui.common.dataSource} value={machineLabel("dataSource", dataSource)} technicalValue={dataSource} />
+          <StatusRow label={ui.system.latestRunId} value={latest?.run_id ?? ui.common.noRecords} mono />
+          <StatusRow label={ui.system.latestRunStatus} value={latest ? machineLabel("runStatus", latest.run_status) : ui.common.noRecords} technicalValue={latest?.run_status} />
+          <StatusRow label={ui.system.benchmark} value={latest ? machineLabel("availability", latest.benchmark_status) : ui.common.noRecords} technicalValue={latest?.benchmark_status} />
+          <StatusRow label={ui.system.warningCount} value={latest ? String(latest.warning_count) : "0"} />
           <StatusRow
-            label="最后 API 检查"
-            value={lastApiCheck ? `${lastApiCheck.status} · ${formatCheckTime(lastApiCheck.checkedAt)}` : "尚未完成"}
+            label={ui.system.lastApiCheck}
+            value={lastApiCheck ? `${machineLabel("serviceStatus", lastApiCheck.status)} · ${formatCheckTime(lastApiCheck.checkedAt)}` : ui.system.notCompleted}
+            technicalValue={lastApiCheck?.status}
           />
         </dl>
         {lastApiCheck ? (
@@ -134,16 +143,21 @@ export default function SystemStatusPage() {
 function StatusRow({
   label,
   value,
-  mono = false
+  mono = false,
+  technicalValue
 }: {
   label: string;
   value: string;
   mono?: boolean;
+  technicalValue?: string | null;
 }) {
   return (
     <div className="flex min-h-14 items-center justify-between gap-4 border-b border-white/10 py-3">
       <dt className="text-sm text-slate-500">{label}</dt>
-      <dd className={mono ? "max-w-[65%] break-all text-right font-mono text-sm text-slate-200" : "text-right text-sm text-slate-200"}>{value}</dd>
+      <dd className={mono ? "max-w-[65%] break-all text-right font-mono text-sm text-slate-200" : "max-w-[65%] text-right text-sm text-slate-200"}>
+        <span>{value}</span>
+        {technicalValue ? <span className="ml-2 font-mono text-xs text-slate-500">({technicalValue})</span> : null}
+      </dd>
     </div>
   );
 }
@@ -167,19 +181,19 @@ function apiTargetConfigured(): boolean {
 function summarizeApiTarget(): string {
   const configured = configuredApiUrl();
   if (!configured) {
-    return process.env.NODE_ENV === "production" ? "生产 API 未配置" : "本地 HTTP API";
+    return process.env.NODE_ENV === "production" ? ui.system.productionApiMissing : ui.system.localHttpApi;
   }
   try {
     const url = new URL(configured);
     const local = url.hostname === "127.0.0.1" || url.hostname === "localhost";
-    if (local) return "本地 HTTP API";
+    if (local) return ui.system.localHttpApi;
     return `${url.protocol === "https:" ? "HTTPS" : "HTTP"} · ${url.hostname}`;
   } catch {
-    return "API 地址格式无效";
+    return ui.system.invalidApiUrl;
   }
 }
 
 function formatCheckTime(value: string): string {
   const date = new Date(value);
-  return Number.isNaN(date.valueOf()) ? "时间不可用" : date.toLocaleString("zh-CN");
+  return Number.isNaN(date.valueOf()) ? ui.system.timeUnavailable : date.toLocaleString("zh-CN");
 }

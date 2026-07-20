@@ -10,6 +10,7 @@ import {
   DataSourceBanner,
   MacroArtifactPanel
 } from "@/components/real-run-sections";
+import { ui } from "@/i18n";
 
 export default function MacroPage() {
   const { demo, health, loading, error, dataSource, realDetail } = useResearchData();
@@ -20,9 +21,9 @@ export default function MacroPage() {
     <div className="space-y-5">
       <DataSourceBanner source={dataSource} summary={real?.summary} />
       <SectionHeader
-        eyebrow="Macro"
-        title="宏观周期"
-        description="宏观状态、权益仓位系数与外部风险维度。"
+        eyebrow={ui.pages.macro.eyebrow}
+        title={ui.pages.macro.title}
+        description={ui.pages.macro.description}
         status={health}
         loading={loading}
         error={error}

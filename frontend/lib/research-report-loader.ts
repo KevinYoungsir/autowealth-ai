@@ -5,6 +5,7 @@ import type {
   ResearchDataSource,
   ResearchResult
 } from "./types";
+import { ui } from "@/i18n";
 
 type ResearchReportFetchers = {
   fetchRealReport: (runId: string) => Promise<RealResearchReport>;
@@ -31,7 +32,7 @@ export async function loadResearchReportForSource(
 ): Promise<ResearchReportLoadResult> {
   if (dataSource === "real_artifacts") {
     if (!selectedRunId) {
-      throw new Error("A selected run_id is required for a real research report");
+      throw new Error(ui.errors.realRunRequired);
     }
     return {
       dataSource: "real_artifacts",
@@ -49,5 +50,5 @@ export async function loadResearchReportForSource(
     };
   }
 
-  throw new Error("Research API is unavailable");
+  throw new Error(ui.errors.apiUnavailable);
 }

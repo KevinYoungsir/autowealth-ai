@@ -13,6 +13,7 @@ import {
   RealReturnsPanel,
   RunLimitationsPanel
 } from "@/components/real-run-sections";
+import { ui } from "@/i18n";
 
 export default function BacktestPage() {
   const {
@@ -31,9 +32,9 @@ export default function BacktestPage() {
     <div className="space-y-5">
       <DataSourceBanner source={dataSource} summary={real?.summary} />
       <SectionHeader
-        eyebrow="Backtest"
-        title="回测表现"
-        description="历史样本下的研究指标与权益曲线展示。"
+        eyebrow={ui.pages.backtest.eyebrow}
+        title={ui.pages.backtest.title}
+        description={ui.pages.backtest.description}
         status={health}
         loading={loading}
         error={error}
@@ -44,7 +45,7 @@ export default function BacktestPage() {
           {real.summary.run_status !== "failed" ? (
             <>
               <RealMetricGrid detail={real} />
-              <EquityPanel equityCurve={realEquity?.points ?? []} tall subtitle="Real artifact equity curve" />
+              <EquityPanel equityCurve={realEquity?.points ?? []} tall subtitle={ui.panels.realEquityCurve} />
               <RealReturnsPanel detail={real} benchmark={realBenchmark} />
             </>
           ) : null}

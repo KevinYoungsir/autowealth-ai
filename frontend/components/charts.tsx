@@ -2,6 +2,7 @@
 
 import type { EquityPoint } from "@/lib/types";
 import { compactDate, formatPercent, toNumber } from "@/lib/format";
+import { ui } from "@/i18n";
 
 export function EquityCurveChart({
   points,
@@ -17,7 +18,7 @@ export function EquityCurveChart({
   if (normalized.length < 2) {
     return (
       <div className="flex h-72 items-center justify-center rounded-lg border border-dashed border-white/15 text-sm text-slate-500">
-        等待权益曲线数据
+        {ui.common.pendingData}
       </div>
     );
   }
@@ -46,7 +47,7 @@ export function EquityCurveChart({
     <div className="relative">
       <svg
         role="img"
-        aria-label="Equity curve"
+        aria-label={ui.aria.equityCurve}
         viewBox={`0 0 ${width} ${height}`}
         className="h-auto w-full overflow-visible"
       >
@@ -85,7 +86,7 @@ export function EquityCurveChart({
 export function WeightBars({ weights }: { weights: Record<string, number> }) {
   const entries = Object.entries(weights).sort((a, b) => b[1] - a[1]);
   if (!entries.length) {
-    return <div className="text-sm text-slate-500">等待目标权重数据</div>;
+    return <div className="text-sm text-slate-500">{ui.common.pendingData}</div>;
   }
 
   const max = Math.max(...entries.map(([, weight]) => weight), 0.01);

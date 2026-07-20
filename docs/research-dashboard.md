@@ -22,7 +22,7 @@ FastAPI /research/runs/*
 Next.js /api/research/runs/* proxy
         |
         v
-Dashboard / Backtest / Portfolio / Factors / Macro / Research Notes / System Status
+研究总览 / 回测分析 / 组合持仓 / 因子分析 / 宏观环境 / 研究报告 / 系统状态
 ```
 
 `ResearchRunStore` 仅在收到 API 请求后读取配置根目录。模块 import 不扫描磁盘，
@@ -32,18 +32,19 @@ Dashboard / Backtest / Portfolio / Factors / Macro / Research Notes / System Sta
 
 | 页面 | 主要字段 | Artifact 或 API 来源 |
 | --- | --- | --- |
-| Dashboard | run 状态、区间、覆盖率、绩效 | `run_manifest.json`、`metrics.json`、`/equity-curve` |
-| Backtest | 年度/月度收益、回撤、换手率 | `metrics.json`、`benchmark_metrics.json` |
-| Portfolio | 最近调仓持仓、现金、持仓数量 | `holdings.parquet`、manifest 配置摘要 |
-| Factors | 因子覆盖、缺失数、实际复合权重 | manifest 覆盖摘要、`factor_snapshots.parquet` |
-| Macro | 宏观观察数、中性乘数状态 | manifest `coverage_summary` |
-| Research Notes | 确定性复核、风险、反方观点和研究边界 | 所选运行的 `/research/runs/{run_id}/report`；无真实运行时才使用 mock |
-| Warning 摘要 | 分类计数与少量样例 | 原始 `warnings.json` 的只读聚合结果 |
-| System Status | API、目录、latest run 和数据来源 | `/research/health`、`/research/runs`、latest 摘要 |
+| 研究总览 | run 状态、区间、覆盖率、绩效 | `run_manifest.json`、`metrics.json`、`/equity-curve` |
+| 回测分析 | 年度/月度收益、回撤、换手率 | `metrics.json`、`benchmark_metrics.json` |
+| 组合持仓 | 最近调仓持仓、现金、持仓数量 | `holdings.parquet`、manifest 配置摘要 |
+| 因子分析 | 因子覆盖、缺失数、实际复合权重 | manifest 覆盖摘要、`factor_snapshots.parquet` |
+| 宏观环境 | 宏观观察数、中性回退状态 | manifest `coverage_summary` |
+| 研究报告 | 确定性复核、风险、反方观点和研究边界 | 所选运行的 `/research/runs/{run_id}/report`；无真实运行时才使用 mock |
+| 警告摘要 | 分类计数与少量样例 | 原始 `warnings.json` 的只读聚合结果 |
+| 系统状态 | API、目录、latest run 和数据来源 | `/research/health`、`/research/runs`、latest 摘要 |
 
 权益、持仓和因子接口均设有返回上限。权益曲线降采样会保留首尾点。通用
 warning 接口默认返回分类计数和少量样例；真实研究报告则包含全部持久化
-warning，并在 Research Notes 的限高滚动区域中完整呈现。
+warning。研究报告首屏按类别显示数量和最多 3 条中文样本，原始技术文本只在
+“查看原始技术详情”折叠区中完整保留。
 
 ## 真实数据与演示数据
 
@@ -57,12 +58,16 @@ warning，并在 Research Notes 的限高滚动区域中完整呈现。
 存在真实运行时使用确定性 artifact 报告，不调用 demo 或 mock report；只有
 运行列表为空并明确进入 `mock_demo` 时才展示演示研究报告。
 
+看板主要界面固定使用简体中文，并显式请求真实报告 `locale=zh-CN`。机器字段
+继续以等宽字体保留原值，例如“部分完成”旁保留 `partial_success`。演示报告由
+前端确定性 presenter 中文化，不改变 mock agent 的结构或研究规则。
+
 System Status 只复用 health 和运行摘要，不调用 DeepSeek。它只显示 API 地址的
 协议类别和公开主机摘要，不展示服务器磁盘路径或环境变量原值。
 
 ## 运行状态
 
-- `success`（完整运行）：配置要求的数据链路已完成，但仍应结合数据源限制解读。
+- `success`（完成）：配置要求的数据链路已完成，但仍应结合数据源限制解读。
 - `partial_success`（部分完成）：至少存在价格、基本面、宏观、基准、持仓数量或
   因子覆盖方面的限制；看板显示主要 warning 和覆盖率。
 - `failed`（运行失败）：不展示可能造成误解的绩效结论，只显示状态和失败限制。
@@ -96,6 +101,10 @@ API 在不修改 `warnings.json` 的前提下聚合以下类别：
 - `benchmark`：基准行情或指标不可用。
 - `system`：无法归入以上类别的运行级问题。
 
+报告中的 `warning_presentations` 是派生展示结构。`source_message`、原始顺序和
+总数不变；`display_message` 只提供中文类别说明，无法可靠翻译的 provider 错误
+仍通过折叠区展示原文。任何本地化都不会降低风险等级。
+
 ## 已知限制
 
 - 当前 artifacts 可能来自固定股票池，无法消除幸存者偏差。
@@ -106,3 +115,5 @@ API 在不修改 `warnings.json` 的前提下聚合以下类别：
 - 真实 Research Notes 是确定性 artifact 复核，不调用 DeepSeek；无真实运行时的
   演示报告仍固定使用本地 mock mode，不读取真实 API Key。
 - 生产构建缺少 `NEXT_PUBLIC_API_BASE_URL` 时显示 `api_unavailable`，不会回退 localhost。
+- 中文字体全部使用系统回退栈，不下载 Google Fonts、`next/font` 远程资源或
+  字体文件，适合中国大陆网络环境。

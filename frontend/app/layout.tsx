@@ -2,10 +2,11 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { AppShell } from "@/components/app-shell";
 import { ResearchDataProvider } from "@/components/research-data-provider";
+import { ui } from "@/i18n";
 
 export const metadata: Metadata = {
-  title: "AutoWealth Research Dashboard",
-  description: "Research-only A-share portfolio dashboard prototype"
+  title: ui.metadata.title,
+  description: ui.metadata.description
 };
 
 export default function RootLayout({

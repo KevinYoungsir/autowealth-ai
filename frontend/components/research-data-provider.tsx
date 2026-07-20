@@ -23,6 +23,8 @@ import {
   fetchResearchWarnings
 } from "@/lib/api";
 import { loadResearchReportForSource } from "@/lib/research-report-loader";
+import { localizeMockReport } from "@/i18n/mock-report-presenter";
+import { ui } from "@/i18n";
 import type {
   DemoResponse,
   HealthResponse,
@@ -107,11 +109,15 @@ export function ResearchDataProvider({ children }: { children: React.ReactNode }
         }
       );
       if (loaded.demo) setDemo(loaded.demo);
-      setReport(loaded.report);
+      setReport(
+        loaded.dataSource === "mock_demo"
+          ? localizeMockReport(loaded.report, loaded.demo.result)
+          : loaded.report
+      );
     } catch (caught) {
       setReport(null);
       setReportError(
-        caught instanceof Error ? caught.message : "Research review unavailable"
+        caught instanceof Error ? caught.message : ui.errors.reportUnavailable
       );
     } finally {
       setReportLoading(false);
@@ -162,7 +168,7 @@ export function ResearchDataProvider({ children }: { children: React.ReactNode }
       try {
         await loadRealRun(runId);
       } catch (caught) {
-        setError(caught instanceof Error ? caught.message : "研究运行读取失败");
+        setError(caught instanceof Error ? caught.message : ui.errors.runReadFailed);
       } finally {
         setLoading(false);
       }
@@ -184,7 +190,7 @@ export function ResearchDataProvider({ children }: { children: React.ReactNode }
         setLastApiCheck({
           checkedAt: new Date().toISOString(),
           status: "ok",
-          message: `已读取真实运行 ${latest.summary.run_id}`
+          message: ui.common.realRunLoaded(latest.summary.run_id)
         });
       } else {
         await loadDemo();
@@ -193,7 +199,7 @@ export function ResearchDataProvider({ children }: { children: React.ReactNode }
         setLastApiCheck({
           checkedAt: new Date().toISOString(),
           status: "ok",
-          message: "API 正常，暂无真实研究运行"
+          message: ui.common.noRealRuns
         });
       }
     } catch (caught) {
@@ -201,21 +207,21 @@ export function ResearchDataProvider({ children }: { children: React.ReactNode }
         await loadDemo();
         clearRealData();
         setDataSource("mock_demo");
-        setError("真实研究运行不可用，当前显示演示数据");
+        setError(ui.errors.realRunFallback);
         setLastApiCheck({
           checkedAt: new Date().toISOString(),
           status: "degraded",
-          message: "真实运行接口不可用，演示接口可用"
+          message: ui.common.realRunsDegraded
         });
       } catch {
         clearRealData();
         setDemo(null);
         setDataSource("api_unavailable");
-        setError(caught instanceof Error ? caught.message : "Research API unavailable");
+        setError(caught instanceof Error ? caught.message : ui.errors.apiUnavailable);
         setLastApiCheck({
           checkedAt: new Date().toISOString(),
           status: "unavailable",
-          message: "研究 API 不可用"
+          message: ui.common.researchApiUnavailable
         });
       }
     } finally {

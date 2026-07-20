@@ -10,6 +10,7 @@ import {
   DataSourceBanner,
   FactorCoveragePanel
 } from "@/components/real-run-sections";
+import { ui } from "@/i18n";
 
 export default function FactorsPage() {
   const {
@@ -28,9 +29,9 @@ export default function FactorsPage() {
     <div className="space-y-5">
       <DataSourceBanner source={dataSource} summary={real?.summary} />
       <SectionHeader
-        eyebrow="Factors"
-        title="因子评分"
-        description="多因子综合评分与候选池分布。"
+        eyebrow={ui.pages.factors.eyebrow}
+        title={ui.pages.factors.title}
+        description={ui.pages.factors.description}
         status={health}
         loading={loading}
         error={error}

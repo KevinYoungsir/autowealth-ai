@@ -8,9 +8,12 @@ import ts from "typescript";
 
 
 const frontendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const source = await readFile(
+const source = (await readFile(
   path.join(frontendRoot, "lib", "research-report-loader.ts"),
   "utf8"
+)).replace(
+  'import { ui } from "@/i18n";',
+  'const ui = { errors: { realRunRequired: "真实研究报告需要已选择的 run_id。", apiUnavailable: "研究 API 不可用。" } };'
 );
 const transpiled = ts.transpileModule(source, {
   compilerOptions: {
@@ -102,7 +105,7 @@ test("real source without a selected run never falls back to mock", async () => 
         calls.push("mock");
       }
     }),
-    /selected run_id/
+    /run_id/
   );
 
   assert.deepEqual(calls, []);
