@@ -25,7 +25,6 @@ from autowealth.research import (
 from autowealth.research.artifacts import write_research_artifacts
 from autowealth.research.run_store import ResearchRunStore
 
-
 client = TestClient(app)
 REAL_RUN_ID = "20250201T000000Z_cccccccccc"
 
@@ -57,10 +56,7 @@ def test_research_health():
 
 
 def test_research_cors_allows_configured_dashboard_origins():
-    origins = (
-        "http://127.0.0.1:3000,http://localhost:3000,"
-        "https://dashboard.outlook.xin"
-    )
+    origins = "http://127.0.0.1:3000,http://localhost:3000," "https://dashboard.outlook.xin"
     with patch.dict(os.environ, {"RESEARCH_API_CORS_ORIGINS": origins}):
         cors_client = TestClient(create_research_app())
 
@@ -139,9 +135,7 @@ def test_empty_health_and_latest_are_structured(tmp_path: Path):
 
 def test_unexpected_api_error_is_sanitized(tmp_path: Path):
     store = ResearchRunStore(tmp_path / "runs")
-    store.list_runs = MagicMock(
-        side_effect=RuntimeError("secret D:\\private\\path TOKEN=value")
-    )
+    store.list_runs = MagicMock(side_effect=RuntimeError("secret D:\\private\\path TOKEN=value"))
     safe_client = TestClient(
         create_research_app(store),
         raise_server_exceptions=False,
@@ -202,7 +196,9 @@ def test_research_summarize():
 def test_research_deepseek_mock_report_does_not_access_network():
     demo_result = client.get("/research/demo").json()["result"]
 
-    with patch("requests.post", side_effect=AssertionError("DeepSeek network call is not allowed")) as post:
+    with patch(
+        "requests.post", side_effect=AssertionError("DeepSeek network call is not allowed")
+    ) as post:
         response = client.post("/research/deepseek/mock-report", json=demo_result)
 
     assert response.status_code == 200
@@ -220,7 +216,9 @@ def test_research_api_outputs_do_not_contain_restricted_language():
     summary = client.post("/research/summarize", json=demo_result).json()
     report = client.post("/research/deepseek/mock-report", json=demo_result).json()
 
-    text = json.dumps({"result": demo_result, "summary": summary, "report": report}, ensure_ascii=False)
+    text = json.dumps(
+        {"result": demo_result, "summary": summary, "report": report}, ensure_ascii=False
+    )
     restricted = ["建议买入", "建议卖出", "推荐买入", "推荐卖出", "保证收益"]
     for phrase in restricted:
         assert phrase not in text
@@ -239,7 +237,57 @@ def test_real_run_list_latest_and_detail(real_runs_client: TestClient):
     assert latest.json()["summary"]["run_status"] == "partial_success"
     assert detail.status_code == 200
     assert detail.json()["metrics"]["annualized_return"] == 0.12
+    assert detail.json()["benchmark_diagnostics"] == {}
     assert detail.json()["warning_summary"]["total"] == 3
+
+
+def test_real_run_detail_and_report_include_benchmark_diagnostics(
+    real_runs_client: TestClient,
+    real_runs_root: Path,
+):
+    diagnostics = {
+        "schema_version": 1,
+        "benchmarks": {
+            "000300": {
+                "status": "unavailable",
+                "canonical_symbol": "000300",
+                "selected_provider": None,
+                "selected_endpoint": None,
+                "row_count": 0,
+                "first_date": None,
+                "last_date": None,
+                "coverage_ratio": None,
+                "cache_status": "miss",
+                "attempts": [
+                    {
+                        "provider": "fixture_primary",
+                        "status": "failed",
+                        "reason_code": "provider_exception",
+                        "reason": "sanitized fixture failure",
+                    }
+                ],
+            }
+        },
+    }
+    diagnostics_path = real_runs_root / REAL_RUN_ID / "benchmark_diagnostics.json"
+    diagnostics_path.write_text(
+        json.dumps(diagnostics, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    detail = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}")
+    report = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}/report")
+
+    assert detail.status_code == 200
+    assert detail.json()["benchmark_diagnostics"] == diagnostics
+    assert report.status_code == 200
+    report_payload = report.json()
+    assert report_payload["run_status"] == "partial_success"
+    assert report_payload["benchmark_status"] == "unavailable"
+    assert report_payload["benchmark_review"]["evidence"]["provider_diagnostics"] == diagnostics
+    assert "benchmark_diagnostics.json" in (
+        report_payload["research_boundaries"]["evidence"]["source_artifacts"]
+    )
 
 
 def test_real_run_report_is_deterministic_and_preserves_limitations(
@@ -256,26 +304,26 @@ def test_real_run_report_is_deterministic_and_preserves_limitations(
         "factor_snapshots.parquet",
         "trades.parquet",
     ]
-    before = {
-        filename: (run_directory / filename).read_bytes()
-        for filename in source_files
-    }
-    with patch(
-        "autowealth.data.ashare_provider.AShareDataProvider.__init__",
-        side_effect=AssertionError("network provider must not be initialized"),
-    ), patch(
-        "requests.post",
-        side_effect=AssertionError("external network must not be called"),
-    ) as post, patch(
-        "autowealth.agents.deepseek_research_agent.DeepSeekResearchAgent.__init__",
-        side_effect=AssertionError("DeepSeek must not be initialized"),
-    ), patch(
-        "autowealth.backtest.portfolio_backtester.PortfolioBacktester.run",
-        side_effect=AssertionError("backtest and trade simulation must not run"),
+    before = {filename: (run_directory / filename).read_bytes() for filename in source_files}
+    with (
+        patch(
+            "autowealth.data.ashare_provider.AShareDataProvider.__init__",
+            side_effect=AssertionError("network provider must not be initialized"),
+        ),
+        patch(
+            "requests.post",
+            side_effect=AssertionError("external network must not be called"),
+        ) as post,
+        patch(
+            "autowealth.agents.deepseek_research_agent.DeepSeekResearchAgent.__init__",
+            side_effect=AssertionError("DeepSeek must not be initialized"),
+        ),
+        patch(
+            "autowealth.backtest.portfolio_backtester.PortfolioBacktester.run",
+            side_effect=AssertionError("backtest and trade simulation must not run"),
+        ),
     ):
-        response = real_runs_client.get(
-            f"/research/runs/{REAL_RUN_ID}/report"
-        )
+        response = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}/report")
 
     assert response.status_code == 200
     payload = response.json()
@@ -288,18 +336,13 @@ def test_real_run_report_is_deterministic_and_preserves_limitations(
     assert payload["benchmark_status"] == "unavailable"
     assert payload["warning_count"] == 3
     assert payload["benchmark_review"]["status"] == "unavailable"
-    assert (
-        payload["benchmark_review"]["evidence"]["entries"]["000300"]
-        ["status"]
-        == "unavailable"
-    )
+    assert payload["benchmark_review"]["evidence"]["entries"]["000300"]["status"] == "unavailable"
     assert len(payload["data_quality_review"]["evidence"]["warnings"]) == 3
     assert payload["research_boundaries"]["evidence"]["deepseek_called"] is False
     assert payload["research_boundaries"]["evidence"]["trading_executed"] is False
     assert payload["research_boundaries"]["evidence"]["source_artifacts"] == source_files
     assert before == {
-        filename: (run_directory / filename).read_bytes()
-        for filename in source_files
+        filename: (run_directory / filename).read_bytes() for filename in source_files
     }
     restricted = ["建议买入", "建议卖出", "推荐买入", "推荐卖出", "保证收益"]
     report_text = json.dumps(payload, ensure_ascii=False)
@@ -321,17 +364,10 @@ def test_real_run_report_locales_preserve_machine_fields_and_numbers(
         "factor_snapshots.parquet",
         "trades.parquet",
     ]
-    before = {
-        filename: (run_directory / filename).read_bytes()
-        for filename in source_files
-    }
+    before = {filename: (run_directory / filename).read_bytes() for filename in source_files}
 
-    zh_response = real_runs_client.get(
-        f"/research/runs/{REAL_RUN_ID}/report?locale=zh-CN"
-    )
-    en_response = real_runs_client.get(
-        f"/research/runs/{REAL_RUN_ID}/report?locale=en-US"
-    )
+    zh_response = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}/report?locale=zh-CN")
+    en_response = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}/report?locale=en-US")
 
     assert zh_response.status_code == 200
     assert en_response.status_code == 200
@@ -343,12 +379,8 @@ def test_real_run_report_locales_preserve_machine_fields_and_numbers(
     assert en["locale"] == "en-US"
     assert "研究运行" in zh["executive_summary"]["summary"]
     assert "Run" in en["executive_summary"]["summary"]
-    assert zh["benchmark_review"]["summary"] == (
-        "基准数据暂不可用，当前无法得出相对表现结论。"
-    )
-    assert zh["macro_review"]["summary"] == (
-        "由于缺少可用宏观数据，本次研究使用中性回退值。"
-    )
+    assert zh["benchmark_review"]["summary"] == ("基准数据暂不可用，当前无法得出相对表现结论。")
+    assert zh["macro_review"]["summary"] == ("由于缺少可用宏观数据，本次研究使用中性回退值。")
     assert zh["research_boundaries"]["summary"] == (
         "本报告仅用于研究与教育，不构成投资建议、交易指令或收益承诺；"
         "历史研究结果不代表未来表现。"
@@ -371,20 +403,21 @@ def test_real_run_report_locales_preserve_machine_fields_and_numbers(
     en_evidence = en["data_quality_review"]["evidence"]
     assert zh_evidence["warnings"] == en_evidence["warnings"]
     assert len(zh_evidence["warnings"]) == 3
-    assert [item["source_message"] for item in zh_evidence["warning_presentations"]] == zh_evidence["warnings"]
-    assert [item["source_message"] for item in en_evidence["warning_presentations"]] == en_evidence["warnings"]
+    assert [item["source_message"] for item in zh_evidence["warning_presentations"]] == zh_evidence[
+        "warnings"
+    ]
+    assert [item["source_message"] for item in en_evidence["warning_presentations"]] == en_evidence[
+        "warnings"
+    ]
     assert before == {
-        filename: (run_directory / filename).read_bytes()
-        for filename in source_files
+        filename: (run_directory / filename).read_bytes() for filename in source_files
     }
 
 
 def test_real_run_report_rejects_unsupported_locale(
     real_runs_client: TestClient,
 ):
-    response = real_runs_client.get(
-        f"/research/runs/{REAL_RUN_ID}/report?locale=fr-FR"
-    )
+    response = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}/report?locale=fr-FR")
 
     assert response.status_code == 422
 
@@ -433,9 +466,7 @@ def test_real_run_report_missing_artifact_is_structured(
     real_runs_root: Path,
 ):
     (real_runs_root / REAL_RUN_ID / "factor_snapshots.parquet").unlink()
-    missing_client = TestClient(
-        create_research_app(ResearchRunStore(real_runs_root))
-    )
+    missing_client = TestClient(create_research_app(ResearchRunStore(real_runs_root)))
 
     response = missing_client.get(f"/research/runs/{REAL_RUN_ID}/report")
 
@@ -445,9 +476,7 @@ def test_real_run_report_missing_artifact_is_structured(
 
 
 def test_real_run_equity_curve_is_bounded(real_runs_client: TestClient):
-    response = real_runs_client.get(
-        f"/research/runs/{REAL_RUN_ID}/equity-curve?downsample=2"
-    )
+    response = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}/equity-curve?downsample=2")
 
     assert response.status_code == 200
     payload = response.json()
@@ -460,9 +489,7 @@ def test_real_run_equity_curve_is_bounded(real_runs_client: TestClient):
 def test_real_run_benchmark_unavailable_has_no_curve(
     real_runs_client: TestClient,
 ):
-    response = real_runs_client.get(
-        f"/research/runs/{REAL_RUN_ID}/benchmark-curve"
-    )
+    response = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}/benchmark-curve")
 
     assert response.status_code == 200
     payload = response.json()
@@ -472,12 +499,8 @@ def test_real_run_benchmark_unavailable_has_no_curve(
 
 
 def test_real_run_holdings_factors_and_warnings(real_runs_client: TestClient):
-    holdings = real_runs_client.get(
-        f"/research/runs/{REAL_RUN_ID}/holdings?limit=10"
-    )
-    factors = real_runs_client.get(
-        f"/research/runs/{REAL_RUN_ID}/factors?limit=10"
-    )
+    holdings = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}/holdings?limit=10")
+    factors = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}/factors?limit=10")
     warnings = real_runs_client.get(
         f"/research/runs/{REAL_RUN_ID}/warnings?sample_limit=1&raw_limit=2"
     )
@@ -519,9 +542,7 @@ def test_real_run_endpoints_do_not_initialize_network_provider(
 
 
 def test_empty_real_runs_and_mock_demo_keep_distinct_sources(tmp_path: Path):
-    empty_client = TestClient(
-        create_research_app(ResearchRunStore(tmp_path / "empty_runs"))
-    )
+    empty_client = TestClient(create_research_app(ResearchRunStore(tmp_path / "empty_runs")))
 
     runs = empty_client.get("/research/runs")
     demo = empty_client.get("/research/demo")
@@ -670,9 +691,7 @@ def _write_api_run(root: Path) -> None:
                 "metrics": {},
             }
         },
-        equity_curve=pd.Series(
-            [1_000_000, 1_100_000, 1_250_000], index=dates
-        ),
+        equity_curve=pd.Series([1_000_000, 1_100_000, 1_250_000], index=dates),
         benchmark_curve=pd.DataFrame(),
         holdings=holdings,
         trades=trades,

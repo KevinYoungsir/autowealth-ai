@@ -82,7 +82,7 @@ available_date <= signal_date
 
 ## 数据源与缓存
 
-默认行情和指数 provider 基于 AKShare，基本面 provider 优先兼容 AKShare 可用的历史财务指标接口。网络访问只发生在用户调用 `run_real_data_research` 时；import 模块和默认单元测试不会访问网络。
+默认行情和指数 provider 基于 AKShare，基本面 provider 优先兼容 AKShare 可用的历史财务指标接口。指数按 `index_zh_a_hist` primary、`stock_zh_index_daily` fallback 的顺序尝试，并只接受通过统一质量校验的首个结果。网络访问只发生在用户调用 `run_real_data_research` 时；import 模块和默认单元测试不会访问网络。
 
 缓存默认写入 `data/real_cache/`：
 
@@ -133,11 +133,14 @@ python examples/run_real_15y_research.py --config configs/a_share_15y_baseline.y
 - `trades.parquet`
 - `factor_snapshots.parquet`
 - `warnings.json`
+- `benchmark_diagnostics.json`（仅新运行）
 
 `run_manifest.json` 以增量字段记录 `artifact_schema_version`、
 `research_window`、`metrics_window`、`fetch_windows`、`factor_lookbacks`、
 `signal_execution_policy` 和 `price_alignment`，同时保留原有数据区间、配置
 摘要、point-in-time 限制和幸存者偏差风险。旧 run 缺少这些字段仍可读取。
+新运行的 manifest 在 `artifact_files` 中登记基准诊断文件，并在
+`artifact_summary.benchmark_diagnostics` 记录基准总数、成功数和不可用数。
 `factor_snapshots.parquet` 新增 `signal_date` 与 `execution_date`，并继续保留
 `rebalance_date` 作为 execution date 的兼容字段。
 
@@ -174,12 +177,31 @@ factor_snapshots = pd.read_parquet(run_dir / "factor_snapshots.parquet")
     "status": "unavailable",
     "symbol": "000300",
     "reason": "provider error",
+    "reason_code": "provider_exception",
+    "diagnostics_available": true,
     "metrics": {}
   }
 }
 ```
 
-成功基准继续使用原有指标对象。
+成功基准继续使用原有指标对象。`benchmark_diagnostics.json` 保存每个 canonical
+symbol 的 selected provider/endpoint、缓存状态、清洗前后行数、首末日期、
+工作日估算覆盖率、实际 minimum coverage ratio 和全部 `ProviderAttempt`。
+每次 attempt 增量保存原始请求 symbol、ISO 请求起止日期、供应商 symbol、首末
+数据日期、行数、门槛、reason code 和脱敏异常。异常原因限制长度并脱敏 URL、
+代理凭证、token 和敏感 header。旧 run 没有该文件时 RunStore、API 和真实报告
+返回空诊断，原有 metrics、curve 和 warnings 读取方式不变。
+
+默认 minimum coverage ratio 为 80%。质量检查同时限制请求窗口首尾缺失工作日：
+每端绝对上限为 5 个，且上限还受整体覆盖门槛剩余缺失预算约束。新缓存采用不可变
+generation parquet，canonical `.meta.json` 最后原子发布并作为 commit marker；
+Loader 只有在 marker、SHA、metadata 和 generation 全部一致时才返回 cache hit。
+旧版 canonical parquet 与 sidecar 继续兼容读取。缓存失败 reason code 区分
+`cache_hit`、`cache_unreadable`、`cache_sha_mismatch`、
+`cache_insufficient_coverage` 和 `cache_metadata_mismatch`。
+
+Artifact 先写入同一输出目录下的隐藏 staging 目录，文件齐全后再发布为最终
+`run_id` 目录；任一文件写入失败会清理 staging，不留下可被读取的半成品 run。
 
 ## 收益与缺失数据规则
 
@@ -224,6 +246,11 @@ factor_snapshots = pd.read_parquet(run_dir / "factor_snapshots.parquet")
 - 暂无可靠历史行业分类时，行业约束按 unknown 保守处理。
 - 不复权价格不含现金分红和完整公司行动收益；前复权/后复权可能包含后续调整因子，需按数据源单独审查。
 - 基准曲线不扣除组合交易成本，仅用于对照。
+- 基准覆盖率当前以工作日估算，尚未接入正式 A 股历史交易日历；80% 门槛不会
+  为适配单个端点或测试而降低。首尾最多 5 个估算工作日的容忍仍可能受到春节、
+  国庆等特殊休市影响，诊断不能替代正式交易日历。
+- 两个公开 AKShare 指数端点都可能因版本、代理、接口或网络状态而不可用；
+  provider chain 只提高可诊断性和容错，不保证获得基准。
 - 公开基本面源若缺少可靠公告日期，不能声称为严格 point-in-time 数据。
 
 ## 提供给看板

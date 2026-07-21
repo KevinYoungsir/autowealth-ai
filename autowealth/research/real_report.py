@@ -16,7 +16,6 @@ from autowealth.i18n import (
 from autowealth.i18n.warning_presenter import present_warnings
 from autowealth.research.run_store import ResearchRunStore, aggregate_warnings
 
-
 REPORT_SOURCE_ARTIFACTS = (
     "run_manifest.json",
     "metrics.json",
@@ -27,11 +26,13 @@ REPORT_SOURCE_ARTIFACTS = (
     "trades.parquet",
 )
 
+
 @dataclass(frozen=True)
 class _ArtifactInputs:
     manifest: dict[str, Any]
     metrics: dict[str, Any]
     benchmark_metrics: dict[str, Any]
+    benchmark_diagnostics: dict[str, Any]
     warnings_payload: dict[str, Any]
     holdings: pd.DataFrame
     factor_snapshots: pd.DataFrame
@@ -44,6 +45,7 @@ def _read_artifacts(store: ResearchRunStore, run_id: str) -> _ArtifactInputs:
         manifest=store.read_manifest(run_id),
         metrics=store.read_metrics(run_id),
         benchmark_metrics=store.read_benchmark_metrics(run_id),
+        benchmark_diagnostics=store.read_benchmark_diagnostics(run_id),
         warnings_payload=store.read_warnings(run_id),
         holdings=store.read_holdings(run_id),
         factor_snapshots=store.read_factor_snapshots(run_id),
@@ -134,11 +136,7 @@ def _benchmark_status(benchmark_metrics: Mapping[str, Any]) -> str:
     statuses = []
     for value in benchmark_metrics.values():
         entry = _mapping(value)
-        statuses.append(
-            "unavailable"
-            if entry.get("status") == "unavailable"
-            else "available"
-        )
+        statuses.append("unavailable" if entry.get("status") == "unavailable" else "available")
     if all(status == "available" for status in statuses):
         return "available"
     if all(status == "unavailable" for status in statuses):
@@ -148,6 +146,7 @@ def _benchmark_status(benchmark_metrics: Mapping[str, Any]) -> str:
 
 def _benchmark_review(
     benchmark_metrics: Mapping[str, Any],
+    benchmark_diagnostics: Mapping[str, Any],
     manifest_status: object,
     locale: SupportedLocale,
 ) -> tuple[str, dict[str, Any]]:
@@ -167,8 +166,7 @@ def _benchmark_review(
         entries[str(symbol)] = entry
         if entry.get("status") == "unavailable":
             unavailable[str(symbol)] = str(
-                entry.get("reason")
-                or message(locale, "benchmark_reason_missing")
+                entry.get("reason") or message(locale, "benchmark_reason_missing")
             )
     summary_key = {
         "unavailable": "benchmark_unavailable_summary",
@@ -183,11 +181,10 @@ def _benchmark_review(
             "artifact_status": artifact_status,
             "entries": entries,
             "unavailable_reasons": unavailable,
+            "provider_diagnostics": dict(benchmark_diagnostics),
         },
         limitations=(
-            [message(locale, "benchmark_relative_limitation")]
-            if status != "available"
-            else []
+            [message(locale, "benchmark_relative_limitation")] if status != "available" else []
         ),
     )
 
@@ -202,10 +199,7 @@ def _holdings_evidence(frame: pd.DataFrame) -> dict[str, Any]:
     counts = []
     for _, row in data.iterrows():
         counts.append(
-            sum(
-                (_optional_float(row.get(column)) or 0.0) > 0.0
-                for column in weight_columns
-            )
+            sum((_optional_float(row.get(column)) or 0.0) > 0.0 for column in weight_columns)
         )
     date_column = "date" if "date" in data else "rebalance_date"
     dates = (
@@ -222,9 +216,7 @@ def _holdings_evidence(frame: pd.DataFrame) -> dict[str, Any]:
         "holding_count_latest": counts[-1] if counts else 0,
         "holding_count_minimum": min(counts) if counts else 0,
         "holding_count_maximum": max(counts) if counts else 0,
-        "cash_weight": _numeric_summary(
-            data["cash_weight"] if "cash_weight" in data else []
-        ),
+        "cash_weight": _numeric_summary(data["cash_weight"] if "cash_weight" in data else []),
         "weight_column_count": len(weight_columns),
     }
 
@@ -234,11 +226,7 @@ def _factor_evidence(
     coverage: Mapping[str, Any],
 ) -> dict[str, Any]:
     data = pd.DataFrame(frame).copy()
-    symbols = (
-        sorted({str(value) for value in data["symbol"].dropna()})
-        if "symbol" in data
-        else []
-    )
+    symbols = sorted({str(value) for value in data["symbol"].dropna()}) if "symbol" in data else []
     dates = (
         pd.to_datetime(data["rebalance_date"], errors="coerce").dropna()
         if "rebalance_date" in data
@@ -257,9 +245,7 @@ def _factor_evidence(
         }
     warning_count = 0
     if "warnings" in data:
-        warning_count = int(
-            data["warnings"].fillna("").astype(str).str.strip().ne("").sum()
-        )
+        warning_count = int(data["warnings"].fillna("").astype(str).str.strip().ne("").sum())
     selected_count = None
     if "selected" in data:
         selected_count = int((data["selected"].fillna(False) == True).sum())  # noqa: E712
@@ -291,18 +277,12 @@ def _trade_evidence(frame: pd.DataFrame) -> dict[str, Any]:
         if "side" in data
         else {}
     )
-    symbols = (
-        sorted({str(value) for value in data["symbol"].dropna()})
-        if "symbol" in data
-        else []
-    )
+    symbols = sorted({str(value) for value in data["symbol"].dropna()}) if "symbol" in data else []
     return {
         "record_count": int(len(data)),
         "symbol_count": len(symbols),
         "side_counts": side_counts,
-        "trade_value": _numeric_summary(
-            data["trade_value"] if "trade_value" in data else []
-        ),
+        "trade_value": _numeric_summary(data["trade_value"] if "trade_value" in data else []),
         "cost": _numeric_summary(data["cost"] if "cost" in data else []),
         "total_trade_value": (
             float(pd.to_numeric(data["trade_value"], errors="coerce").sum())
@@ -310,9 +290,7 @@ def _trade_evidence(frame: pd.DataFrame) -> dict[str, Any]:
             else 0.0
         ),
         "total_cost": (
-            float(pd.to_numeric(data["cost"], errors="coerce").sum())
-            if "cost" in data
-            else 0.0
+            float(pd.to_numeric(data["cost"], errors="coerce").sum()) if "cost" in data else 0.0
         ),
     }
 
@@ -330,9 +308,7 @@ def _performance_review(
         "calmar_ratio",
         "turnover",
     )
-    core_metrics = {
-        name: _optional_float(metrics.get(name)) for name in core_names
-    }
+    core_metrics = {name: _optional_float(metrics.get(name)) for name in core_names}
     available_count = sum(value is not None for value in core_metrics.values())
     observations = [
         message(
@@ -349,18 +325,18 @@ def _performance_review(
         "available" if available_count else "unavailable",
         message(
             locale,
-            "performance_available_summary"
-            if available_count
-            else "performance_unavailable_summary",
+            (
+                "performance_available_summary"
+                if available_count
+                else "performance_unavailable_summary"
+            ),
         ),
         evidence={
             "core_metrics": core_metrics,
             "annual_returns": _mapping(metrics.get("annual_returns")),
             "monthly_returns": _mapping(metrics.get("monthly_returns")),
             "annual_return_method": metrics.get("annual_return_method"),
-            "excluded_partial_years": _strings(
-                metrics.get("excluded_partial_years")
-            ),
+            "excluded_partial_years": _strings(metrics.get("excluded_partial_years")),
         },
         observations=observations,
         limitations=[message(locale, "performance_limitation")],
@@ -377,26 +353,17 @@ def _macro_review(
     regimes = []
     if "macro_regime" in data:
         regimes = sorted(
-            {
-                str(value)
-                for value in data["macro_regime"].dropna()
-                if str(value).strip()
-            }
+            {str(value) for value in data["macro_regime"].dropna() if str(value).strip()}
         )
     available_dates = []
     if "macro_available_date" in data:
         available_dates = sorted(
-            {
-                str(_json_scalar(value))
-                for value in data["macro_available_date"].dropna()
-            }
+            {str(_json_scalar(value)) for value in data["macro_available_date"].dropna()}
         )
     status = "available" if observation_count > 0 else "neutral_fallback"
     summary = message(
         locale,
-        "macro_available_summary"
-        if observation_count > 0
-        else "macro_neutral_summary",
+        "macro_available_summary" if observation_count > 0 else "macro_neutral_summary",
     )
     return _section(
         status,
@@ -407,9 +374,7 @@ def _macro_review(
             "macro_available_dates": available_dates,
         },
         limitations=(
-            [message(locale, "macro_missing_limitation")]
-            if observation_count == 0
-            else []
+            [message(locale, "macro_missing_limitation")] if observation_count == 0 else []
         ),
     )
 
@@ -523,9 +488,7 @@ def _risk_flags(
             ),
             {
                 "price_coverage_ratio": price_coverage,
-                "failed_price_symbols": _strings(
-                    coverage.get("failed_price_symbols")
-                ),
+                "failed_price_symbols": _strings(coverage.get("failed_price_symbols")),
             },
             message(locale, "risk_price_review"),
         )
@@ -541,9 +504,7 @@ def _risk_flags(
             message(locale, "risk_macro_review"),
         )
 
-    constraints = _mapping(
-        _mapping(manifest.get("config_summary")).get("portfolio_constraints")
-    )
+    constraints = _mapping(_mapping(manifest.get("config_summary")).get("portfolio_constraints"))
     min_holdings = _optional_int(constraints.get("min_holdings"))
     holdings_counts = _mapping(coverage.get("holdings_count_by_rebalance"))
     below_minimum = {
@@ -567,8 +528,7 @@ def _risk_flags(
     insufficient = {
         str(name): _mapping(values)
         for name, values in factor_coverage.items()
-        if (_optional_float(_mapping(values).get("coverage_ratio")) or 0.0)
-        < threshold
+        if (_optional_float(_mapping(values).get("coverage_ratio")) or 0.0) < threshold
     }
     if insufficient:
         add(
@@ -685,6 +645,9 @@ def build_real_research_report(
     inputs = _read_artifacts(store, run_id)
     manifest = inputs.manifest
     metrics = inputs.metrics
+    source_artifacts = list(REPORT_SOURCE_ARTIFACTS)
+    if inputs.benchmark_diagnostics:
+        source_artifacts.append("benchmark_diagnostics.json")
     coverage = _mapping(manifest.get("coverage_summary"))
     run_status = str(manifest.get("run_status") or "partial_success")
     run_status_reasons = _strings(manifest.get("run_status_reasons"))
@@ -704,6 +667,7 @@ def build_real_research_report(
 
     benchmark_status, benchmark_review = _benchmark_review(
         inputs.benchmark_metrics,
+        inputs.benchmark_diagnostics,
         coverage.get("benchmark_status"),
         locale,
     )
@@ -712,40 +676,37 @@ def build_real_research_report(
         inputs.factor_snapshots,
         factor_coverage,
     )
-    factor_threshold = (
-        _optional_float(coverage.get("factor_coverage_threshold")) or 0.8
-    )
+    factor_threshold = _optional_float(coverage.get("factor_coverage_threshold")) or 0.8
     insufficient_factors = {
         str(name): _mapping(values)
         for name, values in factor_coverage.items()
-        if (_optional_float(_mapping(values).get("coverage_ratio")) or 0.0)
-        < factor_threshold
+        if (_optional_float(_mapping(values).get("coverage_ratio")) or 0.0) < factor_threshold
     }
     factor_record_count = int(factor_evidence["record_count"])
     factor_status = (
         "unavailable"
         if factor_record_count == 0
-        else "insufficient_coverage"
-        if insufficient_factors
-        else "available"
+        else "insufficient_coverage" if insufficient_factors else "available"
     )
     factor_review = _section(
         factor_status,
         message(
             locale,
-            "factor_empty_summary"
-            if factor_record_count == 0
-            else "factor_insufficient_summary"
-            if insufficient_factors
-            else "factor_available_summary",
+            (
+                "factor_empty_summary"
+                if factor_record_count == 0
+                else (
+                    "factor_insufficient_summary"
+                    if insufficient_factors
+                    else "factor_available_summary"
+                )
+            ),
         ),
         evidence={
             **factor_evidence,
             "coverage_threshold": factor_threshold,
             "insufficient_factors": insufficient_factors,
-            "coverage_by_rebalance": _mapping(
-                coverage.get("factor_coverage_by_rebalance")
-            ),
+            "coverage_by_rebalance": _mapping(coverage.get("factor_coverage_by_rebalance")),
         },
         limitations=[message(locale, "factor_limitation")],
     )
@@ -754,16 +715,12 @@ def build_real_research_report(
     trade_evidence = _trade_evidence(inputs.trades)
     actual_categories = dict(warning_summary["categories"])
     warning_presentations = present_warnings(warnings, locale)
-    data_quality_status = (
-        "warnings_present" if warning_count else "no_persisted_warnings"
-    )
+    data_quality_status = "warnings_present" if warning_count else "no_persisted_warnings"
     data_quality_review = _section(
         data_quality_status,
         message(
             locale,
-            "data_quality_warnings_summary"
-            if warning_count
-            else "data_quality_empty_summary",
+            "data_quality_warnings_summary" if warning_count else "data_quality_empty_summary",
             warning_count=warning_count,
         ),
         evidence={
@@ -773,22 +730,14 @@ def build_real_research_report(
             "warning_samples": dict(warning_summary["samples"]),
             "warnings": warnings,
             "warning_presentations": warning_presentations,
-            "price_coverage_ratio": _optional_float(
-                coverage.get("price_coverage_ratio")
-            ),
+            "price_coverage_ratio": _optional_float(coverage.get("price_coverage_ratio")),
             "requested_symbols": _strings(coverage.get("requested_symbols")),
-            "successful_price_symbols": _strings(
-                coverage.get("successful_price_symbols")
-            ),
-            "failed_price_symbols": _strings(
-                coverage.get("failed_price_symbols")
-            ),
+            "successful_price_symbols": _strings(coverage.get("successful_price_symbols")),
+            "failed_price_symbols": _strings(coverage.get("failed_price_symbols")),
             "holdings": holdings_evidence,
             "trades": trade_evidence,
-            "source_artifacts": list(REPORT_SOURCE_ARTIFACTS),
-            "source_point_in_time_limitations": _strings(
-                manifest.get("point_in_time_limitations")
-            ),
+            "source_artifacts": source_artifacts,
+            "source_point_in_time_limitations": _strings(manifest.get("point_in_time_limitations")),
         },
         limitations=_localized_strings(
             manifest.get("point_in_time_limitations"),
@@ -824,9 +773,7 @@ def build_real_research_report(
             "localized_run_status_reasons": localized_run_status_reasons,
             "benchmark_status": benchmark_status,
             "warning_count": warning_count,
-            "price_coverage_ratio": _optional_float(
-                coverage.get("price_coverage_ratio")
-            ),
+            "price_coverage_ratio": _optional_float(coverage.get("price_coverage_ratio")),
             "macro_observation_count": (
                 _optional_int(coverage.get("macro_observation_count")) or 0
             ),
@@ -852,20 +799,13 @@ def build_real_research_report(
         limitations=localized_run_status_reasons,
     )
 
-    point_in_time_limitations = _strings(
-        manifest.get("point_in_time_limitations")
-    )
-    survivorship_bias_risk = str(
-        manifest.get("survivorship_bias_risk") or ""
-    )
+    point_in_time_limitations = _strings(manifest.get("point_in_time_limitations"))
+    survivorship_bias_risk = str(manifest.get("survivorship_bias_risk") or "")
     boundary_limitations = [
-        present_persisted_text(item, locale)
-        for item in point_in_time_limitations
+        present_persisted_text(item, locale) for item in point_in_time_limitations
     ]
     if survivorship_bias_risk:
-        boundary_limitations.append(
-            present_persisted_text(survivorship_bias_risk, locale)
-        )
+        boundary_limitations.append(present_persisted_text(survivorship_bias_risk, locale))
 
     return {
         "run_id": run_id,
@@ -898,7 +838,7 @@ def build_real_research_report(
                 "trading_executed": False,
                 "parameter_optimization_performed": False,
                 "generated_mode": "deterministic",
-                "source_artifacts": list(REPORT_SOURCE_ARTIFACTS),
+                "source_artifacts": source_artifacts,
                 "source_point_in_time_limitations": point_in_time_limitations,
                 "source_survivorship_bias_risk": survivorship_bias_risk,
             },

@@ -18,7 +18,6 @@ from autowealth.research.run_store_errors import (
     ResearchRunStoreError,
 )
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_RESEARCH_RUNS_DIRECTORY = Path("data/research_runs")
 SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
@@ -27,6 +26,7 @@ JSON_ARTIFACTS = {
     "manifest": "run_manifest.json",
     "metrics": "metrics.json",
     "benchmark_metrics": "benchmark_metrics.json",
+    "benchmark_diagnostics": "benchmark_diagnostics.json",
     "warnings": "warnings.json",
 }
 PARQUET_ARTIFACTS = {
@@ -74,9 +74,7 @@ class ResearchRunStore:
         """Create the configured root when possible without exposing its path."""
         if self._root.exists():
             if not self._root.is_dir():
-                raise ResearchRunStoreError(
-                    "configured research runs location is not a directory"
-                )
+                raise ResearchRunStoreError("configured research runs location is not a directory")
             return True
         try:
             self._root.mkdir(parents=True, exist_ok=True)
@@ -126,6 +124,7 @@ class ResearchRunStore:
             "manifest": self.read_manifest(run_id),
             "metrics": self.read_metrics(run_id),
             "benchmark_metrics": self.read_benchmark_metrics(run_id),
+            "benchmark_diagnostics": self.read_benchmark_diagnostics(run_id),
             "warnings": self.read_warnings(run_id),
         }
 
@@ -148,18 +147,11 @@ class ResearchRunStore:
             "max_drawdown": _optional_float(metrics.get("max_drawdown")),
             "sharpe_ratio": _optional_float(metrics.get("sharpe_ratio")),
             "benchmark_status": str(
-                coverage.get("benchmark_status")
-                or _benchmark_status(benchmarks)
+                coverage.get("benchmark_status") or _benchmark_status(benchmarks)
             ),
-            "warning_count": int(
-                coverage.get("warning_count") or len(_warning_values(warnings))
-            ),
-            "price_coverage_ratio": _optional_float(
-                coverage.get("price_coverage_ratio")
-            ),
-            "factor_coverage_overall": _mapping(
-                coverage.get("factor_coverage_overall")
-            ),
+            "warning_count": int(coverage.get("warning_count") or len(_warning_values(warnings))),
+            "price_coverage_ratio": _optional_float(coverage.get("price_coverage_ratio")),
+            "factor_coverage_overall": _mapping(coverage.get("factor_coverage_overall")),
         }
 
     def read_manifest(self, run_id: str) -> dict[str, Any]:
@@ -170,6 +162,15 @@ class ResearchRunStore:
 
     def read_benchmark_metrics(self, run_id: str) -> dict[str, Any]:
         return self._read_json(run_id, JSON_ARTIFACTS["benchmark_metrics"])
+
+    def read_benchmark_diagnostics(self, run_id: str) -> dict[str, Any]:
+        try:
+            return self._read_json(
+                run_id,
+                JSON_ARTIFACTS["benchmark_diagnostics"],
+            )
+        except ResearchArtifactNotFoundError:
+            return {}
 
     def read_warnings(self, run_id: str) -> dict[str, Any]:
         return self._read_json(run_id, JSON_ARTIFACTS["warnings"])
@@ -222,9 +223,7 @@ class ResearchRunStore:
         if candidate.parent != run_directory:
             raise ResearchRunStoreError("artifact path escaped the configured run")
         if not candidate.exists() or not candidate.is_file():
-            raise ResearchArtifactNotFoundError(
-                f"{filename} is missing for run {run_id}"
-            )
+            raise ResearchArtifactNotFoundError(f"{filename} is missing for run {run_id}")
         return candidate
 
     def _run_directory(self, run_id: str) -> Path:
@@ -312,8 +311,7 @@ def categorize_warning(warning: str) -> str:
     ):
         return "point_in_time"
     if "fundamental" in text or any(
-        token in text
-        for token in ("historical pe", "historical pb", "dividend_yield")
+        token in text for token in ("historical pe", "historical pb", "dividend_yield")
     ):
         return "fundamental_data"
     if any(
@@ -335,9 +333,7 @@ def categorize_warning(warning: str) -> str:
 def _warning_values(payload: Mapping[str, Any]) -> list[str]:
     values = payload.get("warnings", [])
     if not isinstance(values, list):
-        raise ResearchArtifactDecodeError(
-            "warnings.json must contain a warnings list"
-        )
+        raise ResearchArtifactDecodeError("warnings.json must contain a warnings list")
     return [str(value) for value in values]
 
 
@@ -345,9 +341,11 @@ def _benchmark_status(benchmarks: Mapping[str, Any]) -> str:
     if not benchmarks:
         return "unavailable"
     statuses = [
-        "unavailable"
-        if isinstance(value, Mapping) and value.get("status") == "unavailable"
-        else "available"
+        (
+            "unavailable"
+            if isinstance(value, Mapping) and value.get("status") == "unavailable"
+            else "available"
+        )
         for value in benchmarks.values()
     ]
     if all(status == "available" for status in statuses):

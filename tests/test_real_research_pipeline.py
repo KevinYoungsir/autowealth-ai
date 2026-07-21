@@ -12,6 +12,7 @@ import pytest
 import yaml
 
 import autowealth.research.real_pipeline as real_pipeline_module
+import autowealth.research.artifacts as artifacts_module
 from autowealth.backtest.metrics import annual_returns
 from autowealth.data.ashare_provider import AShareDataProvider
 from autowealth.data.cache import ParquetCache
@@ -26,7 +27,7 @@ from autowealth.data.fundamental_schema import (
 from autowealth.data.index_provider import AShareIndexProvider
 from autowealth.data.quality import check_price_quality
 from autowealth.data.universe import UniverseSnapshot
-from autowealth.research.artifacts import REQUIRED_ARTIFACT_FILES
+from autowealth.research.artifacts import REQUIRED_ARTIFACT_FILES, write_research_artifacts
 from autowealth.research.real_pipeline import (
     RealResearchError,
     load_real_research_config,
@@ -212,7 +213,14 @@ class MockIndexProvider:
 
     def get_daily(self, symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
         self.calls.append(symbol)
-        return _price_frame(symbol)
+        frame = _price_frame(symbol)
+        return frame[
+            pd.to_datetime(frame["date"]).between(
+                pd.Timestamp(start_date),
+                pd.Timestamp(end_date),
+                inclusive="both",
+            )
+        ].reset_index(drop=True)
 
 
 class FailingPriceProvider(MockPriceProvider):
@@ -344,6 +352,22 @@ def test_baseline_config_parses() -> None:
     assert config.history_lookback.fundamental_years == 5
 
 
+def test_config_normalizes_and_deduplicates_benchmark_names(
+    tmp_path: Path,
+) -> None:
+    config_path = _write_config(tmp_path, "yearly")
+    payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    payload["benchmark_symbols"] = ["沪深 300", "000300"]
+    config_path.write_text(
+        yaml.safe_dump(payload, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    config = load_real_research_config(config_path)
+
+    assert config.benchmark_symbols == ["000300"]
+
+
 def test_legacy_config_uses_safe_history_lookback_defaults(tmp_path: Path) -> None:
     config = load_real_research_config(_write_config(tmp_path, "yearly"))
 
@@ -467,6 +491,7 @@ def test_yearly_pipeline_is_point_in_time_and_writes_complete_artifacts(
 
     artifact_names = {path.name for path in result.run_directory.iterdir()}
     assert REQUIRED_ARTIFACT_FILES <= artifact_names
+    assert "benchmark_diagnostics.json" in artifact_names
     warning_payload = json.loads(
         result.artifacts.files["warnings.json"].read_text(encoding="utf-8")
     )
@@ -478,6 +503,12 @@ def test_yearly_pipeline_is_point_in_time_and_writes_complete_artifacts(
     assert "000300" in result.benchmark_metrics
     assert BENCHMARK_METRICS <= set(result.benchmark_metrics["000300"])
     assert not result.benchmark_curve.empty
+    benchmark_diagnostics = json.loads(
+        result.artifacts.files["benchmark_diagnostics.json"].read_text(encoding="utf-8")
+    )
+    assert benchmark_diagnostics["schema_version"] == 1
+    assert benchmark_diagnostics["benchmarks"]["000300"]["status"] == "success"
+    assert benchmark_diagnostics["benchmarks"]["000300"]["attempts"]
     assert not result.equity_curve.empty
     assert "2010" in result.metrics["annual_returns"]
     assert result.metrics["annual_return_method"].startswith("first_valid_equity_to_year_end")
@@ -501,6 +532,13 @@ def test_yearly_pipeline_is_point_in_time_and_writes_complete_artifacts(
     )
     assert manifest["signal_execution_policy"]["signal_lag_trading_days"] == 1
     assert manifest["factor_lookbacks"]["max_drawdown"]["minimum_observations"] == 253
+    assert "benchmark_diagnostics.json" in manifest["artifact_files"]
+    assert manifest["artifact_summary"]["benchmark_diagnostics"] == {
+        "schema_version": 1,
+        "benchmark_count": 1,
+        "success_count": 1,
+        "unavailable_count": 0,
+    }
 
     config_artifact = json.loads(result.artifacts.files["config.json"].read_text(encoding="utf-8"))
     assert config_artifact["history_lookback"] == {
@@ -516,6 +554,42 @@ def test_five_year_pipeline_generates_five_year_schedule(tmp_path: Path) -> None
     rebalance_years = [int(date[:4]) for date in result.target_weights_by_date]
     assert rebalance_years == [2010, 2015, 2020]
     assert result.metrics["rebalance_frequency"] == "five_year"
+
+
+def test_diagnostics_write_failure_does_not_publish_partial_run(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    original_write_json = artifacts_module._write_json
+
+    def fail_diagnostics(path: Path, value: object) -> None:
+        if path.name == "benchmark_diagnostics.json":
+            raise OSError("simulated diagnostics write failure")
+        original_write_json(path, value)
+
+    monkeypatch.setattr(artifacts_module, "_write_json", fail_diagnostics)
+    output = tmp_path / "runs"
+    run_id = "atomic_failure_run"
+
+    with pytest.raises(OSError, match="simulated diagnostics write failure"):
+        write_research_artifacts(
+            output,
+            config={},
+            run_manifest={},
+            metrics={},
+            benchmark_metrics={},
+            benchmark_diagnostics={"schema_version": 1, "benchmarks": {}},
+            equity_curve=pd.Series(dtype=float),
+            benchmark_curve=pd.DataFrame(),
+            holdings=pd.DataFrame(),
+            trades=pd.DataFrame(),
+            factor_snapshots=pd.DataFrame(),
+            warnings=[],
+            run_id=run_id,
+        )
+
+    assert not (output / run_id).exists()
+    assert list(output.glob(f".{run_id}.*.staging")) == []
 
 
 def test_execution_date_close_is_not_passed_to_price_factors(
@@ -686,12 +760,13 @@ def test_partial_coverage_sets_status_and_structures_benchmark_failure(
     benchmark_payload = json.loads(
         result.artifacts.files["benchmark_metrics.json"].read_text(encoding="utf-8")
     )
-    assert benchmark_payload["000300"] == {
-        "status": "unavailable",
-        "symbol": "000300",
-        "reason": "mock benchmark endpoint unavailable",
-        "metrics": {},
-    }
+    benchmark_entry = benchmark_payload["000300"]
+    assert benchmark_entry["status"] == "unavailable"
+    assert benchmark_entry["symbol"] == "000300"
+    assert benchmark_entry["reason"] == "mock benchmark endpoint unavailable"
+    assert benchmark_entry["metrics"] == {}
+    assert benchmark_entry["reason_code"] == "provider_exception"
+    assert benchmark_entry["diagnostics_available"] is True
 
 
 def test_annual_returns_include_first_valid_year() -> None:

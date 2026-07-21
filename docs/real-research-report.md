@@ -30,9 +30,13 @@ GET /research/runs/{run_id}/report?locale=en-US
 - `holdings.parquet`
 - `factor_snapshots.parquet`
 - `trades.parquet`
+- `benchmark_diagnostics.json`（新 run 可选）
 
 请求不会修改 artifacts、访问行情 provider、调用真实 DeepSeek、执行交易或运行
 参数寻优。报告不包含当前时间等运行外变量，因此相同 artifacts 会生成相同结构。
+新 run 的基准复核把完整 provider attempts 放在 `provider_diagnostics` 技术证据
+中；用户摘要仍使用 `benchmark_metrics.json` 的简洁原因。旧 run 缺少该可选
+artifact 时返回空诊断，不影响报告生成或原七类 artifact 的兼容读取。
 
 ## 响应契约
 

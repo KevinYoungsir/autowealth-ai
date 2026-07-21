@@ -13,6 +13,8 @@
 - 添加回测系统
 - v0.16.0 P0 增加价格与基本面 warm-up 配置、四层窗口 manifest 以及
   factor snapshot 的 `signal_date` / `execution_date` 审计字段。
+- v0.16.0 PR2 增加统一 `IndexDataProvider`、canonical benchmark symbol、
+  AKShare primary/fallback provider chain 和 `benchmark_diagnostics.json`。
 
 ### 优化
 - 提升数据分析性能
@@ -23,10 +25,20 @@
   实际参与评分的数据保持一致。
 - 价格缓存按实际 fetch window 区分并验证覆盖，价格估值前向填充限制为 5 个
   组合交易日。
+- 基准缓存增加 symbol、fetch 区间、SHA256、行数、首末日期和 source 校验；
+  provider 返回值统一执行有限正数 close、80% 工作日估算总覆盖及首尾边界门槛，
+  并保留包含请求窗口和脱敏异常的全部失败 attempt。
+- 基准缓存细分 hit、不可读、SHA 不匹配、覆盖不足和 metadata 不一致 reason code；
+  新写入使用不可变 generation parquet，并以最后原子替换的 metadata 作为 commit
+  marker，旧缓存格式继续兼容读取。
+- 新基准诊断通过 RunStore、API 和确定性真实报告只读暴露；旧 run 缺少该可选
+  artifact 时继续按原结构读取，`benchmark_metrics.json` 保持兼容。
 
 ### 安全
 - P0 不修改历史 research run，不访问真实网络，不调用 DeepSeek，不执行交易，
   不新增参数寻优或当前估值回填。
+- PR2 不伪造、插值或替代不可用基准；异常技术文本限制长度并脱敏，artifact
+  采用 staging 后原子发布，写入失败不留下半成品 run。
 
 ## [0.15.1] - 2026-07-17
 
