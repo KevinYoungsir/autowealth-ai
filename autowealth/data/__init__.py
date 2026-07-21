@@ -18,7 +18,19 @@ from autowealth.data.fundamental_schema import (
     latest_fundamental_asof,
     normalize_fundamental_data,
 )
-from autowealth.data.index_provider import AShareIndexProvider
+from autowealth.data.index_provider import (
+    AKShareIndexDailyProvider,
+    AShareIndexProvider,
+    IndexDataProvider,
+    canonical_index_symbol,
+)
+from autowealth.data.index_provider_chain import (
+    BenchmarkLoadResult,
+    IndexProviderChain,
+    ProviderAttempt,
+    load_benchmark_with_cache,
+)
+from autowealth.data.index_quality import BenchmarkQualityResult, validate_benchmark_data
 from autowealth.data.quality import DataQualityReport, check_price_quality
 from autowealth.data.schema import MARKET_DATA_COLUMNS, normalize_market_data
 from autowealth.data.universe import (
@@ -28,9 +40,12 @@ from autowealth.data.universe import (
 )
 
 __all__ = [
+    "AKShareIndexDailyProvider",
     "AShareDataProvider",
     "AShareFundamentalProvider",
     "AShareIndexProvider",
+    "BenchmarkLoadResult",
+    "BenchmarkQualityResult",
     "DataQualityReport",
     "FUNDAMENTAL_COLUMNS",
     "FixedStockUniverse",
@@ -38,12 +53,18 @@ __all__ = [
     "FundamentalProviderResult",
     "FundamentalRecord",
     "HistoricalUniverseProvider",
+    "IndexDataProvider",
+    "IndexProviderChain",
     "MARKET_DATA_COLUMNS",
     "ParquetCache",
+    "ProviderAttempt",
     "UniverseSnapshot",
     "check_price_quality",
+    "canonical_index_symbol",
     "eligible_fundamentals_asof",
     "latest_fundamental_asof",
+    "load_benchmark_with_cache",
     "normalize_fundamental_data",
     "normalize_market_data",
+    "validate_benchmark_data",
 ]

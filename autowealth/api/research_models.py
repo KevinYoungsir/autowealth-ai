@@ -8,7 +8,6 @@ from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
 RESEARCH_API_VERSION = "0.1.0"
 RESEARCH_API_EXPLANATION = (
     "Research API output is for analysis and education only; it is not a "
@@ -160,9 +159,7 @@ class ResearchRunSummary(BaseModel):
     benchmark_status: str
     warning_count: int
     price_coverage_ratio: Optional[float] = None
-    factor_coverage_overall: Dict[str, FactorCoverageRecord] = Field(
-        default_factory=dict
-    )
+    factor_coverage_overall: Dict[str, FactorCoverageRecord] = Field(default_factory=dict)
 
 
 class ResearchRunListResponse(BaseModel):
@@ -186,6 +183,7 @@ class ResearchRunDetailResponse(BaseModel):
     manifest: Dict[str, Any]
     metrics: Dict[str, Any]
     benchmark_metrics: Dict[str, Any]
+    benchmark_diagnostics: Dict[str, Any] = Field(default_factory=dict)
     warning_summary: WarningSummary
 
 

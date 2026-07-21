@@ -106,6 +106,33 @@ def test_preserves_structured_benchmark_unavailable(runs_root: Path) -> None:
     assert benchmark["000300"]["metrics"] == {}
 
 
+def test_optional_benchmark_diagnostics_are_backward_compatible(
+    runs_root: Path,
+) -> None:
+    store = ResearchRunStore(runs_root)
+    diagnostics = {
+        "schema_version": 1,
+        "benchmarks": {
+            "000300": {
+                "status": "unavailable",
+                "canonical_symbol": "000300",
+                "attempts": [{"reason_code": "provider_exception"}],
+            }
+        },
+    }
+
+    assert store.read_benchmark_diagnostics(RUN_OLD) == {}
+    assert store.get_run(RUN_OLD)["benchmark_diagnostics"] == {}
+
+    _write_json(
+        runs_root / RUN_NEW / "benchmark_diagnostics.json",
+        diagnostics,
+    )
+
+    assert store.read_benchmark_diagnostics(RUN_NEW) == diagnostics
+    assert store.get_run(RUN_NEW)["benchmark_diagnostics"] == diagnostics
+
+
 def test_aggregates_warning_categories_without_changing_source() -> None:
     warnings = {
         "warnings": [

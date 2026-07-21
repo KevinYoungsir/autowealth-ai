@@ -70,7 +70,6 @@ from autowealth.research.run_store import (
 )
 from autowealth.research.schema import ResearchPipelineResult, ResearchSummary
 
-
 DEFAULT_RESEARCH_API_CORS_ORIGINS = (
     "http://127.0.0.1:3000",
     "http://localhost:3000",
@@ -109,9 +108,7 @@ def _request_run_store(request: Request) -> ResearchRunStore:
 async def research_health(request: Request) -> ResearchHealthResponse:
     store = _request_run_store(request)
     research_runs_available = store.ensure_directory()
-    latest_run_available = (
-        store.has_runs() if research_runs_available else False
-    )
+    latest_run_available = store.has_runs() if research_runs_available else False
     return ResearchHealthResponse(
         status="ok",
         service="autowealth-research-api",
@@ -154,9 +151,7 @@ async def research_runs(
     responses=RUN_ERROR_RESPONSES,
 )
 async def research_latest_run(request: Request) -> ResearchRunDetailResponse:
-    return _run_detail_response(
-        _request_run_store(request).get_latest_run()
-    )
+    return _run_detail_response(_request_run_store(request).get_latest_run())
 
 
 @research_router.get(
@@ -279,9 +274,7 @@ async def research_run_holdings(
     manifest = store.read_manifest(run_id)
     coverage = _mapping_value(manifest.get("coverage_summary"))
     constraints = _mapping_value(
-        _mapping_value(manifest.get("config_summary")).get(
-            "portfolio_constraints"
-        )
+        _mapping_value(manifest.get("config_summary")).get("portfolio_constraints")
     )
     return ResearchHoldingsResponse(
         run_id=run_id,
@@ -290,9 +283,7 @@ async def research_run_holdings(
         min_holdings=_optional_int(constraints.get("min_holdings")),
         holdings_count_by_rebalance={
             str(date): int(count)
-            for date, count in _mapping_value(
-                coverage.get("holdings_count_by_rebalance")
-            ).items()
+            for date, count in _mapping_value(coverage.get("holdings_count_by_rebalance")).items()
         },
     )
 
@@ -333,19 +324,13 @@ async def research_run_factors(
     if "rebalance_date" in frame:
         frame = frame.sort_values("rebalance_date", ascending=False)
     records = _frame_records(frame.head(limit))
-    coverage = _mapping_value(
-        store.read_manifest(run_id).get("coverage_summary")
-    )
+    coverage = _mapping_value(store.read_manifest(run_id).get("coverage_summary"))
     return ResearchFactorsResponse(
         run_id=run_id,
         records=records,
         returned=len(records),
-        coverage_by_rebalance=_mapping_value(
-            coverage.get("factor_coverage_by_rebalance")
-        ),
-        coverage_overall=_mapping_value(
-            coverage.get("factor_coverage_overall")
-        ),
+        coverage_by_rebalance=_mapping_value(coverage.get("factor_coverage_by_rebalance")),
+        coverage_overall=_mapping_value(coverage.get("factor_coverage_overall")),
     )
 
 
@@ -452,9 +437,7 @@ def _research_api_cors_origins() -> list[str]:
 def _research_api_trusted_hosts() -> list[str]:
     configured = os.getenv("RESEARCH_API_TRUSTED_HOSTS", "")
     values = (
-        configured.split(",")
-        if configured.strip()
-        else list(DEFAULT_RESEARCH_API_TRUSTED_HOSTS)
+        configured.split(",") if configured.strip() else list(DEFAULT_RESEARCH_API_TRUSTED_HOSTS)
     )
     hosts: list[str] = []
     for value in values:
@@ -462,9 +445,7 @@ def _research_api_trusted_hosts() -> list[str]:
         if not host:
             continue
         if "*" in host or "://" in host or "/" in host:
-            raise ValueError(
-                "RESEARCH_API_TRUSTED_HOSTS contains an invalid host"
-            )
+            raise ValueError("RESEARCH_API_TRUSTED_HOSTS contains an invalid host")
         if host not in hosts:
             hosts.append(host)
     if RAILWAY_HEALTHCHECK_HOST not in hosts:
@@ -599,7 +580,9 @@ def _result_payload(result: ResearchPipelineResult) -> ResearchPipelineResultPay
         rejected_symbols=dict(result.rejected_symbols),
         factor_summary=_json_ready(result.factor_summary),
         macro_summary=_json_ready(result.macro_summary),
-        target_weights={str(symbol): float(weight) for symbol, weight in result.target_weights.items()},
+        target_weights={
+            str(symbol): float(weight) for symbol, weight in result.target_weights.items()
+        },
         backtest_metrics=_json_ready(result.backtest_metrics),
         equity_curve=_equity_points(result.equity_curve),
         warnings=list(result.warnings),
@@ -617,7 +600,9 @@ def _summary_payload(summary: ResearchSummary) -> ResearchSummaryPayload:
         rejected_symbols=dict(summary.rejected_symbols),
         factor_summary=_json_ready(summary.factor_summary),
         macro_summary=_json_ready(summary.macro_summary),
-        target_weights={str(symbol): float(weight) for symbol, weight in summary.target_weights.items()},
+        target_weights={
+            str(symbol): float(weight) for symbol, weight in summary.target_weights.items()
+        },
         backtest_metrics=_json_ready(summary.backtest_metrics),
         equity_curve=_equity_points(summary.equity_curve),
         warnings=list(summary.warnings),
@@ -682,6 +667,7 @@ def _run_detail_response(detail: Mapping[str, Any]) -> ResearchRunDetailResponse
         manifest=_mapping_value(detail.get("manifest")),
         metrics=_mapping_value(detail.get("metrics")),
         benchmark_metrics=_mapping_value(detail.get("benchmark_metrics")),
+        benchmark_diagnostics=_mapping_value(detail.get("benchmark_diagnostics")),
         warning_summary=WarningSummary(**warning_summary),
     )
 
@@ -701,12 +687,7 @@ def _store_error_status(exc: ResearchRunStoreError) -> tuple[int, str]:
 def _downsample_frame(frame: pd.DataFrame, limit: int) -> pd.DataFrame:
     if len(frame) <= limit:
         return frame.copy()
-    indexes = sorted(
-        {
-            round(index * (len(frame) - 1) / (limit - 1))
-            for index in range(limit)
-        }
-    )
+    indexes = sorted({round(index * (len(frame) - 1) / (limit - 1)) for index in range(limit)})
     return frame.iloc[indexes].copy()
 
 
@@ -735,9 +716,7 @@ def _holding_records(
 ) -> list[dict[str, Any]]:
     data = pd.DataFrame(frame).copy()
     if "date" not in data:
-        raise ResearchArtifactDecodeError(
-            "holdings.parquet lacks a date column"
-        )
+        raise ResearchArtifactDecodeError("holdings.parquet lacks a date column")
     data["date"] = pd.to_datetime(data["date"], errors="coerce")
     data = data.dropna(subset=["date"])
     if rebalance_date is not None:
@@ -762,12 +741,8 @@ def _holding_records(
                     "rebalance_date": date_text,
                     "symbol": symbol,
                     "weight": weight,
-                    "shares": _optional_float_value(
-                        row.get(f"{symbol}_shares")
-                    ),
-                    "cash_weight": _optional_float_value(
-                        row.get("cash_weight")
-                    ),
+                    "shares": _optional_float_value(row.get(f"{symbol}_shares")),
+                    "cash_weight": _optional_float_value(row.get("cash_weight")),
                     "cash": _optional_float_value(row.get("cash")),
                     "equity": _optional_float_value(row.get("equity")),
                 }
@@ -778,9 +753,7 @@ def _holding_records(
 def _frame_records(frame: pd.DataFrame) -> list[dict[str, Any]]:
     records = []
     for record in pd.DataFrame(frame).to_dict(orient="records"):
-        records.append(
-            {str(key): _json_scalar(value) for key, value in record.items()}
-        )
+        records.append({str(key): _json_scalar(value) for key, value in record.items()})
     return records
 
 

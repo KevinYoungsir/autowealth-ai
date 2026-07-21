@@ -36,7 +36,12 @@ from autowealth.data.fundamental_schema import (
     normalize_fundamental_data,
     validate_fundamental_history,
 )
-from autowealth.data.index_provider import AShareIndexProvider
+from autowealth.data.index_provider import canonical_index_symbol
+from autowealth.data.index_provider_chain import (
+    IndexProviderChain,
+    default_index_provider_chain,
+    load_benchmark_with_cache,
+)
 from autowealth.data.quality import check_price_quality
 from autowealth.data.universe import FixedStockUniverse, UniverseSnapshot
 from autowealth.factors import (
@@ -53,6 +58,8 @@ from autowealth.macro.asof import load_macro_asof_csv, select_macro_asof
 from autowealth.macro.scoring import score_macro_environment
 from autowealth.portfolio import PortfolioConstraints, StockCandidate, build_factor_portfolio
 from autowealth.research.artifacts import (
+    OPTIONAL_ARTIFACT_FILES,
+    REQUIRED_ARTIFACT_FILES,
     ResearchArtifactSet,
     current_git_commit,
     write_research_artifacts,
@@ -155,6 +162,7 @@ class RealResearchResult:
     config: RealResearchConfig
     metrics: dict[str, Any]
     benchmark_metrics: dict[str, dict[str, Any]]
+    benchmark_diagnostics: dict[str, Any]
     equity_curve: pd.Series
     benchmark_curve: pd.DataFrame
     target_weights_by_date: dict[str, dict[str, float]]
@@ -197,7 +205,7 @@ def load_real_research_config(path: PathLike) -> RealResearchConfig:
                 str(name): float(weight) for name, weight in dict(raw["factor_weights"]).items()
             },
             portfolio_constraints=PortfolioConstraints(**dict(raw["portfolio_constraints"])),
-            benchmark_symbols=_symbols(raw["benchmark_symbols"]),
+            benchmark_symbols=_benchmark_symbols(raw["benchmark_symbols"]),
             macro_csv_path=_resolve_config_path(raw["macro_csv_path"], root),
             cache_directory=_resolve_config_path(raw["cache_directory"], root),
             output_directory=_resolve_config_path(raw["output_directory"], root),
@@ -254,6 +262,11 @@ def _symbols(values: object) -> list[str]:
     if not symbols:
         raise ValueError("symbol list cannot be empty")
     return symbols
+
+
+def _benchmark_symbols(values: object) -> list[str]:
+    symbols = _symbols(values)
+    return list(dict.fromkeys(canonical_index_symbol(symbol) for symbol in symbols))
 
 
 def _history_lookback(value: object) -> HistoryLookback:
@@ -1144,102 +1157,78 @@ def _performance_metrics(equity_curve: pd.Series) -> dict[str, float]:
     }
 
 
-def _load_benchmark_data(
+def _unavailable_benchmark(
     symbol: str,
-    config: RealResearchConfig,
-    provider: object,
-    fetched_at: datetime,
-) -> tuple[pd.DataFrame, dict[str, object], list[str]]:
-    cache = ParquetCache(config.cache_directory / "benchmarks")
-    cache_symbol = f"benchmark_{symbol}"
-    cache_path = cache.path_for(cache_symbol, config.start_date, config.end_date, "none")
-    warnings: list[str] = []
-    source = provider.__class__.__name__
-    frame: Optional[pd.DataFrame] = None
-
-    if cache_path.exists():
-        try:
-            frame = cache.read(cache_symbol, config.start_date, config.end_date, "none")
-            source = str(_read_cache_metadata(cache_path).get("source") or source)
-        except Exception as exc:
-            warnings.append(f"{symbol} benchmark cache unreadable; provider retry used: {exc}")
-
-    if frame is None:
-        frame = provider.get_daily(symbol, config.start_date, config.end_date)
-        cache.write(frame, cache_symbol, config.start_date, config.end_date, "none")
-
-    clean = _prepare_price_frame(frame, config.start_date, config.end_date)
-    metadata = _cache_metadata(
-        "benchmark",
-        symbol,
-        source,
-        cache_path,
-        config,
-        fetched_at,
-        rows=len(clean),
-    )
-    _write_cache_metadata(cache_path, metadata)
-    return clean, metadata, warnings
-
-
-def _unavailable_benchmark(symbol: str, reason: str) -> dict[str, object]:
-    return {
+    reason: str,
+    *,
+    reason_code: Optional[str] = None,
+    selected_provider: Optional[str] = None,
+    diagnostics_available: bool = False,
+) -> dict[str, object]:
+    result: dict[str, object] = {
         "status": "unavailable",
         "symbol": symbol,
         "reason": reason,
         "metrics": {},
     }
+    if reason_code is not None:
+        result["reason_code"] = reason_code
+    if selected_provider is not None:
+        result["selected_provider"] = selected_provider
+    if diagnostics_available:
+        result["diagnostics_available"] = True
+    return result
 
 
 def _run_benchmarks(
     config: RealResearchConfig,
     provider: object,
-    fetched_at: datetime,
 ) -> tuple[
     dict[str, dict[str, Any]],
     pd.DataFrame,
     list[dict[str, object]],
     list[str],
+    dict[str, Any],
 ]:
     metrics: dict[str, dict[str, Any]] = {}
     curves: dict[str, pd.Series] = {}
     source_records: list[dict[str, object]] = []
     warnings: list[str] = []
+    diagnostics: dict[str, Any] = {"schema_version": 1, "benchmarks": {}}
+    chain = provider if isinstance(provider, IndexProviderChain) else IndexProviderChain([provider])
 
     for symbol in config.benchmark_symbols:
-        try:
-            frame, source_record, item_warnings = _load_benchmark_data(
-                symbol, config, provider, fetched_at
+        loaded = load_benchmark_with_cache(
+            config.cache_directory / "benchmarks",
+            chain,
+            symbol,
+            config.start_date,
+            config.end_date,
+        )
+        diagnostics["benchmarks"][symbol] = loaded.diagnostic
+        source_records.append(loaded.source_record)
+        warnings.extend(loaded.warnings)
+        if loaded.status != "success":
+            reason = loaded.reason or "all benchmark providers failed"
+            metrics[symbol] = _unavailable_benchmark(
+                symbol,
+                reason,
+                reason_code=loaded.reason_code,
+                diagnostics_available=True,
             )
-        except Exception as exc:
-            reason = str(exc)
-            metrics[symbol] = _unavailable_benchmark(symbol, reason)
-            warnings.append(f"benchmark {symbol} unavailable: {reason}")
-            source_records.append(
-                {
-                    "data_type": "benchmark",
-                    "symbol": symbol,
-                    "source": provider.__class__.__name__,
-                    "status": "failed",
-                    "error": reason,
-                }
-            )
-            continue
-        warnings.extend(item_warnings)
-        source_records.append(source_record)
-        if frame.empty:
-            reason = "provider returned no usable prices"
-            metrics[symbol] = _unavailable_benchmark(symbol, reason)
             warnings.append(f"benchmark {symbol} unavailable: {reason}")
             continue
+        frame = loaded.data
         close = frame.set_index("date")["close"].sort_index()
         curve = close / float(close.iloc[0]) * config.initial_capital
         curve.name = symbol
         curves[symbol] = curve
         metrics[symbol] = _performance_metrics(curve)
 
-    benchmark_curve = pd.concat(curves, axis=1).sort_index() if curves else pd.DataFrame()
-    return metrics, benchmark_curve, source_records, warnings
+    benchmark_curve = (
+        pd.concat(curves, axis=1, sort=False).sort_index() if curves else pd.DataFrame()
+    )
+    return metrics, benchmark_curve, source_records, warnings, diagnostics
 
 
 def _dedupe_warnings(values: list[str]) -> list[str]:
@@ -1459,6 +1448,23 @@ def _point_in_time_limitations(
     return limitations
 
 
+def _benchmark_diagnostic_summary(
+    diagnostics: Mapping[str, Any],
+) -> dict[str, int]:
+    benchmarks = diagnostics.get("benchmarks", {})
+    entries = benchmarks if isinstance(benchmarks, Mapping) else {}
+    success_count = sum(
+        isinstance(value, Mapping) and value.get("status") == "success"
+        for value in entries.values()
+    )
+    return {
+        "schema_version": int(diagnostics.get("schema_version", 1)),
+        "benchmark_count": len(entries),
+        "success_count": int(success_count),
+        "unavailable_count": len(entries) - int(success_count),
+    }
+
+
 def _run_manifest(
     config: RealResearchConfig,
     run_time: datetime,
@@ -1469,11 +1475,16 @@ def _run_manifest(
     coverage_summary: Mapping[str, Any],
     run_status_reasons: list[str],
     price_alignment: Mapping[str, object],
+    benchmark_diagnostics: Mapping[str, Any],
 ) -> dict[str, object]:
     if run_status not in RUN_STATUSES:
         raise ValueError(f"unsupported run_status: {run_status}")
     return {
         "artifact_schema_version": "2.0",
+        "artifact_files": sorted(REQUIRED_ARTIFACT_FILES | OPTIONAL_ARTIFACT_FILES),
+        "artifact_summary": {
+            "benchmark_diagnostics": _benchmark_diagnostic_summary(benchmark_diagnostics)
+        },
         "run_time": run_time.isoformat(),
         "git_commit": git_commit,
         "experiment_name": config.experiment_name,
@@ -1755,28 +1766,16 @@ def run_real_data_research(
     )
     backtest_result, metrics = _run_portfolio_backtest(config, price_data, weight_schedule)
 
-    try:
-        resolved_index_provider = index_provider or AShareIndexProvider()
-    except ImportError as exc:
-        resolved_index_provider = None
-        benchmark_provider_reason = f"benchmark provider is unavailable: {exc}"
-        warnings.append(benchmark_provider_reason)
-
-    if resolved_index_provider is None:
-        benchmark_metrics: dict[str, dict[str, Any]] = {
-            symbol: _unavailable_benchmark(symbol, benchmark_provider_reason)
-            for symbol in config.benchmark_symbols
-        }
-        benchmark_curve = pd.DataFrame()
-    else:
-        (
-            benchmark_metrics,
-            benchmark_curve,
-            benchmark_sources,
-            benchmark_warnings,
-        ) = _run_benchmarks(config, resolved_index_provider, started_at)
-        source_records.extend(benchmark_sources)
-        warnings.extend(benchmark_warnings)
+    resolved_index_provider = index_provider or default_index_provider_chain()
+    (
+        benchmark_metrics,
+        benchmark_curve,
+        benchmark_sources,
+        benchmark_warnings,
+        benchmark_diagnostics,
+    ) = _run_benchmarks(config, resolved_index_provider)
+    source_records.extend(benchmark_sources)
+    warnings.extend(benchmark_warnings)
 
     limitations = _point_in_time_limitations(config, fundamental_results, macro_data)
     warnings = _dedupe_warnings(warnings)
@@ -1805,6 +1804,7 @@ def run_real_data_research(
         coverage_summary,
         run_status_reasons,
         price_alignment,
+        benchmark_diagnostics,
     )
     artifacts = write_research_artifacts(
         config.output_directory,
@@ -1812,6 +1812,7 @@ def run_real_data_research(
         run_manifest=manifest,
         metrics=metrics,
         benchmark_metrics=benchmark_metrics,
+        benchmark_diagnostics=benchmark_diagnostics,
         equity_curve=pd.Series(backtest_result["equity_curve"]),
         benchmark_curve=benchmark_curve,
         holdings=pd.DataFrame(backtest_result["holdings_by_period"]),
@@ -1831,6 +1832,7 @@ def run_real_data_research(
         config=config,
         metrics=metrics,
         benchmark_metrics=benchmark_metrics,
+        benchmark_diagnostics=benchmark_diagnostics,
         equity_curve=pd.Series(backtest_result["equity_curve"]),
         benchmark_curve=benchmark_curve,
         target_weights_by_date=serialized_schedule,

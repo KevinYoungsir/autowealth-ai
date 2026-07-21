@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import shutil
 import subprocess
 import uuid
 from dataclasses import asdict, dataclass, is_dataclass
@@ -27,6 +28,7 @@ REQUIRED_ARTIFACT_FILES = {
     "factor_snapshots.parquet",
     "warnings.json",
 }
+OPTIONAL_ARTIFACT_FILES = {"benchmark_diagnostics.json"}
 
 
 @dataclass(frozen=True)
@@ -71,14 +73,20 @@ def write_research_artifacts(
     trades: pd.DataFrame,
     factor_snapshots: pd.DataFrame,
     warnings: list[str],
+    benchmark_diagnostics: Optional[Mapping[str, Any]] = None,
     run_id: Optional[str] = None,
     run_time: Optional[datetime] = None,
 ) -> ResearchArtifactSet:
     """Write the complete artifact contract for one research run."""
     created_at = (run_time or datetime.now(timezone.utc)).astimezone(timezone.utc)
     resolved_run_id = run_id or create_run_id(created_at)
-    run_directory = Path(output_directory) / resolved_run_id
-    run_directory.mkdir(parents=True, exist_ok=False)
+    output_path = Path(output_directory)
+    output_path.mkdir(parents=True, exist_ok=True)
+    final_run_directory = output_path / resolved_run_id
+    if final_run_directory.exists():
+        raise FileExistsError(f"research run already exists: {resolved_run_id}")
+    run_directory = output_path / f".{resolved_run_id}.{uuid.uuid4().hex}.staging"
+    run_directory.mkdir(parents=False, exist_ok=False)
 
     manifest = dict(run_manifest)
     manifest.setdefault("run_id", resolved_run_id)
@@ -96,15 +104,81 @@ def write_research_artifacts(
         "factor_snapshots.parquet": run_directory / "factor_snapshots.parquet",
         "warnings.json": run_directory / "warnings.json",
     }
+    if benchmark_diagnostics is not None:
+        files["benchmark_diagnostics.json"] = run_directory / "benchmark_diagnostics.json"
 
+    try:
+        _write_artifact_payloads(
+            files,
+            config=config,
+            manifest=manifest,
+            metrics=metrics,
+            benchmark_metrics=benchmark_metrics,
+            benchmark_diagnostics=benchmark_diagnostics,
+            equity_curve=equity_curve,
+            benchmark_curve=benchmark_curve,
+            holdings=holdings,
+            trades=trades,
+            factor_snapshots=factor_snapshots,
+            warnings=warnings,
+        )
+    except Exception:
+        shutil.rmtree(run_directory, ignore_errors=True)
+        raise
+
+    expected = set(REQUIRED_ARTIFACT_FILES)
+    if benchmark_diagnostics is not None:
+        expected.update(OPTIONAL_ARTIFACT_FILES)
+    missing = expected - {path.name for path in run_directory.iterdir()}
+    if missing:
+        shutil.rmtree(run_directory, ignore_errors=True)
+        raise RuntimeError(f"research artifact write incomplete: {sorted(missing)}")
+    try:
+        run_directory.replace(final_run_directory)
+    except Exception:
+        shutil.rmtree(run_directory, ignore_errors=True)
+        raise
+    published_files = {name: final_run_directory / path.name for name, path in files.items()}
+    return ResearchArtifactSet(
+        run_id=resolved_run_id,
+        run_directory=final_run_directory,
+        files=published_files,
+    )
+
+
+def _write_artifact_payloads(
+    files: Mapping[str, Path],
+    *,
+    config: Mapping[str, Any],
+    manifest: Mapping[str, Any],
+    metrics: Mapping[str, Any],
+    benchmark_metrics: Mapping[str, Any],
+    benchmark_diagnostics: Optional[Mapping[str, Any]],
+    equity_curve: pd.Series,
+    benchmark_curve: pd.DataFrame,
+    holdings: pd.DataFrame,
+    trades: pd.DataFrame,
+    factor_snapshots: pd.DataFrame,
+    warnings: list[str],
+) -> None:
     _write_json(files["config.json"], config)
     _write_json(files["run_manifest.json"], manifest)
     _write_json(files["metrics.json"], metrics)
     _write_json(files["benchmark_metrics.json"], benchmark_metrics)
     _write_json(files["warnings.json"], {"warnings": warnings})
-
-    _equity_frame(equity_curve).to_parquet(files["equity_curve.parquet"], index=False)
-    _benchmark_frame(benchmark_curve).to_parquet(files["benchmark_curve.parquet"], index=False)
+    if benchmark_diagnostics is not None:
+        _write_json(
+            files["benchmark_diagnostics.json"],
+            benchmark_diagnostics,
+        )
+    _equity_frame(equity_curve).to_parquet(
+        files["equity_curve.parquet"],
+        index=False,
+    )
+    _benchmark_frame(benchmark_curve).to_parquet(
+        files["benchmark_curve.parquet"],
+        index=False,
+    )
     _nonempty_schema(
         holdings,
         ["date", "equity", "cash", "cash_weight"],
@@ -127,15 +201,6 @@ def write_research_artifacts(
             "warnings",
         ],
     ).to_parquet(files["factor_snapshots.parquet"], index=False)
-
-    missing = REQUIRED_ARTIFACT_FILES - {path.name for path in run_directory.iterdir()}
-    if missing:
-        raise RuntimeError(f"research artifact write incomplete: {sorted(missing)}")
-    return ResearchArtifactSet(
-        run_id=resolved_run_id,
-        run_directory=run_directory,
-        files=files,
-    )
 
 
 def _write_json(path: Path, value: Any) -> None:
