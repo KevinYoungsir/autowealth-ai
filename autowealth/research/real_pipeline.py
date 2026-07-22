@@ -65,6 +65,13 @@ from autowealth.research.artifacts import (
     write_research_artifacts,
 )
 from autowealth.research.schema import scalar_metrics
+from autowealth.research.warnings import (
+    StructuredWarningCollector,
+    WarningCode,
+    WarningScope,
+    WarningSeverity,
+    safe_exception_evidence,
+)
 
 PathLike = Union[str, Path]
 SUPPORTED_REBALANCE_FREQUENCIES = {"yearly", "five_year"}
@@ -170,7 +177,48 @@ class RealResearchResult:
     run_status: str
     coverage_summary: dict[str, Any]
     warnings: list[str]
+    structured_warnings: list[dict[str, object]]
     artifacts: ResearchArtifactSet
+
+
+def _record_warning(
+    warnings: list[str],
+    collector: Optional[StructuredWarningCollector],
+    message: str,
+    *,
+    code: WarningCode,
+    severity: WarningSeverity,
+    scope: WarningScope,
+    source: str,
+    evidence: Optional[Mapping[str, object]] = None,
+    affected_symbols: tuple[str, ...] = (),
+    artifact_refs: tuple[str, ...] = (),
+    retryable: Optional[bool] = None,
+) -> None:
+    warnings.append(message)
+    if collector is not None:
+        collector.add(
+            message,
+            code=code,
+            severity=severity,
+            scope=scope,
+            source=source,
+            evidence=evidence,
+            affected_symbols=affected_symbols,
+            artifact_refs=artifact_refs,
+            retryable=retryable,
+            documentation_ref="docs/structured-warnings.md",
+        )
+
+
+def _record_warnings(
+    warnings: list[str],
+    collector: Optional[StructuredWarningCollector],
+    messages: list[str],
+    **metadata: object,
+) -> None:
+    for message in messages:
+        _record_warning(warnings, collector, message, **metadata)
 
 
 def load_real_research_config(path: PathLike) -> RealResearchConfig:
@@ -318,6 +366,7 @@ def _universe_snapshot(provider: object, as_of_date: str) -> UniverseSnapshot:
 def _load_macro_data(
     config: RealResearchConfig,
     provider: Optional[object],
+    warning_collector: Optional[StructuredWarningCollector] = None,
 ) -> tuple[pd.DataFrame, str, list[str]]:
     source = "local_csv" if provider is None else provider.__class__.__name__
     try:
@@ -330,34 +379,81 @@ def _load_macro_data(
         else:
             raise TypeError("macro provider must define get_macro_data or be callable")
     except Exception as exc:
-        return pd.DataFrame(), source, [f"macro provider failed: {exc}"]
+        warnings: list[str] = []
+        _record_warning(
+            warnings,
+            warning_collector,
+            f"macro provider failed: {exc}",
+            code=WarningCode.MACRO_DATA_UNAVAILABLE,
+            severity=WarningSeverity.ERROR,
+            scope=WarningScope.MACRO,
+            source="macro_provider",
+            evidence=safe_exception_evidence(exc, "provider_exception"),
+            retryable=True,
+        )
+        return pd.DataFrame(), source, warnings
 
     frame = pd.DataFrame(data).copy()
     if frame.empty:
-        return frame, source, ["macro source contains no real observations"]
+        warnings = []
+        _record_warning(
+            warnings,
+            warning_collector,
+            "macro source contains no real observations",
+            code=WarningCode.MACRO_DATA_UNAVAILABLE,
+            severity=WarningSeverity.WARNING,
+            scope=WarningScope.MACRO,
+            source="macro_provider",
+            evidence={"observation_count": 0},
+        )
+        return frame, source, warnings
     return frame, source, []
 
 
 def _macro_asof(
     macro_data: pd.DataFrame,
     rebalance_date: pd.Timestamp,
+    warning_collector: Optional[StructuredWarningCollector] = None,
 ) -> tuple[Optional[object], float, Optional[str], list[str]]:
     date_text = rebalance_date.strftime("%Y-%m-%d")
     if macro_data.empty:
+        warnings: list[str] = []
+        _record_warning(
+            warnings,
+            warning_collector,
+            f"no point-in-time macro data for {date_text}; neutral multiplier used",
+            code=WarningCode.MACRO_DATA_UNAVAILABLE,
+            severity=WarningSeverity.WARNING,
+            scope=WarningScope.MACRO,
+            source="macro_asof",
+            evidence={"signal_date": date_text, "neutral_multiplier": 1.0},
+        )
         return (
             None,
             1.0,
             None,
-            [f"no point-in-time macro data for {date_text}; neutral multiplier used"],
+            warnings,
         )
 
     selection = select_macro_asof(macro_data, rebalance_date)
     if selection.record is None:
+        messages = list(selection.warnings) + [f"neutral macro multiplier used for {date_text}"]
+        warnings = []
+        _record_warnings(
+            warnings,
+            warning_collector,
+            messages,
+            code=WarningCode.MACRO_DATA_UNAVAILABLE,
+            severity=WarningSeverity.WARNING,
+            scope=WarningScope.MACRO,
+            source="macro_asof",
+            evidence={"signal_date": date_text, "neutral_multiplier": 1.0},
+        )
         return (
             None,
             1.0,
             None,
-            selection.warnings + [f"neutral macro multiplier used for {date_text}"],
+            warnings,
         )
 
     indicator_names = [
@@ -374,11 +470,22 @@ def _macro_asof(
     indicators = {name: selection.record.get(name) for name in indicator_names}
     score = score_macro_environment(indicators, as_of_date=date_text)
     available_date = str(selection.record.get("available_date"))
+    warnings = []
+    _record_warnings(
+        warnings,
+        warning_collector,
+        list(selection.warnings) + list(score.warnings),
+        code=WarningCode.MACRO_DATA_UNAVAILABLE,
+        severity=WarningSeverity.WARNING,
+        scope=WarningScope.MACRO,
+        source="macro_asof",
+        evidence={"signal_date": date_text, "available_date": available_date},
+    )
     return (
         score,
         score.equity_position_multiplier,
         available_date,
-        selection.warnings + list(score.warnings),
+        warnings,
     )
 
 
@@ -386,9 +493,22 @@ def _future_fundamental_warnings(
     symbol: str,
     data: pd.DataFrame,
     rebalance_date: pd.Timestamp,
+    warning_collector: Optional[StructuredWarningCollector] = None,
 ) -> list[str]:
     if data.empty:
-        return [f"{symbol} has no point-in-time fundamental records"]
+        warnings: list[str] = []
+        _record_warning(
+            warnings,
+            warning_collector,
+            f"{symbol} has no point-in-time fundamental records",
+            code=WarningCode.FUNDAMENTAL_DATA_UNAVAILABLE,
+            severity=WarningSeverity.WARNING,
+            scope=WarningScope.FUNDAMENTAL,
+            source="fundamental_asof",
+            evidence={"symbol": symbol, "signal_date": rebalance_date.strftime("%Y-%m-%d")},
+            affected_symbols=(symbol,),
+        )
+        return warnings
     normalized = normalize_fundamental_data(data)
     available = normalized["available_date"]
     report_date = normalized["report_date"]
@@ -397,14 +517,40 @@ def _future_fundamental_warnings(
     future_reports = int((report_date > rebalance_date).fillna(False).sum())
     warnings: list[str] = []
     if missing:
-        warnings.append(f"{symbol} ignored {missing} fundamental rows without available_date")
+        _record_warning(
+            warnings,
+            warning_collector,
+            f"{symbol} ignored {missing} fundamental rows without available_date",
+            code=WarningCode.FUNDAMENTAL_POINT_IN_TIME_REJECTED,
+            severity=WarningSeverity.WARNING,
+            scope=WarningScope.FUNDAMENTAL,
+            source="fundamental_asof",
+            evidence={"symbol": symbol, "missing_available_date_count": missing},
+            affected_symbols=(symbol,),
+        )
     if future_available:
-        warnings.append(
-            f"{symbol} ignored {future_available} rows published after {rebalance_date.date()}"
+        _record_warning(
+            warnings,
+            warning_collector,
+            f"{symbol} ignored {future_available} rows published after {rebalance_date.date()}",
+            code=WarningCode.FUNDAMENTAL_POINT_IN_TIME_REJECTED,
+            severity=WarningSeverity.WARNING,
+            scope=WarningScope.FUNDAMENTAL,
+            source="fundamental_asof",
+            evidence={"symbol": symbol, "future_available_count": future_available},
+            affected_symbols=(symbol,),
         )
     if future_reports:
-        warnings.append(
-            f"{symbol} ignored {future_reports} future-report rows at {rebalance_date.date()}"
+        _record_warning(
+            warnings,
+            warning_collector,
+            f"{symbol} ignored {future_reports} future-report rows at {rebalance_date.date()}",
+            code=WarningCode.FUNDAMENTAL_POINT_IN_TIME_REJECTED,
+            severity=WarningSeverity.WARNING,
+            scope=WarningScope.FUNDAMENTAL,
+            source="fundamental_asof",
+            evidence={"symbol": symbol, "future_report_count": future_reports},
+            affected_symbols=(symbol,),
         )
     return warnings
 
@@ -513,16 +659,46 @@ def _tradability_warnings(
     symbol: str,
     data: pd.DataFrame,
     rebalance_date: pd.Timestamp,
+    warning_collector: Optional[StructuredWarningCollector] = None,
 ) -> list[str]:
+    warnings: list[str] = []
+    metadata = {
+        "code": WarningCode.PRICE_DATA_QUALITY_DEGRADED,
+        "severity": WarningSeverity.WARNING,
+        "scope": WarningScope.PRICE_PROVIDER,
+        "source": "price_quality",
+        "evidence": {
+            "symbol": symbol,
+            "execution_date": rebalance_date.strftime("%Y-%m-%d"),
+        },
+        "affected_symbols": (symbol,),
+    }
     day = data[data["date"] == rebalance_date]
     if day.empty:
-        return [f"{symbol} has no bar on rebalance date {rebalance_date.date()}"]
+        _record_warning(
+            warnings,
+            warning_collector,
+            f"{symbol} has no bar on rebalance date {rebalance_date.date()}",
+            **metadata,
+        )
+        return warnings
     volume = pd.to_numeric(day["volume"], errors="coerce")
     if volume.isna().all():
-        return [f"{symbol} tradability unknown on {rebalance_date.date()}: volume missing"]
+        _record_warning(
+            warnings,
+            warning_collector,
+            f"{symbol} tradability unknown on {rebalance_date.date()}: volume missing",
+            **metadata,
+        )
+        return warnings
     if (volume <= 0).any():
-        return [f"{symbol} may be suspended or untradeable on {rebalance_date.date()}"]
-    return []
+        _record_warning(
+            warnings,
+            warning_collector,
+            f"{symbol} may be suspended or untradeable on {rebalance_date.date()}",
+            **metadata,
+        )
+    return warnings
 
 
 def _safe_part(value: str) -> str:
@@ -615,6 +791,7 @@ def _load_price_data(
     config: RealResearchConfig,
     provider: object,
     fetched_at: datetime,
+    warning_collector: Optional[StructuredWarningCollector] = None,
 ) -> tuple[pd.DataFrame, dict[str, object], list[str]]:
     cache = ParquetCache(config.cache_directory / "prices")
     fetch_start = config.price_fetch_start_date
@@ -633,16 +810,44 @@ def _load_price_data(
             frame = _prepare_price_frame(frame, fetch_start, fetch_end)
             covered, coverage_reason = _price_window_coverage(frame, fetch_start, fetch_end)
             if not covered:
-                warnings.append(
+                _record_warning(
+                    warnings,
+                    warning_collector,
                     f"{symbol} price cache does not cover fetch window; "
-                    f"provider retry used: {coverage_reason}"
+                    f"provider retry used: {coverage_reason}",
+                    code=WarningCode.PRICE_CACHE_UNAVAILABLE,
+                    severity=WarningSeverity.WARNING,
+                    scope=WarningScope.PRICE_PROVIDER,
+                    source="price_cache",
+                    evidence={
+                        "symbol": symbol,
+                        "fetch_start_date": fetch_start,
+                        "fetch_end_date": fetch_end,
+                        "reason_code": "insufficient_coverage",
+                    },
+                    affected_symbols=(symbol,),
+                    retryable=True,
                 )
                 frame = None
             else:
                 cache_used = True
                 source = str(_read_cache_metadata(cache_path).get("source") or source)
         except Exception as exc:
-            warnings.append(f"{symbol} price cache unreadable; provider retry used: {exc}")
+            _record_warning(
+                warnings,
+                warning_collector,
+                f"{symbol} price cache unreadable; provider retry used: {exc}",
+                code=WarningCode.PRICE_CACHE_UNAVAILABLE,
+                severity=WarningSeverity.WARNING,
+                scope=WarningScope.PRICE_PROVIDER,
+                source="price_cache",
+                evidence={
+                    "symbol": symbol,
+                    **safe_exception_evidence(exc, "cache_unreadable"),
+                },
+                affected_symbols=(symbol,),
+                retryable=True,
+            )
             frame = None
 
     if frame is None:
@@ -659,9 +864,17 @@ def _load_price_data(
                 f"provider data does not cover requested price fetch window: " f"{coverage_reason}"
             )
         if cache_preexisting:
-            warnings.append(
+            _record_warning(
+                warnings,
+                warning_collector,
                 f"{symbol} provider retry result was not cached because an "
-                "existing cache file was preserved"
+                "existing cache file was preserved",
+                code=WarningCode.PRICE_CACHE_UNAVAILABLE,
+                severity=WarningSeverity.WARNING,
+                scope=WarningScope.PRICE_PROVIDER,
+                source="price_cache",
+                evidence={"symbol": symbol, "reason_code": "existing_cache_preserved"},
+                affected_symbols=(symbol,),
             )
         else:
             cache.write(frame, symbol, fetch_start, fetch_end, config.price_adjust)
@@ -669,9 +882,39 @@ def _load_price_data(
 
     clean = _prepare_price_frame(frame, fetch_start, fetch_end)
     quality = check_price_quality(clean)
-    warnings.extend(f"{symbol} price quality error: {item}" for item in quality.errors)
-    warnings.extend(f"{symbol} price quality warning: {item}" for item in quality.warnings)
-    warnings.extend(_price_state_warnings(symbol, clean))
+    _record_warnings(
+        warnings,
+        warning_collector,
+        [f"{symbol} price quality error: {item}" for item in quality.errors],
+        code=WarningCode.PRICE_DATA_QUALITY_DEGRADED,
+        severity=WarningSeverity.ERROR,
+        scope=WarningScope.PRICE_PROVIDER,
+        source="price_quality",
+        evidence={"symbol": symbol, "quality_level": "error"},
+        affected_symbols=(symbol,),
+    )
+    _record_warnings(
+        warnings,
+        warning_collector,
+        [f"{symbol} price quality warning: {item}" for item in quality.warnings],
+        code=WarningCode.PRICE_DATA_QUALITY_DEGRADED,
+        severity=WarningSeverity.WARNING,
+        scope=WarningScope.PRICE_PROVIDER,
+        source="price_quality",
+        evidence={"symbol": symbol, "quality_level": "warning"},
+        affected_symbols=(symbol,),
+    )
+    _record_warnings(
+        warnings,
+        warning_collector,
+        _price_state_warnings(symbol, clean),
+        code=WarningCode.PRICE_DATA_QUALITY_DEGRADED,
+        severity=WarningSeverity.WARNING,
+        scope=WarningScope.PRICE_PROVIDER,
+        source="price_quality",
+        evidence={"symbol": symbol},
+        affected_symbols=(symbol,),
+    )
     metadata = _cache_metadata(
         "price",
         symbol,
@@ -699,6 +942,7 @@ def _load_fundamental_data(
     config: RealResearchConfig,
     provider: object,
     fetched_at: datetime,
+    warning_collector: Optional[StructuredWarningCollector] = None,
 ) -> tuple[FundamentalProviderResult, dict[str, object], list[str]]:
     directory = config.cache_directory / "fundamentals"
     directory.mkdir(parents=True, exist_ok=True)
@@ -725,7 +969,21 @@ def _load_fundamental_data(
             )
             cache_used = True
         except Exception as exc:
-            warnings.append(f"{symbol} fundamental cache unreadable; provider retry used: {exc}")
+            _record_warning(
+                warnings,
+                warning_collector,
+                f"{symbol} fundamental cache unreadable; provider retry used: {exc}",
+                code=WarningCode.FUNDAMENTAL_DATA_UNAVAILABLE,
+                severity=WarningSeverity.WARNING,
+                scope=WarningScope.FUNDAMENTAL,
+                source="fundamental_provider",
+                evidence={
+                    "symbol": symbol,
+                    **safe_exception_evidence(exc, "cache_unreadable"),
+                },
+                affected_symbols=(symbol,),
+                retryable=True,
+            )
 
     if provider_result is None:
         provider_result = provider.get_fundamentals(symbol, fetch_start, fetch_end)
@@ -744,9 +1002,17 @@ def _load_fundamental_data(
     )
     if provider_fetched:
         if cache_preexisting:
-            warnings.append(
+            _record_warning(
+                warnings,
+                warning_collector,
                 f"{symbol} fundamental provider retry result was not cached "
-                "because an existing cache file was preserved"
+                "because an existing cache file was preserved",
+                code=WarningCode.FUNDAMENTAL_DATA_UNAVAILABLE,
+                severity=WarningSeverity.WARNING,
+                scope=WarningScope.FUNDAMENTAL,
+                source="fundamental_provider",
+                evidence={"symbol": symbol, "reason_code": "existing_cache_preserved"},
+                affected_symbols=(symbol,),
             )
         else:
             provider_result.data.to_parquet(cache_path, index=False)
@@ -922,17 +1188,48 @@ def _candidate_for_date(
     fundamental_result: FundamentalProviderResult,
     factor_weights: Mapping[str, float],
     macro_available_date: Optional[str],
+    warning_collector: Optional[StructuredWarningCollector] = None,
 ) -> tuple[Optional[StockCandidate], dict[str, object], list[str]]:
     price_history = price_data[price_data["date"] <= signal_date].copy()
-    warnings = _tradability_warnings(symbol, price_data, execution_date)
-    warnings.extend(_future_fundamental_warnings(symbol, fundamental_result.data, signal_date))
+    warnings = _tradability_warnings(
+        symbol,
+        price_data,
+        execution_date,
+        warning_collector,
+    )
+    warnings.extend(
+        _future_fundamental_warnings(
+            symbol,
+            fundamental_result.data,
+            signal_date,
+            warning_collector,
+        )
+    )
     fundamental = latest_fundamental_asof(fundamental_result.data, symbol, signal_date)
     if fundamental is None:
-        warnings.append(
-            f"{symbol} has no fundamental record available by signal date " f"{signal_date.date()}"
+        _record_warning(
+            warnings,
+            warning_collector,
+            f"{symbol} has no fundamental record available by signal date " f"{signal_date.date()}",
+            code=WarningCode.FUNDAMENTAL_DATA_UNAVAILABLE,
+            severity=WarningSeverity.WARNING,
+            scope=WarningScope.FUNDAMENTAL,
+            source="fundamental_asof",
+            evidence={"symbol": symbol, "signal_date": signal_date.strftime("%Y-%m-%d")},
+            affected_symbols=(symbol,),
         )
     if not fundamental_result.point_in_time:
-        warnings.append(f"{symbol} fundamental source is not verified point-in-time")
+        _record_warning(
+            warnings,
+            warning_collector,
+            f"{symbol} fundamental source is not verified point-in-time",
+            code=WarningCode.FUNDAMENTAL_POINT_IN_TIME_REJECTED,
+            severity=WarningSeverity.WARNING,
+            scope=WarningScope.FUNDAMENTAL,
+            source="fundamental_asof",
+            evidence={"symbol": symbol, "point_in_time_verified": False},
+            affected_symbols=(symbol,),
+        )
 
     composite, factor_scores, factor_availability = _calculate_factor_scores(
         symbol,
@@ -949,16 +1246,34 @@ def _candidate_for_date(
         ]
         + (list(composite.warnings) if composite is not None else [])
     )
-    warnings.extend(
-        f"{symbol} signal {signal_date.date()} factor warning: {warning}"
-        for warning in factor_warnings
+    _record_warnings(
+        warnings,
+        warning_collector,
+        [
+            f"{symbol} signal {signal_date.date()} factor warning: {warning}"
+            for warning in factor_warnings
+        ],
+        code=WarningCode.FACTOR_DATA_INCOMPLETE,
+        severity=WarningSeverity.WARNING,
+        scope=WarningScope.FACTOR,
+        source="factor_pipeline",
+        evidence={"symbol": symbol, "signal_date": signal_date.strftime("%Y-%m-%d")},
+        affected_symbols=(symbol,),
     )
     if composite is None:
         candidate = None
-        warnings.append(
+        _record_warning(
+            warnings,
+            warning_collector,
             f"{symbol} has no available factor data at signal date "
             f"{signal_date.date()}; "
-            "candidate rejected"
+            "candidate rejected",
+            code=WarningCode.FACTOR_DATA_INCOMPLETE,
+            severity=WarningSeverity.WARNING,
+            scope=WarningScope.FACTOR,
+            source="factor_pipeline",
+            evidence={"symbol": symbol, "signal_date": signal_date.strftime("%Y-%m-%d")},
+            affected_symbols=(symbol,),
         )
     else:
         candidate = StockCandidate(
@@ -1027,6 +1342,7 @@ def _build_weight_schedule(
     fundamental_results: Mapping[str, FundamentalProviderResult],
     macro_data: pd.DataFrame,
     universe_provider: object,
+    warning_collector: Optional[StructuredWarningCollector] = None,
 ) -> tuple[dict[pd.Timestamp, dict[str, float]], pd.DataFrame, list[str]]:
     aligned_fetch_dates = _aligned_trading_dates(
         price_data, config.price_fetch_start_date, config.end_date
@@ -1052,7 +1368,16 @@ def _build_weight_schedule(
                 f"no aligned signal date exists before execution date "
                 f"{execution_text}; period remains cash"
             )
-            warnings.append(reason)
+            _record_warning(
+                warnings,
+                warning_collector,
+                reason,
+                code=WarningCode.PORTFOLIO_CONSTRUCTION_DEGRADED,
+                severity=WarningSeverity.WARNING,
+                scope=WarningScope.PORTFOLIO,
+                source="portfolio_builder",
+                evidence={"execution_date": execution_text, "reason_code": "signal_unavailable"},
+            )
             schedule[execution_date] = {symbol: 0.0 for symbol in all_symbols}
             snapshots.extend(
                 _skipped_signal_snapshot(
@@ -1067,21 +1392,50 @@ def _build_weight_schedule(
 
         signal_text = signal_date.strftime("%Y-%m-%d")
         universe = _universe_snapshot(universe_provider, signal_text)
-        warnings.extend(universe.warnings)
+        _record_warnings(
+            warnings,
+            warning_collector,
+            list(universe.warnings),
+            code=WarningCode.UNIVERSE_POINT_IN_TIME_UNVERIFIED,
+            severity=WarningSeverity.WARNING,
+            scope=WarningScope.UNIVERSE,
+            source="universe_provider",
+            evidence={"signal_date": signal_text, "point_in_time_verified": False},
+        )
         if not universe.point_in_time:
-            warnings.append(
-                f"universe at signal date {signal_text} is not verified " "historical membership"
+            _record_warning(
+                warnings,
+                warning_collector,
+                f"universe at signal date {signal_text} is not verified historical membership",
+                code=WarningCode.UNIVERSE_POINT_IN_TIME_UNVERIFIED,
+                severity=WarningSeverity.WARNING,
+                scope=WarningScope.UNIVERSE,
+                source="universe_provider",
+                evidence={"signal_date": signal_text, "point_in_time_verified": False},
             )
 
         eligible_symbols = [symbol for symbol in universe.symbols if symbol in price_data]
         missing_prices = sorted(set(universe.symbols) - set(eligible_symbols))
-        warnings.extend(
-            f"{symbol} excluded for execution {execution_text}: price data unavailable"
-            for symbol in missing_prices
-        )
+        for symbol in missing_prices:
+            _record_warning(
+                warnings,
+                warning_collector,
+                f"{symbol} excluded for execution {execution_text}: price data unavailable",
+                code=WarningCode.PRICE_PROVIDER_FAILED,
+                severity=WarningSeverity.ERROR,
+                scope=WarningScope.PRICE_PROVIDER,
+                source="price_provider",
+                evidence={
+                    "execution_date": execution_text,
+                    "reason_code": "price_unavailable",
+                },
+                affected_symbols=(symbol,),
+            )
 
         macro_score, macro_multiplier, macro_available_date, macro_warnings = _macro_asof(
-            macro_data, signal_date
+            macro_data,
+            signal_date,
+            warning_collector,
         )
         warnings.extend(macro_warnings)
         period_candidates: list[StockCandidate] = []
@@ -1103,6 +1457,7 @@ def _build_weight_schedule(
                 fundamental_result,
                 config.factor_weights,
                 macro_available_date,
+                warning_collector,
             )
             if candidate is not None:
                 period_candidates.append(candidate)
@@ -1110,9 +1465,16 @@ def _build_weight_schedule(
             warnings.extend(candidate_warnings)
 
         if period_candidates:
-            warnings.append(
+            _record_warning(
+                warnings,
+                warning_collector,
                 f"industry classification unavailable at signal date {signal_text}; "
-                "unknown-industry constraint is conservative"
+                "unknown-industry constraint is conservative",
+                code=WarningCode.PORTFOLIO_CONSTRUCTION_DEGRADED,
+                severity=WarningSeverity.WARNING,
+                scope=WarningScope.PORTFOLIO,
+                source="portfolio_builder",
+                evidence={"signal_date": signal_text, "industry": "unknown"},
             )
         portfolio = build_factor_portfolio(
             period_candidates,
@@ -1120,11 +1482,27 @@ def _build_weight_schedule(
             macro_regime=macro_score,
             macro_multiplier=macro_multiplier,
         )
-        warnings.extend(f"execution {execution_text}: {item}" for item in portfolio.warnings)
+        _record_warnings(
+            warnings,
+            warning_collector,
+            [f"execution {execution_text}: {item}" for item in portfolio.warnings],
+            code=WarningCode.PORTFOLIO_CONSTRUCTION_DEGRADED,
+            severity=WarningSeverity.WARNING,
+            scope=WarningScope.PORTFOLIO,
+            source="portfolio_builder",
+            evidence={"execution_date": execution_text},
+        )
         if not portfolio.target_weights:
-            warnings.append(
+            _record_warning(
+                warnings,
+                warning_collector,
                 f"no eligible target holdings for execution {execution_text}; "
-                "period remains cash"
+                "period remains cash",
+                code=WarningCode.PORTFOLIO_CONSTRUCTION_DEGRADED,
+                severity=WarningSeverity.WARNING,
+                scope=WarningScope.PORTFOLIO,
+                source="portfolio_builder",
+                evidence={"execution_date": execution_text, "holding_count": 0},
             )
 
         schedule[execution_date] = {
@@ -1180,9 +1558,134 @@ def _unavailable_benchmark(
     return result
 
 
+def _record_benchmark_attempt_warnings(
+    warnings: list[str],
+    warning_collector: Optional[StructuredWarningCollector],
+    loaded: object,
+    config: RealResearchConfig,
+) -> None:
+    messages = list(getattr(loaded, "warnings", ()))
+    if not messages:
+        return
+    diagnostic = dict(getattr(loaded, "diagnostic", {}))
+    symbol = str(diagnostic.get("canonical_symbol") or getattr(loaded, "canonical_symbol", ""))
+    attempts = [dict(item) for item in diagnostic.get("attempts", []) if isinstance(item, Mapping)]
+    artifact_refs = (f"benchmark_diagnostics.json#/benchmarks/{symbol}",)
+    cursor = 0
+
+    cache_attempts = [
+        attempt
+        for attempt in attempts
+        if attempt.get("status") != "success"
+        and (
+            attempt.get("provider") == "ParquetCache"
+            or dict(attempt.get("source_metadata") or {}).get("role") == "cache"
+        )
+    ]
+    for attempt in cache_attempts:
+        if cursor >= len(messages):
+            break
+        _record_warning(
+            warnings,
+            warning_collector,
+            messages[cursor],
+            code=WarningCode.BENCHMARK_CACHE_REJECTED,
+            severity=WarningSeverity.WARNING,
+            scope=WarningScope.BENCHMARK,
+            source="benchmark_cache",
+            evidence={
+                "canonical_symbol": symbol,
+                "reason_code": str(attempt.get("reason_code") or "cache_unreadable"),
+                "provider": str(attempt.get("provider") or "ParquetCache"),
+                "request_window": {
+                    "start_date": config.start_date,
+                    "end_date": config.end_date,
+                },
+            },
+            affected_symbols=(symbol,),
+            artifact_refs=artifact_refs,
+            retryable=True,
+        )
+        cursor += 1
+
+    provider_attempts = [
+        attempt
+        for attempt in attempts
+        if attempt.get("status") != "success" and attempt not in cache_attempts
+    ]
+    for attempt in provider_attempts:
+        if cursor >= len(messages):
+            break
+        fallback_succeeded = getattr(loaded, "status", None) == "success"
+        _record_warning(
+            warnings,
+            warning_collector,
+            messages[cursor],
+            code=(
+                WarningCode.BENCHMARK_PROVIDER_FALLBACK_USED
+                if fallback_succeeded
+                else WarningCode.BENCHMARK_DATA_UNAVAILABLE
+            ),
+            severity=WarningSeverity.WARNING,
+            scope=WarningScope.BENCHMARK,
+            source="benchmark_provider_chain",
+            evidence={
+                "canonical_symbol": symbol,
+                "reason_code": str(attempt.get("reason_code") or "provider_exception"),
+                "provider": str(attempt.get("provider") or "unknown"),
+                "request_window": {
+                    "start_date": config.start_date,
+                    "end_date": config.end_date,
+                },
+            },
+            affected_symbols=(symbol,),
+            artifact_refs=artifact_refs,
+            retryable=True,
+        )
+        cursor += 1
+
+    while cursor < len(messages):
+        cache_write_failed = diagnostic.get("cache_status") == "write_failed"
+        _record_warning(
+            warnings,
+            warning_collector,
+            messages[cursor],
+            code=(
+                WarningCode.BENCHMARK_CACHE_REJECTED
+                if cache_write_failed
+                else (
+                    WarningCode.BENCHMARK_PROVIDER_FALLBACK_USED
+                    if getattr(loaded, "status", None) == "success"
+                    else WarningCode.BENCHMARK_DATA_UNAVAILABLE
+                )
+            ),
+            severity=WarningSeverity.WARNING,
+            scope=WarningScope.BENCHMARK,
+            source="benchmark_cache" if cache_write_failed else "benchmark_provider_chain",
+            evidence={
+                "canonical_symbol": symbol,
+                "reason_code": (
+                    "cache_write_failed"
+                    if cache_write_failed
+                    else str(getattr(loaded, "reason_code", None) or "provider_exception")
+                ),
+                "provider": str(diagnostic.get("selected_provider") or "unknown"),
+                "request_window": {
+                    "start_date": config.start_date,
+                    "end_date": config.end_date,
+                },
+            },
+            affected_symbols=(symbol,),
+            artifact_refs=artifact_refs,
+            retryable=True,
+        )
+        cursor += 1
+
+
 def _run_benchmarks(
     config: RealResearchConfig,
     provider: object,
+    warning_collector: Optional[StructuredWarningCollector] = None,
 ) -> tuple[
     dict[str, dict[str, Any]],
     pd.DataFrame,
@@ -1207,7 +1710,12 @@ def _run_benchmarks(
         )
         diagnostics["benchmarks"][symbol] = loaded.diagnostic
         source_records.append(loaded.source_record)
-        warnings.extend(loaded.warnings)
+        _record_benchmark_attempt_warnings(
+            warnings,
+            warning_collector,
+            loaded,
+            config,
+        )
         if loaded.status != "success":
             reason = loaded.reason or "all benchmark providers failed"
             metrics[symbol] = _unavailable_benchmark(
@@ -1216,7 +1724,28 @@ def _run_benchmarks(
                 reason_code=loaded.reason_code,
                 diagnostics_available=True,
             )
-            warnings.append(f"benchmark {symbol} unavailable: {reason}")
+            diagnostic = dict(loaded.diagnostic)
+            _record_warning(
+                warnings,
+                warning_collector,
+                f"benchmark {symbol} unavailable: {reason}",
+                code=WarningCode.BENCHMARK_DATA_UNAVAILABLE,
+                severity=WarningSeverity.ERROR,
+                scope=WarningScope.BENCHMARK,
+                source="benchmark_provider_chain",
+                evidence={
+                    "canonical_symbol": symbol,
+                    "reason_code": str(loaded.reason_code or "provider_exception"),
+                    "provider": str(diagnostic.get("selected_provider") or "unavailable"),
+                    "request_window": {
+                        "start_date": config.start_date,
+                        "end_date": config.end_date,
+                    },
+                },
+                affected_symbols=(symbol,),
+                artifact_refs=(f"benchmark_diagnostics.json#/benchmarks/{symbol}",),
+                retryable=True,
+            )
             continue
         frame = loaded.data
         close = frame.set_index("date")["close"].sort_index()
@@ -1576,6 +2105,7 @@ def _prepare_market_inputs(
     price_provider: object,
     fundamental_provider: object,
     fetched_at: datetime,
+    warning_collector: Optional[StructuredWarningCollector] = None,
 ) -> tuple[
     dict[str, pd.DataFrame],
     dict[str, FundamentalProviderResult],
@@ -1590,7 +2120,11 @@ def _prepare_market_inputs(
     for symbol in config.candidate_symbols:
         try:
             frame, metadata, item_warnings = _load_price_data(
-                symbol, config, price_provider, fetched_at
+                symbol,
+                config,
+                price_provider,
+                fetched_at,
+                warning_collector,
             )
             if frame.empty:
                 raise ValueError("provider returned no usable prices")
@@ -1598,7 +2132,21 @@ def _prepare_market_inputs(
             source_records.append(metadata)
             warnings.extend(item_warnings)
         except Exception as exc:
-            warnings.append(f"{symbol} price provider failed: {exc}")
+            _record_warning(
+                warnings,
+                warning_collector,
+                f"{symbol} price provider failed: {exc}",
+                code=WarningCode.PRICE_PROVIDER_FAILED,
+                severity=WarningSeverity.ERROR,
+                scope=WarningScope.PRICE_PROVIDER,
+                source="price_provider",
+                evidence={
+                    "symbol": symbol,
+                    **safe_exception_evidence(exc, "provider_exception"),
+                },
+                affected_symbols=(symbol,),
+                retryable=True,
+            )
             source_records.append(
                 {
                     "data_type": "price",
@@ -1617,15 +2165,46 @@ def _prepare_market_inputs(
     for symbol in price_data:
         try:
             result, metadata, item_warnings = _load_fundamental_data(
-                symbol, config, fundamental_provider, fetched_at
+                symbol,
+                config,
+                fundamental_provider,
+                fetched_at,
+                warning_collector,
             )
             fundamentals[symbol] = result
             source_records.append(metadata)
             warnings.extend(item_warnings)
-            warnings.extend(f"{symbol} fundamental warning: {item}" for item in result.warnings)
+            _record_warnings(
+                warnings,
+                warning_collector,
+                [f"{symbol} fundamental warning: {item}" for item in result.warnings],
+                code=WarningCode.FUNDAMENTAL_DATA_UNAVAILABLE,
+                severity=WarningSeverity.WARNING,
+                scope=WarningScope.FUNDAMENTAL,
+                source="fundamental_provider",
+                evidence={
+                    "symbol": symbol,
+                    "point_in_time_verified": result.point_in_time,
+                },
+                affected_symbols=(symbol,),
+            )
         except Exception as exc:
             warning = f"{symbol} fundamental provider failed: {exc}"
-            warnings.append(warning)
+            _record_warning(
+                warnings,
+                warning_collector,
+                warning,
+                code=WarningCode.FUNDAMENTAL_DATA_UNAVAILABLE,
+                severity=WarningSeverity.ERROR,
+                scope=WarningScope.FUNDAMENTAL,
+                source="fundamental_provider",
+                evidence={
+                    "symbol": symbol,
+                    **safe_exception_evidence(exc, "provider_exception"),
+                },
+                affected_symbols=(symbol,),
+                retryable=True,
+            )
             fundamentals[symbol] = FundamentalProviderResult(
                 data=normalize_fundamental_data(pd.DataFrame()),
                 source=fundamental_provider.__class__.__name__,
@@ -1720,16 +2299,26 @@ def run_real_data_research(
     resolved_universe_provider = universe_provider or FixedStockUniverse(config.candidate_symbols)
 
     warnings: list[str] = []
+    warning_collector = StructuredWarningCollector()
+    input_warning_collector = StructuredWarningCollector()
     price_data, fundamental_results, source_records, input_warnings = _prepare_market_inputs(
         config,
         resolved_price_provider,
         resolved_fundamental_provider,
         started_at,
+        input_warning_collector,
     )
     warnings.extend(input_warnings)
+    warning_collector.commit_stage(input_warnings, input_warning_collector)
 
-    macro_data, macro_source, macro_warnings = _load_macro_data(config, macro_provider)
+    macro_warning_collector = StructuredWarningCollector()
+    macro_data, macro_source, macro_warnings = _load_macro_data(
+        config,
+        macro_provider,
+        macro_warning_collector,
+    )
     warnings.extend(macro_warnings)
+    warning_collector.commit_stage(macro_warnings, macro_warning_collector)
     source_records.append(
         {
             "data_type": "macro",
@@ -1751,14 +2340,17 @@ def run_real_data_research(
         }
     )
 
+    schedule_warning_collector = StructuredWarningCollector()
     weight_schedule, factor_snapshots, schedule_warnings = _build_weight_schedule(
         config,
         price_data,
         fundamental_results,
         macro_data,
         resolved_universe_provider,
+        schedule_warning_collector,
     )
     warnings.extend(schedule_warnings)
+    warning_collector.commit_stage(schedule_warnings, schedule_warning_collector)
     price_alignment = _price_alignment_summary(
         price_data,
         config.price_fetch_start_date,
@@ -1767,18 +2359,25 @@ def run_real_data_research(
     backtest_result, metrics = _run_portfolio_backtest(config, price_data, weight_schedule)
 
     resolved_index_provider = index_provider or default_index_provider_chain()
+    benchmark_warning_collector = StructuredWarningCollector()
     (
         benchmark_metrics,
         benchmark_curve,
         benchmark_sources,
         benchmark_warnings,
         benchmark_diagnostics,
-    ) = _run_benchmarks(config, resolved_index_provider)
+    ) = _run_benchmarks(
+        config,
+        resolved_index_provider,
+        benchmark_warning_collector,
+    )
     source_records.extend(benchmark_sources)
     warnings.extend(benchmark_warnings)
+    warning_collector.commit_stage(benchmark_warnings, benchmark_warning_collector)
 
     limitations = _point_in_time_limitations(config, fundamental_results, macro_data)
     warnings = _dedupe_warnings(warnings)
+    structured_warnings = warning_collector.project(warnings)
     coverage_summary = _build_coverage_summary(
         config,
         price_data,
@@ -1819,6 +2418,7 @@ def run_real_data_research(
         trades=pd.DataFrame(backtest_result["trade_log"]),
         factor_snapshots=factor_snapshots,
         warnings=warnings,
+        structured_warnings=structured_warnings,
         run_time=started_at,
     )
 
@@ -1840,5 +2440,10 @@ def run_real_data_research(
         run_status=run_status,
         coverage_summary=coverage_summary,
         warnings=warnings,
+        structured_warnings=(
+            [warning.to_dict() for warning in structured_warnings]
+            if structured_warnings is not None
+            else []
+        ),
         artifacts=artifacts,
     )

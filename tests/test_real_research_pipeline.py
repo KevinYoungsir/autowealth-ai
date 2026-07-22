@@ -25,6 +25,7 @@ from autowealth.data.fundamental_schema import (
     validate_fundamental_history,
 )
 from autowealth.data.index_provider import AShareIndexProvider
+from autowealth.data.index_provider_chain import IndexProviderChain
 from autowealth.data.quality import check_price_quality
 from autowealth.data.universe import UniverseSnapshot
 from autowealth.research.artifacts import REQUIRED_ARTIFACT_FILES, write_research_artifacts
@@ -33,6 +34,7 @@ from autowealth.research.real_pipeline import (
     load_real_research_config,
     run_real_data_research,
 )
+from autowealth.research.run_store import ResearchRunStore
 
 BENCHMARK_METRICS = {
     "annualized_return",
@@ -171,6 +173,18 @@ class MockUniverseProvider:
         )
 
 
+class UnverifiedUniverseProvider(MockUniverseProvider):
+    def get_universe(self, as_of_date: str) -> UniverseSnapshot:
+        self.calls.append(as_of_date)
+        return UniverseSnapshot(
+            as_of_date=as_of_date,
+            symbols=list(self.symbols),
+            source="mock_fixed_universe",
+            point_in_time=False,
+            warnings=["mock universe is not verified point-in-time"],
+        )
+
+
 class MockMacroProvider:
     def get_macro_data(self, start_date: str, end_date: str) -> pd.DataFrame:
         return pd.DataFrame(
@@ -245,6 +259,20 @@ class FailingIndexProvider(MockIndexProvider):
     def get_daily(self, symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
         self.calls.append(symbol)
         raise RuntimeError("mock benchmark endpoint unavailable")
+
+
+class FailingFundamentalProvider(MockFundamentalProvider):
+    def __init__(self, failed_symbol: str) -> None:
+        super().__init__()
+        self.failed_symbol = failed_symbol
+
+    def get_fundamentals(
+        self, symbol: str, start_date: str, end_date: str
+    ) -> FundamentalProviderResult:
+        if symbol == self.failed_symbol:
+            self.calls.append(symbol)
+            raise RuntimeError("mock fundamental endpoint unavailable")
+        return super().get_fundamentals(symbol, start_date, end_date)
 
 
 class EmptyMacroProvider:
@@ -496,6 +524,11 @@ def test_yearly_pipeline_is_point_in_time_and_writes_complete_artifacts(
         result.artifacts.files["warnings.json"].read_text(encoding="utf-8")
     )
     assert warning_payload["warnings"] == result.warnings
+    assert warning_payload["structured_warnings_schema_version"] == 1
+    assert warning_payload["structured_warnings"] == result.structured_warnings
+    assert len(result.structured_warnings) == len(result.warnings)
+    assert [warning["message"] for warning in result.structured_warnings] == result.warnings
+    assert len(result.warnings) == len(set(result.warnings))
     assert any("published after" in warning for warning in result.warnings)
     assert any("zero-volume" in warning for warning in result.warnings)
     assert any("mock provider warning" in warning for warning in result.warnings)
@@ -554,6 +587,83 @@ def test_five_year_pipeline_generates_five_year_schedule(tmp_path: Path) -> None
     rebalance_years = [int(date[:4]) for date in result.target_weights_by_date]
     assert rebalance_years == [2010, 2015, 2020]
     assert result.metrics["rebalance_frequency"] == "five_year"
+
+
+def test_unregistered_raw_warning_degrades_to_raw_only_without_changing_result(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    baseline_path = tmp_path / "baseline"
+    incomplete_path = tmp_path / "incomplete"
+    baseline_path.mkdir()
+    incomplete_path.mkdir()
+    baseline, *_ = _run_offline(baseline_path, "yearly")
+    original_load_macro_data = real_pipeline_module._load_macro_data
+    unregistered = "unregistered stage warning preserved verbatim"
+
+    def load_macro_with_unregistered_warning(config, provider, warning_collector=None):
+        frame, source, warnings = original_load_macro_data(
+            config,
+            provider,
+            warning_collector,
+        )
+        return frame, source, [*warnings, unregistered]
+
+    monkeypatch.setattr(
+        real_pipeline_module,
+        "_load_macro_data",
+        load_macro_with_unregistered_warning,
+    )
+    result, *_ = _run_offline(incomplete_path, "yearly")
+
+    warning_payload = json.loads(
+        result.artifacts.files["warnings.json"].read_text(encoding="utf-8")
+    )
+    assert warning_payload == {"warnings": result.warnings}
+    assert unregistered in result.warnings
+    assert result.warnings.count(unregistered) == 1
+    assert result.coverage_summary["warning_count"] == len(result.warnings)
+    assert len(result.warnings) == len(baseline.warnings) + 1
+    assert result.structured_warnings == []
+    assert result.run_status == baseline.run_status
+    assert result.metrics == baseline.metrics
+    pd.testing.assert_series_equal(result.equity_curve, baseline.equity_curve)
+    pd.testing.assert_frame_equal(result.benchmark_curve, baseline.benchmark_curve)
+    assert ResearchRunStore(result.run_directory.parent).read_structured_warnings(
+        result.run_id
+    ) == {
+        "structured_available": False,
+        "structured_status": "absent",
+        "structured_warnings_schema_version": None,
+        "structured_warnings": [],
+    }
+
+
+def test_benchmark_fallback_warning_does_not_change_success_status(tmp_path: Path) -> None:
+    symbols = ["600001", "000002"]
+    fallback = MockIndexProvider()
+    chain = IndexProviderChain([FailingIndexProvider(), fallback])
+
+    result = run_real_data_research(
+        _write_config(tmp_path, "yearly"),
+        price_provider=MockPriceProvider(),
+        fundamental_provider=MockFundamentalProvider(),
+        universe_provider=MockUniverseProvider(symbols),
+        macro_provider=MockMacroProvider(),
+        index_provider=chain,
+        git_commit="test-commit",
+    )
+
+    assert result.run_status == "success"
+    assert not result.benchmark_curve.empty
+    fallback_warnings = [
+        warning
+        for warning in result.structured_warnings
+        if warning["code"] == "benchmark_provider_fallback_used"
+    ]
+    assert fallback_warnings
+    assert fallback_warnings[0]["scope"] == "benchmark"
+    assert fallback_warnings[0]["evidence"]["provider"] == "FailingIndexProvider"
 
 
 def test_diagnostics_write_failure_does_not_publish_partial_run(
@@ -728,6 +838,75 @@ def test_price_cache_key_uses_fetch_window_and_incomplete_cache_is_preserved(
     assert any("price cache does not cover fetch window" in warning for warning in result.warnings)
 
 
+def test_price_cache_warning_is_discarded_when_provider_later_fails(
+    tmp_path: Path,
+) -> None:
+    config_path = _write_partial_config(tmp_path)
+    config = load_real_research_config(config_path)
+    cache = ParquetCache(config.cache_directory / "prices")
+    incomplete = _price_frame("600003")
+    incomplete = incomplete[incomplete["date"] >= pd.Timestamp(config.start_date)].reset_index(
+        drop=True
+    )
+    cache.write(
+        incomplete,
+        "600003",
+        config.price_fetch_start_date,
+        config.end_date,
+        config.price_adjust,
+    )
+
+    result = run_real_data_research(
+        config_path,
+        price_provider=FailingPriceProvider("600003"),
+        fundamental_provider=MockFundamentalProvider(),
+        universe_provider=MockUniverseProvider(config.candidate_symbols),
+        macro_provider=MockMacroProvider(),
+        index_provider=MockIndexProvider(),
+        git_commit="test-commit",
+    )
+
+    assert not any(
+        warning.startswith("600003 price cache does not cover fetch window")
+        for warning in result.warnings
+    )
+    assert "600003 price provider failed: mock price endpoint unavailable" in result.warnings
+    assert result.coverage_summary["warning_count"] == len(result.warnings)
+
+
+def test_fundamental_cache_warning_is_discarded_when_provider_later_fails(
+    tmp_path: Path,
+) -> None:
+    config_path = _write_partial_config(tmp_path)
+    config = load_real_research_config(config_path)
+    cache_directory = config.cache_directory / "fundamentals"
+    cache_directory.mkdir(parents=True, exist_ok=True)
+    cache_path = cache_directory / (
+        f"600003_{pd.Timestamp(config.fundamental_fetch_start_date):%Y%m%d}_"
+        f"{pd.Timestamp(config.end_date):%Y%m%d}.parquet"
+    )
+    cache_path.write_bytes(b"not parquet")
+
+    result = run_real_data_research(
+        config_path,
+        price_provider=MockPriceProvider(),
+        fundamental_provider=FailingFundamentalProvider("600003"),
+        universe_provider=MockUniverseProvider(config.candidate_symbols),
+        macro_provider=MockMacroProvider(),
+        index_provider=MockIndexProvider(),
+        git_commit="test-commit",
+    )
+
+    assert not any(
+        warning.startswith("600003 fundamental cache unreadable") for warning in result.warnings
+    )
+    assert (
+        "600003 fundamental provider failed: mock fundamental endpoint unavailable"
+        in result.warnings
+    )
+    assert result.coverage_summary["warning_count"] == len(result.warnings)
+
+
 def test_partial_coverage_sets_status_and_structures_benchmark_failure(
     tmp_path: Path,
 ) -> None:
@@ -735,7 +914,7 @@ def test_partial_coverage_sets_status_and_structures_benchmark_failure(
         _write_partial_config(tmp_path),
         price_provider=FailingPriceProvider("600003"),
         fundamental_provider=MockFundamentalProvider(),
-        universe_provider=MockUniverseProvider(["600001", "000002", "600003"]),
+        universe_provider=UnverifiedUniverseProvider(["600001", "000002", "600003"]),
         macro_provider=EmptyMacroProvider(),
         index_provider=FailingIndexProvider(),
         git_commit="test-commit",
@@ -767,6 +946,26 @@ def test_partial_coverage_sets_status_and_structures_benchmark_failure(
     assert benchmark_entry["metrics"] == {}
     assert benchmark_entry["reason_code"] == "provider_exception"
     assert benchmark_entry["diagnostics_available"] is True
+
+    structured = result.structured_warnings
+    assert [item["message"] for item in structured] == result.warnings
+    scopes = {item["scope"] for item in structured}
+    assert {
+        "price_provider",
+        "benchmark",
+        "fundamental",
+        "macro",
+        "universe",
+        "factor",
+        "portfolio",
+    } <= scopes
+    benchmark_warning = next(
+        item for item in structured if item["code"] == "benchmark_data_unavailable"
+    )
+    assert benchmark_warning["affected_symbols"] == ["000300"]
+    assert benchmark_warning["artifact_refs"] == ["benchmark_diagnostics.json#/benchmarks/000300"]
+    assert benchmark_warning["evidence"]["canonical_symbol"] == "000300"
+    assert result.run_status == "partial_success"
 
 
 def test_annual_returns_include_first_valid_year() -> None:

@@ -10,9 +10,15 @@ import uuid
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping, Optional, Union
+from typing import Any, Mapping, Optional, Sequence, Union
 
 import pandas as pd
+
+from autowealth.research.warnings import (
+    STRUCTURED_WARNINGS_SCHEMA_VERSION,
+    StructuredWarning,
+    validate_structured_warning_sequence,
+)
 
 PathLike = Union[str, Path]
 
@@ -73,6 +79,8 @@ def write_research_artifacts(
     trades: pd.DataFrame,
     factor_snapshots: pd.DataFrame,
     warnings: list[str],
+    structured_warnings: Optional[Sequence[StructuredWarning | Mapping[str, Any]]] = None,
+    structured_warnings_schema_version: int = STRUCTURED_WARNINGS_SCHEMA_VERSION,
     benchmark_diagnostics: Optional[Mapping[str, Any]] = None,
     run_id: Optional[str] = None,
     run_time: Optional[datetime] = None,
@@ -121,6 +129,8 @@ def write_research_artifacts(
             trades=trades,
             factor_snapshots=factor_snapshots,
             warnings=warnings,
+            structured_warnings=structured_warnings,
+            structured_warnings_schema_version=structured_warnings_schema_version,
         )
     except Exception:
         shutil.rmtree(run_directory, ignore_errors=True)
@@ -160,12 +170,29 @@ def _write_artifact_payloads(
     trades: pd.DataFrame,
     factor_snapshots: pd.DataFrame,
     warnings: list[str],
+    structured_warnings: Optional[Sequence[StructuredWarning | Mapping[str, Any]]],
+    structured_warnings_schema_version: int,
 ) -> None:
     _write_json(files["config.json"], config)
     _write_json(files["run_manifest.json"], manifest)
     _write_json(files["metrics.json"], metrics)
     _write_json(files["benchmark_metrics.json"], benchmark_metrics)
-    _write_json(files["warnings.json"], {"warnings": warnings})
+    warning_payload: dict[str, Any] = {"warnings": warnings}
+    if structured_warnings is not None:
+        normalized = validate_structured_warning_sequence(
+            warnings,
+            structured_warnings,
+            schema_version=structured_warnings_schema_version,
+        )
+        warning_payload.update(
+            {
+                "structured_warnings_schema_version": structured_warnings_schema_version,
+                "structured_warnings": [warning.to_dict() for warning in normalized],
+            }
+        )
+    elif structured_warnings_schema_version != STRUCTURED_WARNINGS_SCHEMA_VERSION:
+        raise ValueError("structured warnings schema version must be 1")
+    _write_json(files["warnings.json"], warning_payload)
     if benchmark_diagnostics is not None:
         _write_json(
             files["benchmark_diagnostics.json"],
