@@ -18,6 +18,13 @@ from autowealth.research.run_store import (
     ResearchRunStore,
     aggregate_warnings,
 )
+from autowealth.research.warnings import (
+    STRUCTURED_WARNINGS_SCHEMA_VERSION,
+    StructuredWarning,
+    WarningCode,
+    WarningScope,
+    WarningSeverity,
+)
 
 RUN_OLD = "20250101T000000Z_aaaaaaaaaa"
 RUN_NEW = "20250201T000000Z_bbbbbbbbbb"
@@ -161,6 +168,176 @@ def test_aggregates_warning_categories_without_changing_source() -> None:
     assert summary["raw_returned"] == 2
     assert summary["raw_truncated"] is True
     assert warnings["warnings"][0].startswith("600519")
+
+
+def test_valid_structured_warnings_are_additive_to_legacy_summary() -> None:
+    raw = [
+        "macro data is empty; neutral multiplier used",
+        "benchmark 000300 unavailable",
+    ]
+    structured = [
+        StructuredWarning(
+            code=WarningCode.MACRO_DATA_UNAVAILABLE,
+            severity=WarningSeverity.WARNING,
+            scope=WarningScope.MACRO,
+            message=raw[0],
+            source="macro_provider",
+        ).to_dict(),
+        StructuredWarning(
+            code=WarningCode.BENCHMARK_DATA_UNAVAILABLE,
+            severity=WarningSeverity.ERROR,
+            scope=WarningScope.BENCHMARK,
+            message=raw[1],
+            source="benchmark_provider_chain",
+            affected_symbols=("000300",),
+        ).to_dict(),
+    ]
+
+    summary = aggregate_warnings(
+        {
+            "warnings": raw,
+            "structured_warnings_schema_version": STRUCTURED_WARNINGS_SCHEMA_VERSION,
+            "structured_warnings": structured,
+        }
+    )
+
+    assert summary["structured_available"] is True
+    assert summary["structured_status"] == "valid"
+    assert summary["structured_warnings"] == structured
+    assert summary["severity_counts"] == {"info": 0, "warning": 1, "error": 1}
+    assert summary["scope_counts"]["macro"] == 1
+    assert summary["scope_counts"]["benchmark"] == 1
+    assert summary["categories"]["macro_data"] == 1
+    assert summary["categories"]["benchmark"] == 1
+
+
+def test_legacy_warning_artifact_reports_structured_absent(runs_root: Path) -> None:
+    store = ResearchRunStore(runs_root)
+
+    state = store.read_structured_warnings(RUN_OLD)
+
+    assert state == {
+        "structured_available": False,
+        "structured_status": "absent",
+        "structured_warnings_schema_version": None,
+        "structured_warnings": [],
+    }
+    assert aggregate_warnings(store.read_warnings(RUN_OLD))["total"] == 2
+
+
+@pytest.mark.parametrize(
+    "structured_fields",
+    [
+        {"structured_warnings": []},
+        {"structured_warnings_schema_version": 2, "structured_warnings": []},
+        {"structured_warnings_schema_version": 1, "structured_warnings": {}},
+        {
+            "structured_warnings_schema_version": 1,
+            "structured_warnings": [],
+        },
+        {
+            "structured_warnings_schema_version": 1,
+            "structured_warnings": [
+                {
+                    "code": "macro_data_unavailable",
+                    "severity": "warning",
+                    "scope": "macro",
+                    "message": "different message",
+                    "source": "macro_provider",
+                },
+                {
+                    "code": "benchmark_data_unavailable",
+                    "severity": "error",
+                    "scope": "benchmark",
+                    "message": "benchmark 000300 unavailable",
+                    "source": "benchmark_provider_chain",
+                },
+            ],
+        },
+        {
+            "structured_warnings_schema_version": 1,
+            "structured_warnings": [
+                {
+                    "code": "macro_data_unavailable",
+                    "severity": "warning",
+                    "scope": "macro",
+                    "message": "macro data is empty; neutral multiplier used",
+                    "source": "macro_provider",
+                    "evidence": {"value": float("nan")},
+                },
+                {
+                    "code": "benchmark_data_unavailable",
+                    "severity": "error",
+                    "scope": "benchmark",
+                    "message": "benchmark 000300 unavailable",
+                    "source": "benchmark_provider_chain",
+                },
+            ],
+        },
+    ],
+)
+def test_invalid_structured_fields_do_not_hide_raw_warnings(
+    runs_root: Path,
+    structured_fields: dict[str, object],
+) -> None:
+    path = runs_root / RUN_NEW / "warnings.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload.update(structured_fields)
+    _write_json(path, payload)
+
+    store = ResearchRunStore(runs_root)
+    raw = store.read_warnings(RUN_NEW)["warnings"]
+    summary = aggregate_warnings(store.read_warnings(RUN_NEW))
+
+    assert raw == [
+        "macro data is empty; neutral multiplier used",
+        "benchmark 000300 unavailable",
+    ]
+    assert summary["structured_status"] == "invalid"
+    assert summary["structured_available"] is False
+    assert summary["structured_warnings"] == []
+    assert summary["severity_counts"] == {"info": 0, "warning": 0, "error": 0}
+    assert store.get_summary(RUN_NEW)["run_status"] == "partial_success"
+
+
+def test_deep_structured_evidence_is_invalid_without_hiding_raw_warning() -> None:
+    evidence: dict[str, object] = {}
+    cursor = evidence
+    for _ in range(1_100):
+        nested: dict[str, object] = {}
+        cursor["nested"] = nested
+        cursor = nested
+    raw = ["macro data is empty; neutral multiplier used"]
+
+    summary = aggregate_warnings(
+        {
+            "warnings": raw,
+            "structured_warnings_schema_version": 1,
+            "structured_warnings": [
+                {
+                    "code": "macro_data_unavailable",
+                    "severity": "warning",
+                    "scope": "macro",
+                    "message": raw[0],
+                    "source": "macro_provider",
+                    "evidence": evidence,
+                }
+            ],
+        }
+    )
+
+    assert summary["structured_status"] == "invalid"
+    assert summary["structured_available"] is False
+    assert summary["structured_warnings"] == []
+    assert summary["raw_warnings"] == raw
+    assert summary["total"] == 1
+
+
+def test_missing_warnings_artifact_keeps_required_artifact_error(runs_root: Path) -> None:
+    (runs_root / RUN_OLD / "warnings.json").unlink()
+
+    with pytest.raises(ResearchArtifactNotFoundError, match="warnings.json"):
+        ResearchRunStore(runs_root).read_warnings(RUN_OLD)
 
 
 def test_empty_runs_directory_returns_empty_and_latest_is_clear(

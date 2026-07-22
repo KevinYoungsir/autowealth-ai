@@ -15,6 +15,8 @@
   factor snapshot 的 `signal_date` / `execution_date` 审计字段。
 - v0.16.0 PR2 增加统一 `IndexDataProvider`、canonical benchmark symbol、
   AKShare primary/fallback provider chain 和 `benchmark_diagnostics.json`。
+- v0.16.0 PR3 在现有 `warnings.json` 中增量增加 schema version 1 的 structured
+  warnings，并通过 RunStore、API 和确定性报告只读暴露；raw warning 保持兼容。
 
 ### 优化
 - 提升数据分析性能
@@ -33,12 +35,20 @@
   marker，旧缓存格式继续兼容读取。
 - 新基准诊断通过 RunStore、API 和确定性真实报告只读暴露；旧 run 缺少该可选
   artifact 时继续按原结构读取，`benchmark_metrics.json` 保持兼容。
+- Structured warning collector 按完整 raw 字符串保持首次顺序并同步去重；旧 run
+  返回 `absent`，损坏结构返回 `invalid`，均不改变 legacy 分类或运行状态。
+- Structured enrichment 改为阶段本地、best-effort 提交；漏登记时保留权威 raw
+  warning 并发布 raw-only artifact，不再把 metadata 完整性升级为研究任务失败。
 
 ### 安全
 - P0 不修改历史 research run，不访问真实网络，不调用 DeepSeek，不执行交易，
   不新增参数寻优或当前估值回填。
 - PR2 不伪造、插值或替代不可用基准；异常技术文本限制长度并脱敏，artifact
   采用 staging 后原子发布，写入失败不留下半成品 run。
+- PR3 对 structured evidence 强制 JSON-safe、有限浮点、相对 artifact 引用及
+  路径/凭据检查；不回填历史 warning，不从原文动态推断 code。
+- Structured evidence 增加 camelCase/PascalCase 凭据键识别、Bearer 脱敏和被标点
+  包裹的 Windows、UNC、POSIX 绝对路径拒绝，同时允许状态计数、URL 和相对引用。
 
 ## [0.15.1] - 2026-07-17
 

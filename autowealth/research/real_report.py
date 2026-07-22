@@ -730,6 +730,14 @@ def build_real_research_report(
             "warning_samples": dict(warning_summary["samples"]),
             "warnings": warnings,
             "warning_presentations": warning_presentations,
+            "structured_available": warning_summary["structured_available"],
+            "structured_status": warning_summary["structured_status"],
+            "structured_warnings_schema_version": warning_summary[
+                "structured_warnings_schema_version"
+            ],
+            "structured_warnings": list(warning_summary["structured_warnings"]),
+            "severity_counts": dict(warning_summary["severity_counts"]),
+            "scope_counts": dict(warning_summary["scope_counts"]),
             "price_coverage_ratio": _optional_float(coverage.get("price_coverage_ratio")),
             "requested_symbols": _strings(coverage.get("requested_symbols")),
             "successful_price_symbols": _strings(coverage.get("successful_price_symbols")),

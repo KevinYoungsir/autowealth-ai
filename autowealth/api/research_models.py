@@ -8,6 +8,8 @@ from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from autowealth.research.warnings import WarningCode
+
 RESEARCH_API_VERSION = "0.1.0"
 RESEARCH_API_EXPLANATION = (
     "Research API output is for analysis and education only; it is not a "
@@ -168,6 +170,28 @@ class ResearchRunListResponse(BaseModel):
     runs: List[ResearchRunSummary]
 
 
+class StructuredWarningPayload(BaseModel):
+    code: WarningCode
+    severity: Literal["info", "warning", "error"]
+    scope: Literal[
+        "price_provider",
+        "benchmark",
+        "fundamental",
+        "macro",
+        "universe",
+        "factor",
+        "portfolio",
+    ]
+    message: str
+    source: str
+    evidence: Dict[str, Any] = Field(default_factory=dict)
+    affected_symbols: List[str] = Field(default_factory=list)
+    artifact_refs: List[str] = Field(default_factory=list)
+    retryable: Optional[bool] = None
+    user_action: Optional[str] = None
+    documentation_ref: Optional[str] = None
+
+
 class WarningSummary(BaseModel):
     total: int
     categories: Dict[str, int]
@@ -175,6 +199,12 @@ class WarningSummary(BaseModel):
     raw_warnings: List[str] = Field(default_factory=list)
     raw_returned: int = 0
     raw_truncated: bool = False
+    structured_available: bool = False
+    structured_status: Literal["valid", "absent", "invalid"] = "absent"
+    structured_warnings_schema_version: Optional[int] = None
+    structured_warnings: List[StructuredWarningPayload] = Field(default_factory=list)
+    severity_counts: Dict[str, int] = Field(default_factory=dict)
+    scope_counts: Dict[str, int] = Field(default_factory=dict)
 
 
 class ResearchRunDetailResponse(BaseModel):

@@ -38,7 +38,7 @@ Next.js /api/research/runs/* proxy
 | 因子分析 | 因子覆盖、缺失数、实际复合权重 | manifest 覆盖摘要、`factor_snapshots.parquet` |
 | 宏观环境 | 宏观观察数、中性回退状态 | manifest `coverage_summary` |
 | 研究报告 | 确定性复核、风险、反方观点和研究边界 | 所选运行的 `/research/runs/{run_id}/report`；无真实运行时才使用 mock |
-| 警告摘要 | 分类计数与少量样例 | 原始 `warnings.json` 的只读聚合结果 |
+| 警告摘要 | legacy 分类、结构化状态、severity/scope 计数与样例 | `warnings.json` 的只读聚合结果 |
 | 系统状态 | API、目录、latest run 和数据来源 | `/research/health`、`/research/runs`、latest 摘要 |
 
 权益、持仓和因子接口均设有返回上限。权益曲线降采样会保留首尾点。通用
@@ -104,6 +104,12 @@ API 在不修改 `warnings.json` 的前提下聚合以下类别：
 报告中的 `warning_presentations` 是派生展示结构。`source_message`、原始顺序和
 总数不变；`display_message` 只提供中文类别说明，无法可靠翻译的 provider 错误
 仍通过折叠区展示原文。任何本地化都不会降低风险等级。
+
+新 run 还提供与 raw warning 同序的结构化 code、severity、scope、source 和安全
+evidence。看板应把 `structured_status=absent` 解释为旧 run，把 `invalid` 解释为
+结构化元数据不可用；两者都不得隐藏 raw warning、`partial_success` 或 benchmark
+`unavailable`。结构化 scope 不替代上述 legacy 分类，warning severity 也不替代
+报告 risk severity。
 
 ## 已知限制
 

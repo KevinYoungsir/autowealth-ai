@@ -23,7 +23,14 @@ from autowealth.research import (
     mock_price_data,
 )
 from autowealth.research.artifacts import write_research_artifacts
+import autowealth.research.run_store as run_store_module
 from autowealth.research.run_store import ResearchRunStore
+from autowealth.research.warnings import (
+    StructuredWarning,
+    WarningCode,
+    WarningScope,
+    WarningSeverity,
+)
 
 client = TestClient(app)
 REAL_RUN_ID = "20250201T000000Z_cccccccccc"
@@ -239,6 +246,7 @@ def test_real_run_list_latest_and_detail(real_runs_client: TestClient):
     assert detail.json()["metrics"]["annualized_return"] == 0.12
     assert detail.json()["benchmark_diagnostics"] == {}
     assert detail.json()["warning_summary"]["total"] == 3
+    assert detail.json()["warning_summary"]["structured_status"] == "valid"
 
 
 def test_real_run_detail_and_report_include_benchmark_diagnostics(
@@ -338,6 +346,15 @@ def test_real_run_report_is_deterministic_and_preserves_limitations(
     assert payload["benchmark_review"]["status"] == "unavailable"
     assert payload["benchmark_review"]["evidence"]["entries"]["000300"]["status"] == "unavailable"
     assert len(payload["data_quality_review"]["evidence"]["warnings"]) == 3
+    structured = payload["data_quality_review"]["evidence"]
+    assert structured["structured_available"] is True
+    assert structured["structured_status"] == "valid"
+    assert len(structured["structured_warnings"]) == 3
+    assert structured["severity_counts"] == {
+        "info": 0,
+        "warning": 2,
+        "error": 1,
+    }
     assert payload["research_boundaries"]["evidence"]["deepseek_called"] is False
     assert payload["research_boundaries"]["evidence"]["trading_executed"] is False
     assert payload["research_boundaries"]["evidence"]["source_artifacts"] == source_files
@@ -515,8 +532,183 @@ def test_real_run_holdings_factors_and_warnings(real_runs_client: TestClient):
     assert factors.json()["coverage_overall"]["value"]["coverage_ratio"] == 0.5
     assert factors.json()["records"][0]["composite_weights"]
     assert warnings.status_code == 200
-    assert warnings.json()["summary"]["total"] == 3
-    assert warnings.json()["summary"]["raw_returned"] == 2
+    summary = warnings.json()["summary"]
+    assert summary["total"] == 3
+    assert summary["raw_returned"] == 2
+    assert summary["structured_available"] is True
+    assert summary["structured_status"] == "valid"
+    assert summary["structured_warnings_schema_version"] == 1
+    assert [item["message"] for item in summary["structured_warnings"]] == [
+        "macro data is empty; neutral multiplier used",
+        "benchmark 000300 unavailable",
+        "factor warning: missing pe",
+    ]
+    assert summary["severity_counts"] == {"info": 0, "warning": 2, "error": 1}
+    assert summary["scope_counts"]["macro"] == 1
+    assert summary["scope_counts"]["benchmark"] == 1
+    assert summary["scope_counts"]["factor"] == 1
+    assert summary["categories"]["macro_data"] == 1
+    assert summary["categories"]["benchmark"] == 1
+    assert summary["categories"]["factor_coverage"] == 1
+    assert summary["samples"] == {
+        "macro_data": ["macro data is empty; neutral multiplier used"],
+        "benchmark": ["benchmark 000300 unavailable"],
+        "factor_coverage": ["factor warning: missing pe"],
+    }
+
+
+def test_real_run_raw_warning_compatibility_contract(
+    real_runs_client: TestClient,
+    real_runs_root: Path,
+) -> None:
+    expected_raw = [
+        "macro data is empty; neutral multiplier used",
+        "benchmark 000300 unavailable",
+        "factor warning: missing pe",
+    ]
+    artifact = json.loads(
+        (real_runs_root / REAL_RUN_ID / "warnings.json").read_text(encoding="utf-8")
+    )
+
+    response = real_runs_client.get(
+        f"/research/runs/{REAL_RUN_ID}/warnings?sample_limit=1&raw_limit=2"
+    )
+    report = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}/report")
+
+    assert response.status_code == 200
+    assert report.status_code == 200
+    summary = response.json()["summary"]
+    assert artifact["warnings"] == expected_raw
+    assert summary["total"] == 3
+    assert summary["categories"] == {
+        "price_provider": 0,
+        "price_quality": 0,
+        "fundamental_data": 0,
+        "point_in_time": 0,
+        "macro_data": 1,
+        "universe_bias": 0,
+        "portfolio_constraints": 0,
+        "factor_coverage": 1,
+        "benchmark": 1,
+        "system": 0,
+    }
+    assert summary["samples"] == {
+        "macro_data": [expected_raw[0]],
+        "benchmark": [expected_raw[1]],
+        "factor_coverage": [expected_raw[2]],
+    }
+    assert summary["raw_warnings"] == expected_raw[:2]
+    assert summary["raw_returned"] == 2
+    assert summary["raw_truncated"] is True
+    report_payload = report.json()
+    assert report_payload["warning_count"] == 3
+    assert report_payload["data_quality_review"]["evidence"]["warnings"] == expected_raw
+
+
+def test_real_run_warnings_old_artifact_returns_structured_absent(
+    real_runs_root: Path,
+) -> None:
+    path = real_runs_root / REAL_RUN_ID / "warnings.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload.pop("structured_warnings_schema_version")
+    payload.pop("structured_warnings")
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    legacy_client = TestClient(create_research_app(ResearchRunStore(real_runs_root)))
+
+    response = legacy_client.get(f"/research/runs/{REAL_RUN_ID}/warnings?raw_limit=20")
+    report = legacy_client.get(f"/research/runs/{REAL_RUN_ID}/report")
+
+    assert response.status_code == 200
+    summary = response.json()["summary"]
+    assert summary["structured_status"] == "absent"
+    assert summary["structured_available"] is False
+    assert summary["structured_warnings"] == []
+    assert len(summary["raw_warnings"]) == 3
+    assert report.status_code == 200
+    assert report.json()["data_quality_review"]["evidence"]["structured_status"] == "absent"
+
+
+def test_structured_warning_code_is_exposed_as_openapi_enum(
+    real_runs_client: TestClient,
+) -> None:
+    response = real_runs_client.get("/openapi.json")
+
+    assert response.status_code == 200
+    schema = response.json()["components"]["schemas"]["WarningCode"]
+    assert schema["type"] == "string"
+    assert schema["enum"] == [code.value for code in WarningCode]
+
+
+def test_real_run_warnings_corrupt_structured_fields_keep_raw_and_risk_flags(
+    real_runs_client: TestClient,
+    real_runs_root: Path,
+) -> None:
+    before = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}/report").json()
+    path = real_runs_root / REAL_RUN_ID / "warnings.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["structured_warnings"][0]["message"] = "mismatched structured message"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    response = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}/warnings?raw_limit=20")
+    after = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}/report").json()
+
+    assert response.status_code == 200
+    summary = response.json()["summary"]
+    assert summary["structured_status"] == "invalid"
+    assert summary["structured_available"] is False
+    assert summary["structured_warnings"] == []
+    assert len(summary["raw_warnings"]) == 3
+    assert after["run_status"] == "partial_success"
+    assert after["benchmark_status"] == "unavailable"
+    assert after["risk_flags"] == before["risk_flags"]
+
+
+def test_structured_recursion_error_returns_http_200_and_preserves_raw(
+    real_runs_client: TestClient,
+    monkeypatch,
+) -> None:
+    def raise_recursion_error(*args, **kwargs):
+        raise RecursionError("deep structured evidence")
+
+    monkeypatch.setattr(
+        run_store_module,
+        "validate_structured_warning_sequence",
+        raise_recursion_error,
+    )
+
+    response = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}/warnings?raw_limit=20")
+    report = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}/report")
+
+    assert response.status_code == 200
+    assert report.status_code == 200
+    summary = response.json()["summary"]
+    assert summary["structured_status"] == "invalid"
+    assert summary["structured_available"] is False
+    assert summary["structured_warnings"] == []
+    assert len(summary["raw_warnings"]) == 3
+    report_payload = report.json()
+    assert report_payload["run_status"] == "partial_success"
+    assert report_payload["benchmark_status"] == "unavailable"
+    assert report_payload["data_quality_review"]["evidence"]["structured_status"] == "invalid"
+
+
+def test_warning_scope_counts_do_not_depend_on_english_message_text(
+    real_runs_root: Path,
+) -> None:
+    path = real_runs_root / REAL_RUN_ID / "warnings.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["warnings"][0] = "opaque persisted warning"
+    payload["structured_warnings"][0]["message"] = "opaque persisted warning"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    api_client = TestClient(create_research_app(ResearchRunStore(real_runs_root)))
+
+    response = api_client.get(f"/research/runs/{REAL_RUN_ID}/warnings")
+
+    assert response.status_code == 200
+    summary = response.json()["summary"]
+    assert summary["structured_status"] == "valid"
+    assert summary["scope_counts"]["macro"] == 1
+    assert summary["categories"]["system"] == 1
 
 
 def test_real_run_not_found_returns_structured_404(
@@ -678,6 +870,36 @@ def _write_api_run(root: Path) -> None:
             "warnings": [""],
         }
     )
+    warnings = [
+        "macro data is empty; neutral multiplier used",
+        "benchmark 000300 unavailable",
+        "factor warning: missing pe",
+    ]
+    structured_warnings = [
+        StructuredWarning(
+            code=WarningCode.MACRO_DATA_UNAVAILABLE,
+            severity=WarningSeverity.WARNING,
+            scope=WarningScope.MACRO,
+            message=warnings[0],
+            source="macro_provider",
+        ),
+        StructuredWarning(
+            code=WarningCode.BENCHMARK_DATA_UNAVAILABLE,
+            severity=WarningSeverity.ERROR,
+            scope=WarningScope.BENCHMARK,
+            message=warnings[1],
+            source="benchmark_provider_chain",
+            affected_symbols=("000300",),
+            artifact_refs=("benchmark_diagnostics.json#/benchmarks/000300",),
+        ),
+        StructuredWarning(
+            code=WarningCode.FACTOR_DATA_INCOMPLETE,
+            severity=WarningSeverity.WARNING,
+            scope=WarningScope.FACTOR,
+            message=warnings[2],
+            source="factor_pipeline",
+        ),
+    ]
     write_research_artifacts(
         root,
         config={"experiment_name": "api artifact fixture"},
@@ -696,11 +918,8 @@ def _write_api_run(root: Path) -> None:
         holdings=holdings,
         trades=trades,
         factor_snapshots=factors,
-        warnings=[
-            "macro data is empty; neutral multiplier used",
-            "benchmark 000300 unavailable",
-            "factor warning: missing pe",
-        ],
+        warnings=warnings,
+        structured_warnings=structured_warnings,
         run_id=REAL_RUN_ID,
         run_time=datetime(2025, 2, 1, tzinfo=timezone.utc),
     )

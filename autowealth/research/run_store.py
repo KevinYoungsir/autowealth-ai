@@ -10,6 +10,12 @@ from typing import Any, Mapping, Optional
 
 import pandas as pd
 
+from autowealth.research.warnings import (
+    STRUCTURED_WARNINGS_SCHEMA_VERSION,
+    WarningScope,
+    WarningSeverity,
+    validate_structured_warning_sequence,
+)
 from autowealth.research.run_store_errors import (
     InvalidRunIdError,
     ResearchArtifactDecodeError,
@@ -175,6 +181,10 @@ class ResearchRunStore:
     def read_warnings(self, run_id: str) -> dict[str, Any]:
         return self._read_json(run_id, JSON_ARTIFACTS["warnings"])
 
+    def read_structured_warnings(self, run_id: str) -> dict[str, Any]:
+        """Return validated structured warning metadata without weakening raw reads."""
+        return structured_warning_state(self.read_warnings(run_id))
+
     def read_equity_curve(self, run_id: str) -> pd.DataFrame:
         return self._read_parquet(run_id, PARQUET_ARTIFACTS["equity_curve"])
 
@@ -255,6 +265,12 @@ def aggregate_warnings(
         category_samples = samples.setdefault(category, [])
         if len(category_samples) < sample_limit:
             category_samples.append(warning)
+    structured = structured_warning_state(payload)
+    severity_counts = {severity.value: 0 for severity in WarningSeverity}
+    scope_counts = {scope.value: 0 for scope in WarningScope}
+    for warning in structured["structured_warnings"]:
+        severity_counts[str(warning["severity"])] += 1
+        scope_counts[str(warning["scope"])] += 1
     return {
         "total": len(warnings),
         "categories": categories,
@@ -262,6 +278,52 @@ def aggregate_warnings(
         "raw_warnings": warnings[:raw_limit],
         "raw_returned": min(len(warnings), raw_limit),
         "raw_truncated": len(warnings) > raw_limit,
+        **structured,
+        "severity_counts": severity_counts,
+        "scope_counts": scope_counts,
+    }
+
+
+def structured_warning_state(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate additive structured fields while preserving legacy raw warnings."""
+    has_version = "structured_warnings_schema_version" in payload
+    has_warnings = "structured_warnings" in payload
+    if not has_version and not has_warnings:
+        return {
+            "structured_available": False,
+            "structured_status": "absent",
+            "structured_warnings_schema_version": None,
+            "structured_warnings": [],
+        }
+    if not has_version or not has_warnings:
+        return _invalid_structured_warning_state()
+
+    version = payload.get("structured_warnings_schema_version")
+    values = payload.get("structured_warnings")
+    if not isinstance(values, list):
+        return _invalid_structured_warning_state()
+    try:
+        normalized = validate_structured_warning_sequence(
+            _warning_values(payload),
+            values,
+            schema_version=version,
+        )
+    except (TypeError, ValueError, RecursionError):
+        return _invalid_structured_warning_state()
+    return {
+        "structured_available": True,
+        "structured_status": "valid",
+        "structured_warnings_schema_version": STRUCTURED_WARNINGS_SCHEMA_VERSION,
+        "structured_warnings": [warning.to_dict() for warning in normalized],
+    }
+
+
+def _invalid_structured_warning_state() -> dict[str, Any]:
+    return {
+        "structured_available": False,
+        "structured_status": "invalid",
+        "structured_warnings_schema_version": None,
+        "structured_warnings": [],
     }
 
 
