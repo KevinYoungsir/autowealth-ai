@@ -12,12 +12,21 @@ from autowealth.macro.position import equity_position_multiplier
 from autowealth.macro.regime import classify_macro_regime
 from autowealth.macro.schema import MacroIndicator, MacroRegime, MacroRiskScore
 from autowealth.macro.scoring import macro_dimension_scores, score_macro_environment
+from autowealth.macro.validation import (
+    MacroObservation,
+    MacroValidationResult,
+    adapt_macro_wide_frame,
+    validate_macro_observations,
+)
 
 __all__ = [
     "MacroIndicator",
     "MacroAsOfResult",
+    "MacroObservation",
     "MacroRegime",
     "MacroRiskScore",
+    "MacroValidationResult",
+    "adapt_macro_wide_frame",
     "classify_macro_regime",
     "equity_position_multiplier",
     "latest_macro_indicators",
@@ -26,5 +35,5 @@ __all__ = [
     "macro_dimension_scores",
     "score_macro_environment",
     "select_macro_asof",
+    "validate_macro_observations",
 ]
-

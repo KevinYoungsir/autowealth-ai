@@ -247,6 +247,7 @@ def test_real_run_list_latest_and_detail(real_runs_client: TestClient):
     assert detail.json()["benchmark_diagnostics"] == {}
     assert detail.json()["warning_summary"]["total"] == 3
     assert detail.json()["warning_summary"]["structured_status"] == "valid"
+    assert detail.json()["manifest"]["macro_validation_diagnostics"]["status"] == "empty"
 
 
 def test_real_run_detail_and_report_include_benchmark_diagnostics(
@@ -345,6 +346,25 @@ def test_real_run_report_is_deterministic_and_preserves_limitations(
     assert payload["warning_count"] == 3
     assert payload["benchmark_review"]["status"] == "unavailable"
     assert payload["benchmark_review"]["evidence"]["entries"]["000300"]["status"] == "unavailable"
+    assert payload["macro_review"]["status"] == "neutral_fallback"
+    assert payload["macro_review"]["evidence"]["macro_validation_diagnostics"] == {
+        "schema_version": 1,
+        "validation_mode": "shadow",
+        "status": "empty",
+        "reason_codes": ["empty_input"],
+        "raw_row_count": 0,
+        "valid_row_count": 0,
+        "rejected_row_count": 0,
+        "coverage_ratio": 0.0,
+        "indicator_count": 0,
+        "pit_summary": {
+            "signal_date_count": 1,
+            "fully_available_count": 0,
+            "partially_available_count": 0,
+            "unavailable_count": 1,
+            "reason_counts": {"no_pit_eligible_record": 1},
+        },
+    }
     assert len(payload["data_quality_review"]["evidence"]["warnings"]) == 3
     structured = payload["data_quality_review"]["evidence"]
     assert structured["structured_available"] is True
@@ -429,6 +449,303 @@ def test_real_run_report_locales_preserve_machine_fields_and_numbers(
     assert before == {
         filename: (run_directory / filename).read_bytes() for filename in source_files
     }
+
+
+def test_real_report_without_macro_validation_diagnostics_is_backward_compatible(
+    real_runs_client: TestClient,
+    real_runs_root: Path,
+) -> None:
+    baseline = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}/report").json()
+    manifest_path = real_runs_root / REAL_RUN_ID / "run_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest.pop("macro_validation_diagnostics")
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    response = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}/report")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["run_status"] == baseline["run_status"]
+    assert payload["macro_review"]["status"] == baseline["macro_review"]["status"]
+    assert payload["macro_review"]["evidence"]["macro_validation_diagnostics"] == {
+        "status": "absent"
+    }
+    assert payload["risk_flags"] == baseline["risk_flags"]
+
+
+@pytest.mark.parametrize(
+    "malformed_diagnostics",
+    [
+        "corrupt",
+        ["corrupt"],
+        {"level_1": {"level_2": {"level_3": {"level_4": {"value": 1}}}}},
+        {
+            "schema_version": 1,
+            "validation_mode": "shadow",
+            "status": "valid",
+            "reason_codes": ["success"],
+            "raw_row_count": "invalid",
+            "valid_row_count": 1,
+            "rejected_row_count": 0,
+            "coverage_ratio": 1.0,
+            "indicators": {},
+            "pit_summary": {},
+        },
+    ],
+    ids=["string", "array", "over-deep-object", "invalid-field-type"],
+)
+def test_malformed_macro_validation_diagnostics_do_not_change_report_status(
+    real_runs_client: TestClient,
+    real_runs_root: Path,
+    malformed_diagnostics: object,
+) -> None:
+    baseline_detail = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}").json()
+    baseline_report = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}/report").json()
+    manifest_path = real_runs_root / REAL_RUN_ID / "run_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["macro_validation_diagnostics"] = malformed_diagnostics
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    detail_response = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}")
+    report_response = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}/report")
+
+    assert detail_response.status_code == 200
+    assert report_response.status_code == 200
+    detail = detail_response.json()
+    payload = report_response.json()
+    assert detail["manifest"]["macro_validation_diagnostics"] == malformed_diagnostics
+    assert {
+        key: value
+        for key, value in detail["manifest"].items()
+        if key != "macro_validation_diagnostics"
+    } == {
+        key: value
+        for key, value in baseline_detail["manifest"].items()
+        if key != "macro_validation_diagnostics"
+    }
+    assert detail["summary"]["run_status"] == baseline_detail["summary"]["run_status"]
+    assert (
+        detail["warning_summary"]["raw_warnings"]
+        == baseline_detail["warning_summary"]["raw_warnings"]
+    )
+    assert payload["run_status"] == baseline_report["run_status"]
+    assert payload["macro_review"]["status"] == baseline_report["macro_review"]["status"]
+    assert payload["macro_review"]["evidence"]["macro_validation_diagnostics"] == {
+        "status": "invalid"
+    }
+    assert payload["risk_flags"] == baseline_report["risk_flags"]
+    assert (
+        payload["data_quality_review"]["evidence"]["warnings"]
+        == baseline_report["data_quality_review"]["evidence"]["warnings"]
+    )
+
+
+def _valid_macro_validation_diagnostics() -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "validation_mode": "shadow",
+        "status": "valid",
+        "reason_codes": ["success"],
+        "raw_row_count": 1,
+        "valid_row_count": 1,
+        "rejected_row_count": 0,
+        "coverage_ratio": 1.0,
+        "rejected_counts": {},
+        "source": "fixture_macro",
+        "indicators": {"pmi": {}},
+        "pit_summary": {
+            "signal_date_count": 1,
+            "fully_available_count": 1,
+            "partially_available_count": 0,
+            "unavailable_count": 0,
+            "reason_counts": {},
+        },
+    }
+
+
+def _assert_macro_diagnostics_rejected_safely(
+    client: TestClient,
+    root: Path,
+    diagnostics: object,
+) -> None:
+    baseline_detail = client.get(f"/research/runs/{REAL_RUN_ID}").json()
+    baseline_report = client.get(f"/research/runs/{REAL_RUN_ID}/report").json()
+    manifest_path = root / REAL_RUN_ID / "run_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["macro_validation_diagnostics"] = diagnostics
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    detail_response = client.get(f"/research/runs/{REAL_RUN_ID}")
+    report_response = client.get(f"/research/runs/{REAL_RUN_ID}/report")
+
+    assert detail_response.status_code == 200
+    assert report_response.status_code == 200
+    detail = detail_response.json()
+    report = report_response.json()
+    assert detail["manifest"]["macro_validation_diagnostics"] == diagnostics
+    assert detail["summary"]["run_status"] == baseline_detail["summary"]["run_status"]
+    assert (
+        detail["warning_summary"]["raw_warnings"]
+        == baseline_detail["warning_summary"]["raw_warnings"]
+    )
+    assert report["run_status"] == baseline_report["run_status"]
+    assert report["macro_review"]["status"] == baseline_report["macro_review"]["status"]
+    assert report["macro_review"]["evidence"]["macro_validation_diagnostics"] == {
+        "status": "invalid"
+    }
+    assert report["risk_flags"] == baseline_report["risk_flags"]
+    assert (
+        report["data_quality_review"]["evidence"]["warnings"]
+        == baseline_report["data_quality_review"]["evidence"]["warnings"]
+    )
+
+
+@pytest.mark.parametrize(
+    "coverage_ratio",
+    [10**400, True, False, "1e1000000", -0.1, 1.1],
+    ids=["huge-integer", "true", "false", "overflowing-string", "negative", "above-one"],
+)
+def test_untrusted_macro_coverage_ratio_never_breaks_report_api(
+    real_runs_client: TestClient,
+    real_runs_root: Path,
+    coverage_ratio: object,
+) -> None:
+    diagnostics = _valid_macro_validation_diagnostics()
+    diagnostics["coverage_ratio"] = coverage_ratio
+
+    _assert_macro_diagnostics_rejected_safely(
+        real_runs_client,
+        real_runs_root,
+        diagnostics,
+    )
+
+
+@pytest.mark.parametrize(
+    "coverage_ratio",
+    [float("nan"), float("inf"), float("-inf")],
+    ids=["nan", "positive-infinity", "negative-infinity"],
+)
+def test_non_finite_macro_coverage_is_invalid_without_changing_report(
+    real_runs_client: TestClient,
+    real_runs_root: Path,
+    coverage_ratio: float,
+) -> None:
+    baseline = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}/report").json()
+    manifest_path = real_runs_root / REAL_RUN_ID / "run_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    diagnostics = _valid_macro_validation_diagnostics()
+    diagnostics["coverage_ratio"] = coverage_ratio
+    manifest["macro_validation_diagnostics"] = diagnostics
+    manifest_path.write_text(json.dumps(manifest, allow_nan=True), encoding="utf-8")
+
+    response = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}/report")
+
+    assert response.status_code == 200
+    report = response.json()
+    assert report["run_status"] == baseline["run_status"]
+    assert report["macro_review"]["status"] == baseline["macro_review"]["status"]
+    assert report["macro_review"]["evidence"]["macro_validation_diagnostics"] == {
+        "status": "invalid"
+    }
+    assert report["risk_flags"] == baseline["risk_flags"]
+    assert (
+        report["data_quality_review"]["evidence"]["warnings"]
+        == baseline["data_quality_review"]["evidence"]["warnings"]
+    )
+
+
+def _invalid_macro_diagnostics_case(case: str) -> dict[str, object]:
+    diagnostics = _valid_macro_validation_diagnostics()
+    pit_summary = dict(diagnostics["pit_summary"])  # type: ignore[arg-type]
+    diagnostics["pit_summary"] = pit_summary
+
+    if case == "unknown_reason":
+        diagnostics["reason_codes"] = ["unknown_reason"]
+    elif case == "duplicate_reason":
+        diagnostics["reason_codes"] = ["success", "success"]
+    elif case == "overlong_reasons":
+        diagnostics["reason_codes"] = ["success"] * 14
+    elif case == "bool_count":
+        diagnostics["raw_row_count"] = True
+    elif case == "negative_count":
+        diagnostics["raw_row_count"] = -1
+    elif case == "valid_exceeds_raw":
+        diagnostics["valid_row_count"] = 2
+    elif case == "rejected_exceeds_raw":
+        diagnostics["rejected_row_count"] = 2
+    elif case == "disposition_mismatch":
+        diagnostics.update(raw_row_count=2, valid_row_count=1, coverage_ratio=0.5)
+    elif case == "pit_total_mismatch":
+        pit_summary["signal_date_count"] = 2
+    elif case == "rejected_reason_exceeds_total":
+        diagnostics.update(
+            status="partial",
+            reason_codes=["missing_indicator"],
+            raw_row_count=2,
+            valid_row_count=1,
+            rejected_row_count=1,
+            coverage_ratio=0.5,
+            rejected_counts={"missing_indicator": 2},
+        )
+    elif case == "pit_reason_exceeds_total":
+        pit_summary["reason_counts"] = {"future_observation": 2}
+    elif case == "coverage_mismatch":
+        diagnostics.update(
+            status="partial",
+            reason_codes=["missing_indicator"],
+            raw_row_count=2,
+            valid_row_count=1,
+            rejected_row_count=1,
+            coverage_ratio=0.75,
+            rejected_counts={"missing_indicator": 1},
+        )
+    elif case == "huge_count":
+        diagnostics.update(raw_row_count=10**400, valid_row_count=10**400)
+    elif case == "bool_rejected_reason_count":
+        diagnostics["rejected_counts"] = {"missing_indicator": True}
+    elif case == "negative_pit_reason_count":
+        pit_summary["reason_counts"] = {"future_observation": -1}
+    elif case == "unknown_rejected_reason":
+        diagnostics["rejected_counts"] = {"unknown_reason": 0}
+    elif case == "unknown_pit_reason":
+        pit_summary["reason_counts"] = {"unknown_reason": 0}
+    else:  # pragma: no cover - the parameter catalog is fixed below.
+        raise AssertionError(f"unknown diagnostics case: {case}")
+    return diagnostics
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "unknown_reason",
+        "duplicate_reason",
+        "overlong_reasons",
+        "bool_count",
+        "negative_count",
+        "valid_exceeds_raw",
+        "rejected_exceeds_raw",
+        "disposition_mismatch",
+        "pit_total_mismatch",
+        "rejected_reason_exceeds_total",
+        "pit_reason_exceeds_total",
+        "coverage_mismatch",
+        "huge_count",
+        "bool_rejected_reason_count",
+        "negative_pit_reason_count",
+        "unknown_rejected_reason",
+        "unknown_pit_reason",
+    ],
+)
+def test_macro_diagnostics_catalog_and_count_corruption_is_non_blocking(
+    real_runs_client: TestClient,
+    real_runs_root: Path,
+    case: str,
+) -> None:
+    _assert_macro_diagnostics_rejected_safely(
+        real_runs_client,
+        real_runs_root,
+        _invalid_macro_diagnostics_case(case),
+    )
 
 
 def test_real_run_report_rejects_unsupported_locale(
@@ -820,6 +1137,26 @@ def _write_api_run(root: Path) -> None:
                     "missing_count": 1,
                     "coverage_ratio": 0.5,
                 }
+            },
+        },
+        "macro_validation_diagnostics": {
+            "schema_version": 1,
+            "validation_mode": "shadow",
+            "status": "empty",
+            "reason_codes": ["empty_input"],
+            "raw_row_count": 0,
+            "valid_row_count": 0,
+            "rejected_row_count": 0,
+            "coverage_ratio": 0.0,
+            "rejected_counts": {},
+            "source": "fixture_macro",
+            "indicators": {},
+            "pit_summary": {
+                "signal_date_count": 1,
+                "fully_available_count": 0,
+                "partially_available_count": 0,
+                "unavailable_count": 1,
+                "reason_counts": {"no_pit_eligible_record": 1},
             },
         },
     }

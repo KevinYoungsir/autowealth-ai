@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import importlib
 import json
+from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -280,6 +282,20 @@ class EmptyMacroProvider:
         return pd.DataFrame()
 
 
+class InvalidShadowMacroProvider:
+    def get_macro_data(self, start_date: str, end_date: str) -> pd.DataFrame:
+        return pd.DataFrame(
+            [
+                {
+                    "date": "2009-12-01",
+                    "available_date": None,
+                    "pmi": 51.0,
+                    "source": "invalid_shadow_macro",
+                }
+            ]
+        )
+
+
 class MissingValuationFundamentalProvider(MockFundamentalProvider):
     def get_fundamentals(
         self, symbol: str, start_date: str, end_date: str
@@ -366,6 +382,71 @@ def _run_offline(tmp_path: Path, frequency: str):
         git_commit="test-commit",
     )
     return result, price_provider, fundamental_provider, universe_provider, index_provider
+
+
+def _run_shadow_case(
+    tmp_path: Path,
+    *,
+    enabled: bool,
+    macro_provider: object = None,
+):
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    symbols = ["600001", "000002"]
+    return run_real_data_research(
+        _write_config(tmp_path, "yearly"),
+        price_provider=MockPriceProvider(),
+        fundamental_provider=MockFundamentalProvider(),
+        universe_provider=MockUniverseProvider(symbols),
+        macro_provider=macro_provider or MockMacroProvider(),
+        index_provider=MockIndexProvider(),
+        run_time=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        git_commit="test-commit",
+        macro_validation_enabled=enabled,
+    )
+
+
+def _capture_macro_asof_outputs(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
+    captured: list[dict[str, object]] = []
+    original = real_pipeline_module._macro_asof
+
+    def capture(*args: object, **kwargs: object):
+        result = original(*args, **kwargs)
+        score, multiplier = result[0], result[1]
+        captured.append(
+            {
+                "score": asdict(score) if score is not None else None,
+                "multiplier": multiplier,
+            }
+        )
+        return result
+
+    monkeypatch.setattr(real_pipeline_module, "_macro_asof", capture)
+    return captured
+
+
+def _assert_shadow_business_outputs_equal(left, right) -> None:
+    assert left.run_status == right.run_status
+    assert left.warnings == right.warnings
+    assert left.structured_warnings == right.structured_warnings
+    assert left.coverage_summary["warning_count"] == right.coverage_summary["warning_count"]
+    assert left.metrics == right.metrics
+    assert left.benchmark_metrics == right.benchmark_metrics
+    assert left.target_weights_by_date == right.target_weights_by_date
+    pd.testing.assert_series_equal(left.equity_curve, right.equity_curve)
+    pd.testing.assert_frame_equal(left.benchmark_curve, right.benchmark_curve)
+    pd.testing.assert_frame_equal(left.factor_snapshots, right.factor_snapshots)
+    for artifact_name in ("holdings.parquet", "trades.parquet"):
+        pd.testing.assert_frame_equal(
+            pd.read_parquet(left.artifacts.files[artifact_name]),
+            pd.read_parquet(right.artifacts.files[artifact_name]),
+        )
+    left_manifest = json.loads(
+        left.artifacts.files["run_manifest.json"].read_text(encoding="utf-8")
+    )
+    right_manifest = json.loads(
+        right.artifacts.files["run_manifest.json"].read_text(encoding="utf-8")
+    )
+    assert left_manifest["run_status_reasons"] == right_manifest["run_status_reasons"]
 
 
 def test_baseline_config_parses() -> None:
@@ -587,6 +668,89 @@ def test_five_year_pipeline_generates_five_year_schedule(tmp_path: Path) -> None
     rebalance_years = [int(date[:4]) for date in result.target_weights_by_date]
     assert rebalance_years == [2010, 2015, 2020]
     assert result.metrics["rebalance_frequency"] == "five_year"
+
+
+def test_shadow_macro_validation_enabled_and_disabled_preserve_business_outputs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    macro_outputs = _capture_macro_asof_outputs(monkeypatch)
+    enabled = _run_shadow_case(tmp_path / "enabled", enabled=True)
+    enabled_macro_outputs = list(macro_outputs)
+    macro_outputs.clear()
+    disabled = _run_shadow_case(tmp_path / "disabled", enabled=False)
+    disabled_macro_outputs = list(macro_outputs)
+
+    _assert_shadow_business_outputs_equal(enabled, disabled)
+    assert enabled_macro_outputs == disabled_macro_outputs
+
+    enabled_manifest = json.loads(
+        enabled.artifacts.files["run_manifest.json"].read_text(encoding="utf-8")
+    )
+    disabled_manifest = json.loads(
+        disabled.artifacts.files["run_manifest.json"].read_text(encoding="utf-8")
+    )
+    diagnostics = enabled_manifest["macro_validation_diagnostics"]
+    assert diagnostics["validation_mode"] == "shadow"
+    assert diagnostics["status"] == "valid"
+    assert "macro_validation_diagnostics" not in disabled_manifest
+    serialized = json.dumps(diagnostics, sort_keys=True)
+    assert "raw_rows" not in serialized
+    assert str(tmp_path) not in serialized
+
+
+def test_invalid_shadow_macro_diagnostics_do_not_change_raw_outputs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    macro_outputs = _capture_macro_asof_outputs(monkeypatch)
+    enabled = _run_shadow_case(
+        tmp_path / "enabled",
+        enabled=True,
+        macro_provider=InvalidShadowMacroProvider(),
+    )
+    enabled_macro_outputs = list(macro_outputs)
+    macro_outputs.clear()
+    disabled = _run_shadow_case(
+        tmp_path / "disabled",
+        enabled=False,
+        macro_provider=InvalidShadowMacroProvider(),
+    )
+    disabled_macro_outputs = list(macro_outputs)
+
+    _assert_shadow_business_outputs_equal(enabled, disabled)
+    assert enabled_macro_outputs == disabled_macro_outputs
+    manifest = json.loads(enabled.artifacts.files["run_manifest.json"].read_text(encoding="utf-8"))
+    diagnostics = manifest["macro_validation_diagnostics"]
+    assert diagnostics["status"] == "invalid"
+    assert diagnostics["reason_codes"] == ["missing_available_date"]
+    assert diagnostics["rejected_counts"] == {"missing_available_date": 1}
+
+
+def test_shadow_validator_exception_is_non_blocking_and_sanitized(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    macro_outputs = _capture_macro_asof_outputs(monkeypatch)
+    baseline = _run_shadow_case(tmp_path / "baseline", enabled=False)
+    baseline_macro_outputs = list(macro_outputs)
+    macro_outputs.clear()
+
+    def fail_validation(*args: object, **kwargs: object) -> object:
+        raise RuntimeError("token=secret C:\\private\\macro.csv")
+
+    monkeypatch.setattr(real_pipeline_module, "validate_macro_observations", fail_validation)
+    result = _run_shadow_case(tmp_path / "exception", enabled=True)
+
+    _assert_shadow_business_outputs_equal(result, baseline)
+    assert macro_outputs == baseline_macro_outputs
+    manifest = json.loads(result.artifacts.files["run_manifest.json"].read_text(encoding="utf-8"))
+    diagnostics = manifest["macro_validation_diagnostics"]
+    assert diagnostics["status"] == "invalid"
+    assert diagnostics["exception_type"] == "RuntimeError"
+    serialized = json.dumps(diagnostics)
+    assert "secret" not in serialized
+    assert "private" not in serialized
 
 
 def test_unregistered_raw_warning_degrades_to_raw_only_without_changing_result(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -14,6 +15,7 @@ from autowealth.i18n import (
     present_persisted_text,
 )
 from autowealth.i18n.warning_presenter import present_warnings
+from autowealth.macro.validation import MACRO_REASON_CODES, PIT_REASON_CODES
 from autowealth.research.run_store import ResearchRunStore, aggregate_warnings
 
 REPORT_SOURCE_ARTIFACTS = (
@@ -25,6 +27,9 @@ REPORT_SOURCE_ARTIFACTS = (
     "factor_snapshots.parquet",
     "trades.parquet",
 )
+
+_MACRO_VALIDATION_STATUSES = {"valid", "partial", "invalid", "empty"}
+_MAX_MACRO_DIAGNOSTIC_COUNT = (1 << 63) - 1
 
 
 @dataclass(frozen=True)
@@ -71,11 +76,13 @@ def _localized_strings(
 
 
 def _optional_float(value: object) -> float | None:
+    if isinstance(value, bool):
+        return None
     try:
         parsed = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
-    return None if pd.isna(parsed) else parsed
+    return parsed if math.isfinite(parsed) else None
 
 
 def _optional_int(value: object) -> int | None:
@@ -343,9 +350,172 @@ def _performance_review(
     )
 
 
+def _macro_diagnostic_count(value: object, field_name: str) -> int:
+    if type(value) is not int or not 0 <= value <= _MAX_MACRO_DIAGNOSTIC_COUNT:
+        raise ValueError(f"{field_name} must be a bounded non-negative integer")
+    return value
+
+
+def _macro_reason_codes(value: object) -> list[str]:
+    if not isinstance(value, list) or not value or len(value) > len(MACRO_REASON_CODES):
+        raise ValueError("reason_codes must be a bounded non-empty list")
+    if not all(isinstance(item, str) for item in value):
+        raise ValueError("reason_codes must contain strings")
+    if len(set(value)) != len(value):
+        raise ValueError("reason_codes cannot contain duplicates")
+    unknown = set(value) - set(MACRO_REASON_CODES)
+    if unknown:
+        raise ValueError("reason_codes contain unsupported values")
+    selected = set(value)
+    return [code for code in MACRO_REASON_CODES if code in selected]
+
+
+def _macro_reason_counts(
+    value: object,
+    *,
+    catalog: tuple[str, ...],
+    maximum: int,
+    field_name: str,
+) -> dict[str, int]:
+    if not isinstance(value, Mapping) or len(value) > len(catalog):
+        raise ValueError(f"{field_name} must be a bounded mapping")
+    unknown = set(value) - set(catalog)
+    if unknown:
+        raise ValueError(f"{field_name} contains unsupported reason codes")
+    normalized: dict[str, int] = {}
+    for code in catalog:
+        if code not in value:
+            continue
+        count = _macro_diagnostic_count(value[code], f"{field_name}.{code}")
+        if count > maximum:
+            raise ValueError(f"{field_name}.{code} exceeds its aggregate count")
+        normalized[code] = count
+    return normalized
+
+
+def _parse_macro_validation_diagnostics(value: object) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError("macro diagnostics must be a mapping")
+    if type(value.get("schema_version")) is not int or value.get("schema_version") != 1:
+        raise ValueError("unsupported macro diagnostics schema version")
+    if value.get("validation_mode") != "shadow":
+        raise ValueError("unsupported macro validation mode")
+
+    status = value.get("status")
+    if status not in _MACRO_VALIDATION_STATUSES:
+        raise ValueError("unsupported macro validation status")
+    reason_codes = _macro_reason_codes(value.get("reason_codes"))
+
+    counts = {
+        name: _macro_diagnostic_count(value.get(name), name)
+        for name in ("raw_row_count", "valid_row_count", "rejected_row_count")
+    }
+    raw_count = counts["raw_row_count"]
+    valid_count = counts["valid_row_count"]
+    rejected_count = counts["rejected_row_count"]
+    if valid_count > raw_count or rejected_count > raw_count:
+        raise ValueError("macro row disposition count exceeds raw_row_count")
+    if valid_count + rejected_count != raw_count:
+        raise ValueError("macro row dispositions must partition raw_row_count")
+
+    rejected_counts = _macro_reason_counts(
+        value.get("rejected_counts"),
+        catalog=MACRO_REASON_CODES,
+        maximum=rejected_count,
+        field_name="rejected_counts",
+    )
+    if set(rejected_counts) - set(reason_codes):
+        raise ValueError("rejected_counts must be represented in reason_codes")
+
+    if status == "empty":
+        if raw_count or reason_codes != ["empty_input"]:
+            raise ValueError("empty diagnostics must describe empty input")
+    elif status == "valid":
+        if (
+            valid_count == 0
+            or rejected_count
+            or reason_codes
+            not in (
+                ["success"],
+                ["unsorted_dates"],
+            )
+        ):
+            raise ValueError("valid diagnostics have inconsistent row status")
+    elif status == "partial":
+        if (
+            valid_count == 0
+            or rejected_count == 0
+            or {"success", "empty_input"} & set(reason_codes)
+        ):
+            raise ValueError("partial diagnostics have inconsistent row status")
+    elif valid_count or {"success", "empty_input"} & set(reason_codes):
+        raise ValueError("invalid diagnostics have inconsistent row status")
+
+    coverage_ratio = _optional_float(value.get("coverage_ratio"))
+    if coverage_ratio is None or not 0.0 <= coverage_ratio <= 1.0:
+        raise ValueError("coverage_ratio must be finite and between zero and one")
+    expected_coverage = valid_count / raw_count if raw_count else 0.0
+    if not math.isclose(coverage_ratio, expected_coverage, rel_tol=0.0, abs_tol=1e-12):
+        raise ValueError("coverage_ratio does not match row counts")
+
+    pit = value.get("pit_summary")
+    if not isinstance(pit, Mapping):
+        raise ValueError("pit_summary must be a mapping")
+    pit_counts = {
+        name: _macro_diagnostic_count(pit.get(name), f"pit_summary.{name}")
+        for name in (
+            "signal_date_count",
+            "fully_available_count",
+            "partially_available_count",
+            "unavailable_count",
+        )
+    }
+    signal_count = pit_counts["signal_date_count"]
+    if (
+        pit_counts["fully_available_count"]
+        + pit_counts["partially_available_count"]
+        + pit_counts["unavailable_count"]
+        != signal_count
+    ):
+        raise ValueError("PIT availability counts must partition signal_date_count")
+    pit_reason_counts = _macro_reason_counts(
+        pit.get("reason_counts"),
+        catalog=PIT_REASON_CODES,
+        maximum=signal_count,
+        field_name="pit_summary.reason_counts",
+    )
+
+    indicators = value.get("indicators")
+    if not isinstance(indicators, Mapping):
+        raise ValueError("indicators must be a mapping")
+    return {
+        "schema_version": 1,
+        "validation_mode": "shadow",
+        "status": status,
+        "reason_codes": reason_codes,
+        **counts,
+        "coverage_ratio": coverage_ratio,
+        "indicator_count": len(indicators),
+        "pit_summary": {
+            **pit_counts,
+            "reason_counts": pit_reason_counts,
+        },
+    }
+
+
+def _compact_macro_validation(value: object) -> dict[str, Any]:
+    if value is None:
+        return {"status": "absent"}
+    try:
+        return _parse_macro_validation_diagnostics(value)
+    except Exception:  # Optional persisted diagnostics must not break the report.
+        return {"status": "invalid"}
+
+
 def _macro_review(
     coverage: Mapping[str, Any],
     factor_snapshots: pd.DataFrame,
+    macro_validation_diagnostics: object,
     locale: SupportedLocale,
 ) -> dict[str, Any]:
     observation_count = _optional_int(coverage.get("macro_observation_count")) or 0
@@ -372,6 +542,7 @@ def _macro_review(
             "macro_observation_count": observation_count,
             "regimes_in_factor_snapshots": regimes,
             "macro_available_dates": available_dates,
+            "macro_validation_diagnostics": _compact_macro_validation(macro_validation_diagnostics),
         },
         limitations=(
             [message(locale, "macro_missing_limitation")] if observation_count == 0 else []
@@ -763,7 +934,12 @@ def build_real_research_report(
         manifest=manifest,
     )
     performance_review = _performance_review(metrics, locale)
-    macro_review = _macro_review(coverage, inputs.factor_snapshots, locale)
+    macro_review = _macro_review(
+        coverage,
+        inputs.factor_snapshots,
+        manifest.get("macro_validation_diagnostics"),
+        locale,
+    )
 
     executive_summary = _section(
         run_status,
