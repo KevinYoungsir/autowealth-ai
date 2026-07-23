@@ -38,6 +38,15 @@ from autowealth.data.universe import (
     HistoricalUniverseProvider,
     UniverseSnapshot,
 )
+from autowealth.data.valuation_provider import (
+    HistoricalValuationProvider,
+    ValuationProviderResult,
+)
+from autowealth.data.valuation_schema import (
+    ValuationAvailability,
+    ValuationMetric,
+    ValuationRecord,
+)
 
 __all__ = [
     "AKShareIndexDailyProvider",
@@ -53,12 +62,17 @@ __all__ = [
     "FundamentalProviderResult",
     "FundamentalRecord",
     "HistoricalUniverseProvider",
+    "HistoricalValuationProvider",
     "IndexDataProvider",
     "IndexProviderChain",
     "MARKET_DATA_COLUMNS",
     "ParquetCache",
     "ProviderAttempt",
     "UniverseSnapshot",
+    "ValuationAvailability",
+    "ValuationMetric",
+    "ValuationProviderResult",
+    "ValuationRecord",
     "check_price_quality",
     "canonical_index_symbol",
     "eligible_fundamentals_asof",

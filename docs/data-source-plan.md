@@ -356,3 +356,24 @@ SHA256、行数、首末日期和 source 与 parquet 一致，且数据通过同
 内容完成后，最后原子替换 canonical `.meta.json` sidecar 作为 commit marker；
 marker 出现前的 generation 不会被 Loader 识别为成功缓存。旧版 canonical parquet
 加 sidecar 格式继续只读兼容，已有无效缓存仍不会被自动覆盖。
+
+## 15. 宏观校验与历史估值契约
+
+当前宏观宽表新增纯函数 adapter 和 shadow validator。它使用现有评分指标 catalog，
+区分记录 schema 有效性与相对 signal date 的 PIT 可用性，并要求显式
+`available_date`。校验只把有界聚合 diagnostics 写入新 run manifest，不过滤原
+DataFrame，不改变宏观评分、warning 或运行状态。该阶段尚未接入新的 macro
+provider，也未实现单位、频率和正式交易日历验证。
+
+历史估值新增 `pe_ttm`、`pb`、`ps_ttm`、`dividend_yield`、`market_cap` 的
+schema 与 provider protocol。记录只接受六位 canonical symbol；endpoint 专用代码
+只能由 provider adapter 转换。请求上下文显式包含 symbol、指标、起止日和
+`as_of_date`，晚于 as-of date 发布的记录不属于 PIT 可用数据。availability 使用
+严格 status/reason 矩阵，diagnostics 使用固定且有深度、键数、列表、字符串和
+16 KiB 总大小上限的 schema。
+
+当前没有生产 valuation provider、cache、provider chain 或 factor integration。
+契约只能验证日期字段存在、格式和顺序，不能证明供应商历史日期真实，也不能识别
+所有当前 snapshot 配伪造日期形成的历史序列。未来 provider 必须提供来源、版本、
+PIT 证据和真实历史序列 acceptance tests；本阶段不声称已经解决真实历史估值数据
+可得性。详细字段与 reason codes 见 `docs/macro-valuation-contract.md`。

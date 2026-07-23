@@ -56,6 +56,7 @@ from autowealth.factors.schema import CompositeFactorScore, FactorScore
 from autowealth.factors.readiness import factor_lookback_manifest
 from autowealth.macro.asof import load_macro_asof_csv, select_macro_asof
 from autowealth.macro.scoring import score_macro_environment
+from autowealth.macro.validation import adapt_macro_wide_frame, validate_macro_observations
 from autowealth.portfolio import PortfolioConstraints, StockCandidate, build_factor_portfolio
 from autowealth.research.artifacts import (
     OPTIONAL_ARTIFACT_FILES,
@@ -653,6 +654,78 @@ def _signal_date_before(
     if prior.empty:
         return None
     return pd.Timestamp(prior[-1]).normalize()
+
+
+def _shadow_signal_dates(
+    config: RealResearchConfig,
+    price_data: Mapping[str, pd.DataFrame],
+) -> list[str]:
+    aligned_fetch_dates = _aligned_trading_dates(
+        price_data, config.price_fetch_start_date, config.end_date
+    )
+    research_dates = aligned_fetch_dates[
+        (aligned_fetch_dates >= pd.Timestamp(config.start_date))
+        & (aligned_fetch_dates <= pd.Timestamp(config.end_date))
+    ]
+    execution_dates = generate_rebalance_dates(research_dates, config.rebalance_frequency)
+    signal_dates = [
+        _signal_date_before(aligned_fetch_dates, execution_date)
+        for execution_date in execution_dates
+    ]
+    return [value.strftime("%Y-%m-%d") for value in signal_dates if value is not None]
+
+
+def _safe_shadow_source(value: object) -> str:
+    candidate = str(value).strip()
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", candidate):
+        return candidate
+    return "unknown"
+
+
+def _invalid_macro_shadow_diagnostics(source: object, exc: BaseException) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "validation_mode": "shadow",
+        "status": "invalid",
+        "reason_codes": ["invalid_schema"],
+        "raw_row_count": 0,
+        "valid_row_count": 0,
+        "rejected_row_count": 0,
+        "coverage_ratio": 0.0,
+        "rejected_counts": {},
+        "source": _safe_shadow_source(source),
+        "indicators": {},
+        "pit_summary": {
+            "signal_date_count": 0,
+            "fully_available_count": 0,
+            "partially_available_count": 0,
+            "unavailable_count": 0,
+            "reason_counts": {},
+        },
+        "exception_type": type(exc).__name__[:100],
+        "safe_summary": "macro shadow validation could not safely process the input",
+    }
+
+
+def _validate_macro_shadow(
+    config: RealResearchConfig,
+    macro_data: pd.DataFrame,
+    price_data: Mapping[str, pd.DataFrame],
+    source: object,
+) -> dict[str, object]:
+    try:
+        records = adapt_macro_wide_frame(
+            macro_data,
+            source=_safe_shadow_source(source),
+        )
+        result = validate_macro_observations(
+            records,
+            signal_dates=_shadow_signal_dates(config, price_data),
+            source=_safe_shadow_source(source),
+        )
+        return result.to_dict()
+    except Exception as exc:  # Shadow validation must never block the research run.
+        return _invalid_macro_shadow_diagnostics(source, exc)
 
 
 def _tradability_warnings(
@@ -2005,10 +2078,11 @@ def _run_manifest(
     run_status_reasons: list[str],
     price_alignment: Mapping[str, object],
     benchmark_diagnostics: Mapping[str, Any],
+    macro_validation_diagnostics: Optional[Mapping[str, object]] = None,
 ) -> dict[str, object]:
     if run_status not in RUN_STATUSES:
         raise ValueError(f"unsupported run_status: {run_status}")
-    return {
+    manifest: dict[str, object] = {
         "artifact_schema_version": "2.0",
         "artifact_files": sorted(REQUIRED_ARTIFACT_FILES | OPTIONAL_ARTIFACT_FILES),
         "artifact_summary": {
@@ -2089,6 +2163,9 @@ def _run_manifest(
             "past backtest results do not determine future performance."
         ),
     }
+    if macro_validation_diagnostics is not None:
+        manifest["macro_validation_diagnostics"] = dict(macro_validation_diagnostics)
+    return manifest
 
 
 def _period_returns(values: object, date_format: str) -> dict[str, float]:
@@ -2277,6 +2354,7 @@ def run_real_data_research(
     index_provider: Optional[object] = None,
     run_time: Optional[datetime] = None,
     git_commit: Optional[str] = None,
+    macro_validation_enabled: bool = True,
 ) -> RealResearchResult:
     """Run one reproducible, point-in-time-aware A-share research experiment.
 
@@ -2338,6 +2416,12 @@ def run_real_data_research(
             "source": resolved_universe_provider.__class__.__name__,
             "configured_symbols": config.candidate_symbols,
         }
+    )
+
+    macro_validation_diagnostics = (
+        _validate_macro_shadow(config, macro_data, price_data, macro_source)
+        if macro_validation_enabled
+        else None
     )
 
     schedule_warning_collector = StructuredWarningCollector()
@@ -2404,6 +2488,7 @@ def run_real_data_research(
         run_status_reasons,
         price_alignment,
         benchmark_diagnostics,
+        macro_validation_diagnostics,
     )
     artifacts = write_research_artifacts(
         config.output_directory,

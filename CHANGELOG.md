@@ -17,6 +17,8 @@
   AKShare primary/fallback provider chain 和 `benchmark_diagnostics.json`。
 - v0.16.0 PR3 在现有 `warnings.json` 中增量增加 schema version 1 的 structured
   warnings，并通过 RunStore、API 和确定性报告只读暴露；raw warning 保持兼容。
+- v0.16.0 PR4 增加宏观 observation、shadow validation 与有界 manifest diagnostics，
+  并定义历史估值 metric、严格 canonical record、availability 和 provider protocol。
 
 ### 优化
 - 提升数据分析性能
@@ -39,6 +41,14 @@
   返回 `absent`，损坏结构返回 `invalid`，均不改变 legacy 分类或运行状态。
 - Structured enrichment 改为阶段本地、best-effort 提交；漏登记时保留权威 raw
   warning 并发布 raw-only artifact，不再把 metadata 完整性升级为研究任务失败。
+- 宏观校验在现有 as-of 与 scoring 之外旁路运行；开关关闭、记录无效或 validator
+  异常均不改变 warning、运行状态、宏观 multiplier、持仓、指标和曲线。
+- 真实报告在宏观 evidence 中增量展示压缩 diagnostics；旧 run 缺失字段或字段
+  损坏时分别显示 `absent` / `invalid`，不影响 HTTP 或报告风险等级。
+- 历史估值 availability 增加严格 status/reason 矩阵，并要求 requested、available、
+  missing metrics 完整分区；聚合入口验证 requested symbol、请求窗口和 `as_of_date`。
+- 估值 diagnostics 改为固定 schema，并限制嵌套深度、键数、列表长度、字符串长度
+  和 16 KiB JSON 总大小；provider code 只允许在 adapter 边界转换。
 
 ### 安全
 - P0 不修改历史 research run，不访问真实网络，不调用 DeepSeek，不执行交易，
@@ -49,6 +59,11 @@
   路径/凭据检查；不回填历史 warning，不从原文动态推断 code。
 - Structured evidence 增加 camelCase/PascalCase 凭据键识别、Bearer 脱敏和被标点
   包裹的 Windows、UNC、POSIX 绝对路径拒绝，同时允许状态计数、URL 和相对引用。
+- PR4 未接新的真实 macro provider；shadow diagnostics 只作为可选 manifest 字段写入，
+  可由现有 run detail/report API 间接读取，但没有新增专用 endpoint 或写接口。
+- Historical Valuation 保持 contract-only，不接 real pipeline、factor、artifact、API、
+  真实 provider、cache 或 chain。契约要求显式历史日期，但不能证明供应商日期真实性，
+  也不能检测所有当前 snapshot 伪装历史序列的情况。
 
 ## [0.15.1] - 2026-07-17
 
