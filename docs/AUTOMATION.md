@@ -1,4 +1,4 @@
-# AutoWealth AI - 自动化配置指南
+# AutoWealth AI - 自动化与发布配置指南
 
 > 本文档说明如何配置 AutoWealth AI 项目的 GitHub Actions 自动化工作流体系。
 
@@ -16,31 +16,34 @@
 
 | 工作流文件 | 触发条件 | 功能描述 | 所需 Secrets |
 |-----------|---------|---------|-------------|
-| `release.yml` | 推送 `v*` tag | 运行测试、创建 Release、构建上传 Python 包 | 无（使用 GITHUB_TOKEN） |
+| `ci.yml` | PR 或 push 到 `main` | 后端、前端和 Docker 离线门禁 | 无 |
+| `release.yml` | 人工推送严格 `vMAJOR.MINOR.PATCH` tag | 验证、测试、构建，最后创建 Release | 无（使用 GITHUB_TOKEN） |
 | `publish-twitter.yml` | 新 Release 发布 | 自动发 Twitter 推文 | TWITTER_API_KEY, TWITTER_API_SECRET, TWITTER_ACCESS_TOKEN, TWITTER_ACCESS_SECRET |
 | `publish-reddit.yml` | 新 Release 发布 | 自动发 Reddit 帖子 | REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET, REDDIT_USERNAME, REDDIT_PASSWORD |
 | `publish-devto.yml` | 新 Release 发布 | 自动交叉发布 Dev.to 文章 | DEVTO_API_KEY |
 | `community-notify.yml` | Star 里程碑 / 新 Release | Discord/Slack 社区通知 | DISCORD_WEBHOOK_URL, SLACK_WEBHOOK_URL（可选） |
-| `auto-tag.yml` | main 分支 CHANGELOG.md 变更 | 自动从 CHANGELOG 提取版本号并创建 tag | 无（使用 GITHUB_TOKEN） |
 | `weekly-report.yml` | 每周一 UTC 0:00 | 收集指标、生成周报、发送通知 | DISCORD_WEBHOOK_URL, SLACK_WEBHOOK_URL（可选） |
 
 ### 工作流依赖关系
 
 ```
-CHANGELOG.md 更新 → push 到 main
+Release Prep PR + External Publication Safety PR
         ↓
-  auto-tag.yml（自动创建 tag）
+main CI 全部通过
         ↓
-  release.yml（推送 tag 触发）
+人工在已验证的 main SHA 创建 annotated tag
         ↓
-  ┌─── publish-twitter.yml ───┐
-  ├─── publish-reddit.yml  ────┤
-  ├─── publish-devto.yml   ────┤（并行执行）
-  └─── community-notify.yml ──┘
+人工确认后 push tag
+        ↓
+release.yml：verify → backend/frontend/docker → package → GitHub Release
 
 weekly-report.yml（独立定时任务）
 community-notify.yml（Star 里程碑独立触发）
 ```
+
+`release.yml` 不创建或移动 tag，也不直接调用外部宣传工作流。Twitter、Reddit、
+Dev.to 和社区发布安全策略由独立的 External Publication Safety PR 处理；该 PR
+完成并确认外部宣传默认关闭前，不得推送正式 release tag。
 
 ---
 
@@ -48,7 +51,7 @@ community-notify.yml（Star 里程碑独立触发）
 
 ### 配置步骤
 
-1. 打开 GitHub 仓库：https://github.com/Jsoned/autowealth-ai
+1. 打开 GitHub 仓库：https://github.com/KevinYoungsir/autowealth-ai
 2. 进入 **Settings** > **Secrets and variables** > **Actions**
 3. 点击 **New repository secret**
 4. 按照下面的指南填入对应的 Secret 名称和值
@@ -75,9 +78,8 @@ community-notify.yml（Star 里程碑独立触发）
 |------------|------|---------|
 | `DISCORD_WEBHOOK_URL` | Discord 频道 Webhook URL | Discord 频道设置 > 整合 > Webhook |
 | `SLACK_WEBHOOK_URL` | Slack 频道 Webhook URL | Slack App 设置 > Incoming Webhooks |
-| `PYPI_API_TOKEN` | PyPI 发布 Token（可选） | [PyPI Account Settings](https://pypi.org/manage/account/token/) |
-
-> **注意**：如果不配置某个平台的 Secrets，对应的工作流步骤会自动跳过或报错提示，不会影响其他工作流的执行。
+> **注意**：v0.16.0 的核心 Release Workflow 不读取 PyPI Token，也不上传 PyPI。
+> 外部宣传与通知工作流的 Secret 和失败策略必须在独立安全 PR 中审查。
 
 ---
 
@@ -142,37 +144,31 @@ community-notify.yml（Star 里程碑独立触发）
 4. 创建 Webhook 并选择目标频道
 5. 复制 Webhook URL → `SLACK_WEBHOOK_URL`
 
-### 6. PyPI Token（可选）
+### 6. PyPI 发布状态
 
-1. 登录 [PyPI](https://pypi.org/)
-2. 进入 [Account Settings](https://pypi.org/manage/account/)
-3. 滚动到 **API tokens** 部分
-4. 点击 **Add API token**
-5. 复制 Token → `PYPI_API_TOKEN`
+v0.16.0 默认关闭 PyPI 发布。`release.yml` 不读取 `PYPI_API_TOKEN`，也不执行
+`twine upload`。未来启用前必须通过独立安全审查，明确凭据、审批、回滚和包名
+所有权。
 
 ---
 
 ## 工作流详细说明
 
-### release.yml - 自动发布 Release
+### release.yml - 失败关闭的核心发布
 
-**触发条件**：推送 `v*` 格式的 git tag
+**触发条件**：人工推送严格 `vMAJOR.MINOR.PATCH` annotated tag。工作流不创建 tag，
+也不响应 `main` push 自动发布。
 
 **执行流程**：
-1. 在 Python 3.9/3.10/3.11/3.12 上运行全部测试
-2. 运行 flake8 代码检查和 black 格式检查
-3. 从 `CHANGELOG.md` 提取当前版本的更新内容作为 Release Notes
-4. 创建 GitHub Release（如果版本号包含 rc/beta/alpha 则标记为预发布）
-5. 构建 Python 包（sdist + wheel）
-6. 上传包到 GitHub Release
-7. 可选：发布到 PyPI
+1. 验证严格 tag、产品版本、精确 CHANGELOG heading 和 `origin/main` 祖先关系。
+2. 安装 `.[dev,api]`，执行 Black、compileall 和完整离线 pytest。
+3. 执行前端 `npm ci`、测试、typecheck 和 build。
+4. 构建 `Dockerfile.api`，但不推送镜像。
+5. 构建并校验 wheel 与 sdist，拒绝版本不一致的制品。
+6. 严格提取当前版本 CHANGELOG 段；不存在时失败，不回退旧版本。
+7. 仅在所有门禁通过后，用 `gh release create --verify-tag` 创建 GitHub Release。
 
-**使用方式**：
-```bash
-# 更新 CHANGELOG.md 后，创建并推送 tag
-git tag v0.5.0
-git push origin v0.5.0
-```
+完整人工发布顺序见 `docs/release-process.md`。v0.16.0 不上传 PyPI。
 
 ### publish-twitter.yml - 自动发 Twitter
 
@@ -221,26 +217,20 @@ Open-source & free. Check it out 👇
 
 **通知渠道**：Discord 和/或 Slack（至少配置一个）
 
-### auto-tag.yml - 自动打 Tag
+### 人工创建正式 Tag
 
-**触发条件**：push 到 `main` 分支且 `CHANGELOG.md` 有变更
+`auto-tag.yml` 已删除。Release Prep 合并到 `main` 不会自动创建 tag，也不会自动
+发布。发布负责人必须在所有 CI 和发布前检查通过后，于已验证的 `main` SHA 上执行：
 
-**执行流程**：
-1. 从 `CHANGELOG.md` 提取最新版本号（`## [x.x.x]` 格式）
-2. 检查 tag 是否已存在
-3. 如果不存在，创建带注释的 git tag
-4. 推送 tag 到远程仓库，自动触发 `release.yml`
-
-**使用方式**：
 ```bash
-# 只需更新 CHANGELOG.md 并推送到 main 分支
-# 工作流会自动创建 tag 并触发发布流程
-vim CHANGELOG.md
-git add CHANGELOG.md
-git commit -m "docs: update CHANGELOG for v0.5.0"
-git push origin main
-# auto-tag.yml 自动执行 → 创建 tag → release.yml 自动执行
+git tag -a v0.16.0 -m "AutoWealth v0.16.0"
+git show v0.16.0
+git status --short
+git push origin v0.16.0
 ```
+
+`git push origin v0.16.0` 是显式发布操作，必须另行获得授权。正式 tag 不得删除、
+移动、复用或强制覆盖；失败后修复代码并发布新的补丁版本。
 
 ### weekly-report.yml - 每周自动报告
 
@@ -290,21 +280,22 @@ git push origin main
 - 确认 Key 没有多余的空格或换行符
 - 更新 GitHub Secret
 
-#### 4. auto-tag.yml 未触发
+#### 4. 推送 Tag 后 Release 未触发
 
 **可能原因**：
-- CHANGELOG.md 没有实际变更
-- Tag 已存在
-- push 的不是 `main` 分支
+- tag 不符合严格 `vMAJOR.MINOR.PATCH` 格式；
+- tag 没有推送到 `origin`；
+- tag commit 不在 `origin/main` 历史中；
+- 产品版本、tag 或 CHANGELOG heading 不一致。
 
 **排查步骤**：
 ```bash
-# 检查 CHANGELOG.md 是否有变更
-git diff HEAD~1 HEAD -- CHANGELOG.md
-
-# 检查 tag 是否已存在
-git tag -l v0.5.0
+git show v0.16.0
+git branch -r --contains v0.16.0
+python scripts/verify_release_metadata.py --expected-version 0.16.0 --tag v0.16.0
 ```
+
+不要通过删除、移动或重推同名正式 tag 处理失败。
 
 #### 5. weekly-report.yml 未执行
 
@@ -340,7 +331,8 @@ git tag -l v0.5.0
 
 2. **本地测试 Python 脚本**：将工作流中的 Python 脚本提取出来，在本地设置环境变量后运行
 
-3. **使用 workflow_dispatch**：所有工作流都支持手动触发，可以在 GitHub Actions 页面手动运行测试
+3. **核对触发条件**：核心 Release 只响应正式 tag push，不提供自动 tag 或
+   `main` push 发布入口。
 
 4. **检查 API 配额**：各平台 API 都有调用频率限制，频繁触发可能导致临时封禁
 

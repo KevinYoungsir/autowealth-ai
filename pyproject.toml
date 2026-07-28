@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "autowealth-ai"
-version = "0.1.0"
+version = "0.16.0"
 description = "基于多智能体的个人财富管理与投资决策引擎"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -57,10 +57,10 @@ api = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/autowealth/autowealth-ai"
-Repository = "https://github.com/autowealth/autowealth-ai"
-Documentation = "https://autowealth-ai.readthedocs.io"
-Issues = "https://github.com/autowealth/autowealth-ai/issues"
+Homepage = "https://github.com/KevinYoungsir/autowealth-ai"
+Repository = "https://github.com/KevinYoungsir/autowealth-ai"
+Documentation = "https://github.com/KevinYoungsir/autowealth-ai"
+Issues = "https://github.com/KevinYoungsir/autowealth-ai"
 
 [tool.setuptools.packages.find]
 where = ["."]
