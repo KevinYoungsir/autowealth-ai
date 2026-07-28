@@ -17,6 +17,12 @@ from autowealth.i18n import (
 from autowealth.i18n.warning_presenter import present_warnings
 from autowealth.macro.validation import MACRO_REASON_CODES, PIT_REASON_CODES
 from autowealth.research.run_store import ResearchRunStore, aggregate_warnings
+from autowealth.research.run_store_errors import ResearchArtifactDecodeError
+from autowealth.security import (
+    PublicSanitizationError,
+    PublicSanitizationLimits,
+    sanitize_public_payload,
+)
 
 REPORT_SOURCE_ARTIFACTS = (
     "run_manifest.json",
@@ -30,6 +36,17 @@ REPORT_SOURCE_ARTIFACTS = (
 
 _MACRO_VALIDATION_STATUSES = {"valid", "partial", "invalid", "empty"}
 _MAX_MACRO_DIAGNOSTIC_COUNT = (1 << 63) - 1
+REPORT_PUBLIC_SANITIZATION_LIMITS = PublicSanitizationLimits(
+    # Public benchmark diagnostics are already bounded by RunStore, then embedded
+    # below benchmark_review.evidence before this final report-wide pass.
+    max_depth=12,
+    max_mapping_items=512,
+    max_sequence_items=4096,
+    max_nodes=65536,
+    max_string_length=4096,
+    max_total_string_chars=2 * 1024 * 1024,
+    max_json_bytes=4 * 1024 * 1024,
+)
 
 
 @dataclass(frozen=True)
@@ -180,6 +197,12 @@ def _benchmark_review(
         "available": "benchmark_available_summary",
         "partial": "benchmark_partial_summary",
     }[status]
+    if not benchmark_diagnostics:
+        diagnostics_status = "absent"
+    elif benchmark_diagnostics.get("status") == "invalid":
+        diagnostics_status = "invalid"
+    else:
+        diagnostics_status = "available"
     return status, _section(
         status,
         message(locale, summary_key),
@@ -188,6 +211,7 @@ def _benchmark_review(
             "artifact_status": artifact_status,
             "entries": entries,
             "unavailable_reasons": unavailable,
+            "diagnostics_status": diagnostics_status,
             "provider_diagnostics": dict(benchmark_diagnostics),
         },
         limitations=(
@@ -991,7 +1015,7 @@ def build_real_research_report(
     if survivorship_bias_risk:
         boundary_limitations.append(present_persisted_text(survivorship_bias_risk, locale))
 
-    return {
+    report = {
         "run_id": run_id,
         "locale": locale,
         "data_source": "real_artifacts",
@@ -1029,3 +1053,13 @@ def build_real_research_report(
             limitations=boundary_limitations,
         ),
     }
+    try:
+        sanitized = sanitize_public_payload(
+            report,
+            limits=REPORT_PUBLIC_SANITIZATION_LIMITS,
+        )
+    except PublicSanitizationError as exc:
+        raise ResearchArtifactDecodeError("research report exceeds public safety limits") from exc
+    if type(sanitized) is not dict:  # pragma: no cover - report is fixed above.
+        raise TypeError("research report serialization must remain a mapping")
+    return sanitized

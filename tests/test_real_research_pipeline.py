@@ -36,7 +36,14 @@ from autowealth.research.real_pipeline import (
     load_real_research_config,
     run_real_data_research,
 )
-from autowealth.research.run_store import ResearchRunStore
+from autowealth.research.run_store import ResearchRunStore, aggregate_warnings
+from autowealth.research.warnings import (
+    StructuredWarning,
+    WarningCode,
+    WarningScope,
+    WarningSeverity,
+)
+from autowealth.security import contains_absolute_path
 
 BENCHMARK_METRICS = {
     "annualized_return",
@@ -263,6 +270,24 @@ class FailingIndexProvider(MockIndexProvider):
         raise RuntimeError("mock benchmark endpoint unavailable")
 
 
+class NamedFailingIndexProvider(MockIndexProvider):
+    def __init__(self, index: int) -> None:
+        super().__init__()
+        self.index = index
+        self.provider_name = f"benchmark_failure_{index:02d}"
+        self.endpoint = f"offline_endpoint_{index:02d}"
+
+    @property
+    def expected_reason_code(self) -> str:
+        return "empty_response" if self.index % 2 == 0 else "provider_exception"
+
+    def get_daily(self, symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
+        self.calls.append(symbol)
+        if self.index % 2:
+            raise RuntimeError("offline benchmark fixture failure")
+        return pd.DataFrame()
+
+
 class FailingFundamentalProvider(MockFundamentalProvider):
     def __init__(self, failed_symbol: str) -> None:
         super().__init__()
@@ -303,6 +328,60 @@ class MissingValuationFundamentalProvider(MockFundamentalProvider):
         result = super().get_fundamentals(symbol, start_date, end_date)
         result.data[["pe", "pb", "dividend_yield"]] = pd.NA
         return result
+
+
+SENSITIVE_PROVIDER_ERROR = (
+    "C:\\Users\\researcher\\cache.parquet "
+    "\\\\server\\share\\provider.json /tmp/provider-response.json "
+    "apiKey=key-secret accessToken=access-secret clientSecret=client-secret "
+    "Authorization: Bearer auth-secret Cookie: cookie-secret\n"
+    "Traceback (most recent call last):\n"
+    'File "D:\\private\\provider.py", line 1\n'
+    "RuntimeError at 0x7FFABCDEF123"
+)
+
+
+class SensitiveFailingPriceProvider(MockPriceProvider):
+    def __init__(self, failed_symbol: str) -> None:
+        super().__init__()
+        self.failed_symbol = failed_symbol
+
+    def get_daily(
+        self,
+        symbol: str,
+        start_date: str,
+        end_date: str,
+        adjust: str = "none",
+    ) -> pd.DataFrame:
+        if symbol == self.failed_symbol:
+            self.calls.append(symbol)
+            raise RuntimeError(SENSITIVE_PROVIDER_ERROR)
+        return super().get_daily(symbol, start_date, end_date, adjust)
+
+
+class SensitiveFailingFundamentalProvider(MockFundamentalProvider):
+    def __init__(self, failed_symbol: str) -> None:
+        super().__init__()
+        self.failed_symbol = failed_symbol
+
+    def get_fundamentals(
+        self, symbol: str, start_date: str, end_date: str
+    ) -> FundamentalProviderResult:
+        if symbol == self.failed_symbol:
+            self.calls.append(symbol)
+            raise RuntimeError(SENSITIVE_PROVIDER_ERROR)
+        return super().get_fundamentals(symbol, start_date, end_date)
+
+
+class SensitiveFailingMacroProvider:
+    def get_macro_data(self, start_date: str, end_date: str) -> pd.DataFrame:
+        raise RuntimeError(SENSITIVE_PROVIDER_ERROR)
+
+
+class SensitiveFailingIndexProvider(MockIndexProvider):
+    def get_daily(self, symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
+        self.calls.append(symbol)
+        raise RuntimeError(SENSITIVE_PROVIDER_ERROR)
 
 
 def _write_config(
@@ -447,6 +526,51 @@ def _assert_shadow_business_outputs_equal(left, right) -> None:
         right.artifacts.files["run_manifest.json"].read_text(encoding="utf-8")
     )
     assert left_manifest["run_status_reasons"] == right_manifest["run_status_reasons"]
+
+
+def _nested_strings(value: object) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [
+            item for key, child in value.items() for item in [str(key), *_nested_strings(child)]
+        ]
+    if isinstance(value, (list, tuple)):
+        return [item for child in value for item in _nested_strings(child)]
+    return []
+
+
+def test_warning_sanitization_degrades_to_raw_only_without_failing() -> None:
+    raw = [r"price provider failed: C:\private\cache.parquet"]
+
+    safe, structured = real_pipeline_module._sanitize_warning_outputs(raw, ())
+
+    assert safe == ["price provider failed: [redacted-absolute-path]"]
+    assert structured is None
+
+
+def test_oversized_structured_warning_projection_degrades_to_raw_only() -> None:
+    raw = [f"benchmark warning {index}" for index in range(280)]
+    evidence = {f"field_{index}": "x" * 500 for index in range(30)}
+    structured = tuple(
+        StructuredWarning(
+            code=WarningCode.BENCHMARK_DATA_UNAVAILABLE,
+            severity=WarningSeverity.WARNING,
+            scope=WarningScope.BENCHMARK,
+            message=message,
+            source="benchmark_provider_chain",
+            evidence=evidence,
+        )
+        for message in raw
+    )
+
+    safe, projected = real_pipeline_module._sanitize_warning_outputs(
+        raw,
+        structured,
+    )
+
+    assert safe == raw
+    assert projected is None
 
 
 def test_baseline_config_parses() -> None:
@@ -659,6 +783,19 @@ def test_yearly_pipeline_is_point_in_time_and_writes_complete_artifacts(
         "price_calendar_days": 450,
         "fundamental_years": 5,
     }
+    assert config_artifact["macro_csv_path"] == result.config.macro_csv_path.name
+    assert config_artifact["cache_directory"] == result.config.cache_directory.name
+    assert config_artifact["output_directory"] == result.config.output_directory.name
+    for artifact_name in (
+        "config.json",
+        "run_manifest.json",
+        "benchmark_diagnostics.json",
+        "warnings.json",
+    ):
+        artifact_payload = json.loads(
+            result.artifacts.files[artifact_name].read_text(encoding="utf-8")
+        )
+        assert not any(contains_absolute_path(value) for value in _nested_strings(artifact_payload))
     assert result.run_status == "success"
 
 
@@ -828,6 +965,76 @@ def test_benchmark_fallback_warning_does_not_change_success_status(tmp_path: Pat
     assert fallback_warnings
     assert fallback_warnings[0]["scope"] == "benchmark"
     assert fallback_warnings[0]["evidence"]["provider"] == "FailingIndexProvider"
+
+
+def test_35_plus_benchmark_attempts_keep_warning_enrichment_exact(
+    tmp_path: Path,
+) -> None:
+    symbols = ["600001", "000002"]
+    failures = [NamedFailingIndexProvider(index) for index in range(35)]
+    success = MockIndexProvider()
+    success.provider_name = "benchmark_success"
+    success.endpoint = "offline_success_endpoint"
+    chain = IndexProviderChain([*failures, success])
+
+    result = run_real_data_research(
+        _write_config(tmp_path, "yearly"),
+        price_provider=MockPriceProvider(),
+        fundamental_provider=MockFundamentalProvider(),
+        universe_provider=MockUniverseProvider(symbols),
+        macro_provider=MockMacroProvider(),
+        index_provider=chain,
+        git_commit="test-commit",
+    )
+
+    raw_attempt_warnings = [
+        warning
+        for warning in result.warnings
+        if warning.startswith("benchmark 000300 provider attempt ")
+    ]
+    structured_attempt_warnings = [
+        warning
+        for warning in result.structured_warnings
+        if warning["source"] == "benchmark_provider_chain"
+        and warning["code"] == "benchmark_provider_fallback_used"
+        and warning["message"].startswith("benchmark 000300 provider attempt ")
+    ]
+
+    assert result.run_status == "success"
+    assert len(raw_attempt_warnings) == len(failures)
+    assert len(structured_attempt_warnings) == len(failures)
+    for index, (provider, raw, structured) in enumerate(
+        zip(failures, raw_attempt_warnings, structured_attempt_warnings)
+    ):
+        expected = (
+            "benchmark 000300 provider attempt "
+            f"{provider.provider_name}/{provider.endpoint} failed: "
+            f"{provider.expected_reason_code}"
+        )
+        assert raw == expected
+        assert structured["message"] == expected
+        assert structured["evidence"]["provider"] == provider.provider_name
+        assert structured["evidence"]["reason_code"] == provider.expected_reason_code
+        assert result.warnings.index(raw) < len(result.warnings)
+        assert failures[index].calls == ["000300"]
+
+    assert success.calls == ["000300"]
+    diagnostics = json.loads(
+        result.artifacts.files["benchmark_diagnostics.json"].read_text(encoding="utf-8")
+    )["benchmarks"]["000300"]
+    assert diagnostics["attempts_total"] == 36
+    assert diagnostics["attempts_truncated"] is True
+    assert diagnostics["omitted_count"] == 4
+    assert len(diagnostics["attempts"]) == 32
+    assert [attempt["provider"] for attempt in diagnostics["attempts"]] == [
+        provider.provider_name for provider in failures[:32]
+    ]
+    assert failures[32].provider_name not in {
+        attempt["provider"] for attempt in diagnostics["attempts"]
+    }
+    assert success.provider_name not in {attempt["provider"] for attempt in diagnostics["attempts"]}
+    assert "attempt_count" not in diagnostics
+    assert "omitted_attempt_count" not in diagnostics
 
 
 def test_diagnostics_write_failure_does_not_publish_partial_run(
@@ -1034,7 +1241,7 @@ def test_price_cache_warning_is_discarded_when_provider_later_fails(
         warning.startswith("600003 price cache does not cover fetch window")
         for warning in result.warnings
     )
-    assert "600003 price provider failed: mock price endpoint unavailable" in result.warnings
+    assert "600003 price provider failed: RuntimeError [details redacted]" in result.warnings
     assert result.coverage_summary["warning_count"] == len(result.warnings)
 
 
@@ -1064,10 +1271,7 @@ def test_fundamental_cache_warning_is_discarded_when_provider_later_fails(
     assert not any(
         warning.startswith("600003 fundamental cache unreadable") for warning in result.warnings
     )
-    assert (
-        "600003 fundamental provider failed: mock fundamental endpoint unavailable"
-        in result.warnings
-    )
+    assert "600003 fundamental provider failed: RuntimeError [details redacted]" in result.warnings
     assert result.coverage_summary["warning_count"] == len(result.warnings)
 
 
@@ -1106,7 +1310,7 @@ def test_partial_coverage_sets_status_and_structures_benchmark_failure(
     benchmark_entry = benchmark_payload["000300"]
     assert benchmark_entry["status"] == "unavailable"
     assert benchmark_entry["symbol"] == "000300"
-    assert benchmark_entry["reason"] == "mock benchmark endpoint unavailable"
+    assert benchmark_entry["reason"] == "RuntimeError [details redacted]"
     assert benchmark_entry["metrics"] == {}
     assert benchmark_entry["reason_code"] == "provider_exception"
     assert benchmark_entry["diagnostics_available"] is True
@@ -1130,6 +1334,64 @@ def test_partial_coverage_sets_status_and_structures_benchmark_failure(
     assert benchmark_warning["artifact_refs"] == ["benchmark_diagnostics.json#/benchmarks/000300"]
     assert benchmark_warning["evidence"]["canonical_symbol"] == "000300"
     assert result.run_status == "partial_success"
+
+
+def test_sensitive_provider_failures_are_safe_in_every_new_json_artifact(
+    tmp_path: Path,
+) -> None:
+    config_path = _write_partial_config(tmp_path)
+    config = load_real_research_config(config_path)
+    result = run_real_data_research(
+        config_path,
+        price_provider=SensitiveFailingPriceProvider("600003"),
+        fundamental_provider=SensitiveFailingFundamentalProvider("000002"),
+        universe_provider=UnverifiedUniverseProvider(config.candidate_symbols),
+        macro_provider=SensitiveFailingMacroProvider(),
+        index_provider=SensitiveFailingIndexProvider(),
+        git_commit="test-commit",
+    )
+
+    assert result.run_status == "partial_success"
+    assert result.coverage_summary["warning_count"] == len(result.warnings)
+    assert [item["message"] for item in result.structured_warnings] == result.warnings
+    warning_summary = aggregate_warnings({"warnings": result.warnings}, raw_limit=1_000)
+    assert warning_summary["total"] == len(result.warnings)
+    assert warning_summary["categories"]["price_provider"] >= 1
+    assert warning_summary["categories"]["fundamental_data"] >= 1
+    assert warning_summary["categories"]["macro_data"] >= 1
+    assert warning_summary["categories"]["benchmark"] >= 1
+
+    json_artifacts = [
+        "config.json",
+        "run_manifest.json",
+        "metrics.json",
+        "benchmark_metrics.json",
+        "benchmark_diagnostics.json",
+        "warnings.json",
+    ]
+    forbidden_fragments = (
+        "C:\\Users\\researcher",
+        "\\\\server\\share",
+        "/tmp/provider-response.json",
+        "key-secret",
+        "access-secret",
+        "client-secret",
+        "auth-secret",
+        "cookie-secret",
+        "Traceback",
+        "0x7FFABCDEF123",
+    )
+    for artifact_name in json_artifacts:
+        payload = json.loads(result.artifacts.files[artifact_name].read_text(encoding="utf-8"))
+        serialized = json.dumps(payload, ensure_ascii=False)
+        assert all(fragment not in serialized for fragment in forbidden_fragments)
+        assert not any(contains_absolute_path(value) for value in _nested_strings(payload))
+
+    metadata_files = list(config.cache_directory.rglob("*.meta.json"))
+    assert metadata_files
+    for metadata_path in metadata_files:
+        payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+        assert not any(contains_absolute_path(value) for value in _nested_strings(payload))
 
 
 def test_annual_returns_include_first_valid_year() -> None:

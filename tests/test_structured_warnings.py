@@ -1,6 +1,8 @@
 """Unit tests for structured research warning primitives."""
 
-from datetime import datetime, timezone
+from collections import UserDict, defaultdict
+from collections.abc import Mapping, Sequence
+from datetime import date, datetime, timezone
 import json
 from pathlib import Path
 
@@ -9,6 +11,11 @@ import pytest
 
 from autowealth.research.artifacts import write_research_artifacts
 from autowealth.research.warnings import (
+    STRUCTURED_WARNING_EVIDENCE_MAX_DEPTH,
+    STRUCTURED_WARNING_EVIDENCE_MAX_JSON_BYTES,
+    STRUCTURED_WARNING_EVIDENCE_MAX_LIST_ITEMS,
+    STRUCTURED_WARNING_EVIDENCE_MAX_MAPPING_KEYS,
+    STRUCTURED_WARNING_EVIDENCE_MAX_STRING_LENGTH,
     STRUCTURED_WARNINGS_SCHEMA_VERSION,
     StructuredWarning,
     StructuredWarningCollector,
@@ -18,6 +25,46 @@ from autowealth.research.warnings import (
     safe_exception_evidence,
     validate_structured_warning_sequence,
 )
+from autowealth.security import validate_bounded_json
+
+
+class _CustomEvidence:
+    pass
+
+
+class _CustomList(list):
+    def __iter__(self):
+        raise AssertionError("list subclasses must not be iterated")
+
+    def __len__(self):
+        raise AssertionError("list subclass length must not be trusted")
+
+
+class _CustomTuple(tuple):
+    def __iter__(self):
+        raise AssertionError("tuple subclasses must not be iterated")
+
+    def __len__(self):
+        raise AssertionError("tuple subclass length must not be trusted")
+
+
+class _UnboundedEvidence(Mapping):
+    def __getitem__(self, key):
+        raise AssertionError("custom evidence must not be indexed")
+
+    def __iter__(self):
+        raise AssertionError("custom evidence must not be iterated")
+
+    def __len__(self):
+        raise AssertionError("custom evidence length must not be trusted")
+
+
+class _UnboundedSequence(Sequence):
+    def __getitem__(self, index):
+        raise AssertionError("custom sequence must not be indexed")
+
+    def __len__(self):
+        raise AssertionError("custom sequence length must not be trusted")
 
 
 def _warning(**overrides: object) -> StructuredWarning:
@@ -67,8 +114,19 @@ def test_schema_rejects_invalid_required_values(field: str, value: str):
         {"value": float("nan")},
         {"value": float("inf")},
         {"value": Path("relative.parquet")},
+        {"value": date(2025, 1, 1)},
         {"value": datetime(2025, 1, 1, tzinfo=timezone.utc)},
         {"value": RuntimeError("offline fixture")},
+        {"value": b"offline fixture"},
+        {"value": _CustomEvidence()},
+        {"value": {"not", "json"}},
+        {"value": frozenset({"not", "json"})},
+        {"value": (item for item in range(2))},
+        {"exception": "RuntimeError: raw provider response"},
+        {"rawException": "RuntimeError: raw provider response"},
+        {"providerResponse": {"status": 500, "body": "raw response"}},
+        {"D:\\private\\field": "value"},
+        {"Authorization: Bearer key-secret": "value"},
         {"path": "D:\\private\\research.json"},
         {"path": "failed at /tmp/research.json"},
         {"uri": "read file:///tmp/research.json"},
@@ -79,6 +137,79 @@ def test_schema_rejects_invalid_required_values(field: str, value: str):
 def test_schema_rejects_unsafe_evidence(unsafe: object):
     with pytest.raises((TypeError, ValueError)):
         _warning(evidence=unsafe)
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    [
+        UserDict({"value": 1}),
+        defaultdict(int, {"value": 1}),
+        _UnboundedEvidence(),
+        {"values": _CustomList([1, 2])},
+        {"values": _CustomTuple((1, 2))},
+        {"values": _UnboundedSequence()},
+        {"values": (item for item in range(2))},
+    ],
+)
+def test_evidence_rejects_non_exact_containers_without_expanding_them(
+    evidence: object,
+) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        _warning(evidence=evidence)
+
+
+def test_evidence_accepts_exact_tuple_and_normalizes_it_deterministically() -> None:
+    warning = _warning(evidence={"values": (1, {"nested": [2, 3]})})
+
+    assert warning.to_dict()["evidence"] == {"values": [1, {"nested": [2, 3]}]}
+    assert StructuredWarning.from_dict(warning.to_dict()) == warning
+
+
+def _validate_evidence_value(value: object) -> object:
+    return validate_bounded_json(
+        value,
+        field_name="evidence",
+        maximum_depth=STRUCTURED_WARNING_EVIDENCE_MAX_DEPTH,
+        maximum_mapping_keys=STRUCTURED_WARNING_EVIDENCE_MAX_MAPPING_KEYS,
+        maximum_list_items=STRUCTURED_WARNING_EVIDENCE_MAX_LIST_ITEMS,
+        maximum_string_length=STRUCTURED_WARNING_EVIDENCE_MAX_STRING_LENGTH,
+        maximum_json_bytes=STRUCTURED_WARNING_EVIDENCE_MAX_JSON_BYTES,
+    )
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (7, 7),
+        ((1, 2), [1, 2]),
+        ({"depth_1": [1]}, {"depth_1": [1]}),
+        ({"depth_1": [{"depth_2": 2}]}, {"depth_1": [{"depth_2": 2}]}),
+        (
+            {"depth_1": [{"depth_2": (1, 2)}]},
+            {"depth_1": [{"depth_2": [1, 2]}]},
+        ),
+    ],
+    ids=["scalar-root", "tuple-root", "depth-1", "depth-2", "depth-3"],
+)
+def test_evidence_depth_zero_through_three_is_allowed(
+    value: object,
+    expected: object,
+) -> None:
+    assert _validate_evidence_value(value) == expected
+
+
+def test_evidence_depth_four_is_rejected() -> None:
+    value = {"depth_1": [{"depth_2": ([{"depth_4": 4}],)}]}
+
+    with pytest.raises(ValueError, match="maximum nesting depth"):
+        _validate_evidence_value(value)
+
+
+def test_evidence_list_and_tuple_have_equivalent_depth_and_normalization() -> None:
+    list_value = {"depth_1": [{"depth_2": (1, 2)}]}
+    tuple_value = {"depth_1": ({"depth_2": [1, 2]},)}
+
+    assert _validate_evidence_value(list_value) == _validate_evidence_value(tuple_value)
 
 
 @pytest.mark.parametrize(
@@ -138,6 +269,61 @@ def test_artifact_refs_reject_unknown_or_absolute_files():
         _warning(artifact_refs=("unknown.json",))
     with pytest.raises(ValueError, match="artifact filenames"):
         _warning(artifact_refs=("D:\\private\\warnings.json",))
+
+
+@pytest.mark.parametrize(
+    "reference",
+    [
+        "warnings.json",
+        "warnings.json#/structured_warnings/0",
+        "benchmark_diagnostics.json#/attempts/1",
+        "run_manifest.json#/macro_validation_diagnostics",
+        "docs.json#/a~1b/~0value",
+    ],
+)
+def test_artifact_refs_allow_safe_relative_files_and_json_pointers(
+    reference: str,
+) -> None:
+    assert _warning(artifact_refs=(reference,)).artifact_refs == (reference,)
+
+
+@pytest.mark.parametrize(
+    "reference",
+    [
+        r"warnings.json#/C:\private\file",
+        "warnings.json#/C:/private/file",
+        "warnings.json#/C:private",
+        "warnings.json#//server/share/file",
+        "warnings.json#/tmp/private/file",
+        "warnings.json#/Users/private/file",
+        "warnings.json#/mnt/private/file",
+        "warnings.json#/~1home~1service~1secret",
+        "warnings.json#/file://private",
+        "warnings.json#/https://example.com/private",
+        "warnings.json#/https:~1~1example.com/private",
+        "warnings.json#/apiKey/value",
+        "warnings.json#/apiKey=abc",
+        "warnings.json#/Authorization:Bearer abc",
+        "warnings.json#/traceback",
+        "warnings.json#/../secret",
+        "warnings.json#/a%2Fb",
+        "warnings.json#/bad~2escape",
+        "../warnings.json#/x",
+        r"C:\warnings.json#/x",
+        "https://example.com/warnings.json#/x",
+        "../docs.json#/x",
+        r"C:\docs.json#/x",
+        "https://example.com/docs.json#/x",
+        r"docs.json#/C:\private\file",
+        "docs.json#/apiKey=abc",
+        "docs.json#/bad~2escape",
+    ],
+)
+def test_artifact_refs_reject_unsafe_paths_and_json_pointers(
+    reference: str,
+) -> None:
+    with pytest.raises(ValueError, match="artifact_refs"):
+        _warning(artifact_refs=(reference,))
 
 
 def test_collector_keeps_raw_and_structured_in_first_seen_order():
@@ -268,7 +454,7 @@ def test_json_output_is_deterministic():
     assert warning.to_json().index('"a"') < warning.to_json().index('"z"')
 
 
-def test_exception_evidence_redacts_paths_and_secret_values():
+def test_exception_evidence_omits_raw_exception_text():
     evidence = safe_exception_evidence(
         RuntimeError(
             "failed(/tmp/private.json) accessToken=not-a-real-token "
@@ -284,8 +470,79 @@ def test_exception_evidence_redacts_paths_and_secret_values():
     assert "private" not in warning.evidence["safe_summary"]
     assert "not-a-real-token" not in warning.evidence["safe_summary"]
     assert "another-token" not in warning.evidence["safe_summary"]
-    assert "<redacted_path>" in warning.evidence["safe_summary"]
-    assert "<redacted_secret>" in warning.evidence["safe_summary"]
+    assert warning.evidence["safe_summary"] == "RuntimeError [details redacted]"
+    assert len(warning.evidence["safe_summary"]) <= 256
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    [
+        {"level_1": {"level_2": {"level_3": {"level_4": {}}}}},
+        {f"key_{index}": index for index in range(33)},
+        {"values": list(range(33))},
+        {"value": "x" * 513},
+        {"x" * 513: "value"},
+    ],
+    ids=[
+        "depth-4",
+        "33-keys",
+        "33-list-items",
+        "513-character-string",
+        "513-character-key",
+    ],
+)
+def test_evidence_rejects_explicit_capacity_overflow(evidence: object) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        _warning(evidence=evidence)
+
+
+def _evidence_at_json_byte_limit() -> dict[str, str]:
+    evidence = {f"k{index:02d}": "x" * 500 for index in range(32)}
+    for index in range(7):
+        evidence[f"k{index:02d}"] += "x" * 12
+    evidence["k07"] += "x" * 11
+    encoded = json.dumps(
+        evidence,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    assert len(encoded) == STRUCTURED_WARNING_EVIDENCE_MAX_JSON_BYTES
+    return evidence
+
+
+def test_evidence_capacity_boundaries_pass_exactly() -> None:
+    evidence = _evidence_at_json_byte_limit()
+
+    warning = _warning(evidence=evidence)
+
+    assert STRUCTURED_WARNING_EVIDENCE_MAX_DEPTH == 3
+    assert STRUCTURED_WARNING_EVIDENCE_MAX_MAPPING_KEYS == 32
+    assert STRUCTURED_WARNING_EVIDENCE_MAX_LIST_ITEMS == 32
+    assert STRUCTURED_WARNING_EVIDENCE_MAX_STRING_LENGTH == 512
+    assert len(warning.evidence) == 32
+
+
+def test_evidence_rejects_total_json_above_16_kib_without_truncating() -> None:
+    evidence = _evidence_at_json_byte_limit()
+    evidence["k08"] += "x"
+
+    with pytest.raises(ValueError, match="16384-byte"):
+        _warning(evidence=evidence)
+
+
+def test_evidence_exact_container_and_string_limits_pass() -> None:
+    warning = _warning(
+        evidence={
+            **{f"key_{index}": index for index in range(30)},
+            "nested": {"level_2": {"value": "x" * 512}},
+            "values": list(range(32)),
+        }
+    )
+
+    assert warning.evidence["nested"]["level_2"]["value"] == "x" * 512
+    assert list(warning.evidence["values"]) == list(range(32))
 
 
 def _artifact_arguments() -> dict[str, object]:

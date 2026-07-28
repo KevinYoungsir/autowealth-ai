@@ -38,7 +38,9 @@ from autowealth.data.fundamental_schema import (
 )
 from autowealth.data.index_provider import canonical_index_symbol
 from autowealth.data.index_provider_chain import (
+    BenchmarkLoadResult,
     IndexProviderChain,
+    ProviderAttempt,
     default_index_provider_chain,
     load_benchmark_with_cache,
 )
@@ -67,11 +69,21 @@ from autowealth.research.artifacts import (
 )
 from autowealth.research.schema import scalar_metrics
 from autowealth.research.warnings import (
+    STRUCTURED_WARNINGS_SCHEMA_VERSION,
+    StructuredWarning,
     StructuredWarningCollector,
     WarningCode,
     WarningScope,
     WarningSeverity,
     safe_exception_evidence,
+    validate_structured_warning_sequence,
+)
+from autowealth.security import (
+    safe_cache_reference,
+    safe_exception_record,
+    safe_exception_summary,
+    sanitize_public_payload,
+    sanitize_public_text,
 )
 
 PathLike = Union[str, Path]
@@ -157,10 +169,22 @@ class RealResearchConfig:
 
     def to_dict(self) -> dict[str, object]:
         values = asdict(self)
-        values["macro_csv_path"] = str(self.macro_csv_path)
-        values["cache_directory"] = str(self.cache_directory)
-        values["output_directory"] = str(self.output_directory)
-        return values
+        values["macro_csv_path"] = safe_cache_reference(
+            self.macro_csv_path,
+            fallback="macro_data",
+        )
+        values["cache_directory"] = safe_cache_reference(
+            self.cache_directory,
+            fallback="cache",
+        )
+        values["output_directory"] = safe_cache_reference(
+            self.output_directory,
+            fallback="research_runs",
+        )
+        sanitized = sanitize_public_payload(values)
+        if type(sanitized) is not dict:  # pragma: no cover - values is fixed above.
+            raise TypeError("research config serialization must remain a mapping")
+        return sanitized
 
 
 @dataclass
@@ -220,6 +244,49 @@ def _record_warnings(
 ) -> None:
     for message in messages:
         _record_warning(warnings, collector, message, **metadata)
+
+
+def _sanitize_warning_outputs(
+    warnings: list[str],
+    structured_warnings: Optional[tuple[StructuredWarning, ...]],
+) -> tuple[list[str], Optional[tuple[StructuredWarning, ...]]]:
+    safe_messages = [sanitize_public_text(message) for message in warnings]
+    if structured_warnings is None:
+        return safe_messages, None
+    if len(structured_warnings) != len(safe_messages):
+        return safe_messages, None
+    safe_structured: list[StructuredWarning] = []
+    try:
+        for message, warning in zip(safe_messages, structured_warnings):
+            payload = warning.to_dict()
+            payload["message"] = message
+            safe_structured.append(StructuredWarning.from_dict(payload))
+        normalized = validate_structured_warning_sequence(
+            safe_messages,
+            safe_structured,
+            schema_version=STRUCTURED_WARNINGS_SCHEMA_VERSION,
+        )
+    except (TypeError, ValueError, RecursionError):
+        return safe_messages, None
+    return safe_messages, normalized
+
+
+def _safe_failure_source_record(
+    *,
+    data_type: str,
+    symbol: str,
+    source: str,
+    exc: BaseException,
+) -> dict[str, object]:
+    details = safe_exception_record(exc, "provider_exception")
+    return {
+        "data_type": data_type,
+        "symbol": symbol,
+        "source": sanitize_public_text(source),
+        "status": "failed",
+        "error": details["safe_summary"],
+        **details,
+    }
 
 
 def load_real_research_config(path: PathLike) -> RealResearchConfig:
@@ -384,7 +451,7 @@ def _load_macro_data(
         _record_warning(
             warnings,
             warning_collector,
-            f"macro provider failed: {exc}",
+            f"macro provider failed: {safe_exception_summary(exc)}",
             code=WarningCode.MACRO_DATA_UNAVAILABLE,
             severity=WarningSeverity.ERROR,
             scope=WarningScope.MACRO,
@@ -702,7 +769,7 @@ def _invalid_macro_shadow_diagnostics(source: object, exc: BaseException) -> dic
             "unavailable_count": 0,
             "reason_counts": {},
         },
-        "exception_type": type(exc).__name__[:100],
+        "exception_type": safe_exception_record(exc, "invalid_schema")["exception_type"],
         "safe_summary": "macro shadow validation could not safely process the input",
     }
 
@@ -831,7 +898,7 @@ def _cache_metadata(
         "data_type": data_type,
         "symbol": symbol,
         "source": source,
-        "cache_path": str(cache_path),
+        "cache_path": safe_cache_reference(cache_path),
         "start_date": resolved_fetch_start,
         "end_date": resolved_fetch_end,
         "fetch_start_date": resolved_fetch_start,
@@ -842,7 +909,10 @@ def _cache_metadata(
         "sha256": _sha256(cache_path),
     }
     metadata.update(extras)
-    return metadata
+    sanitized = sanitize_public_payload(metadata)
+    if type(sanitized) is not dict:  # pragma: no cover - metadata is fixed above.
+        raise TypeError("cache metadata serialization must remain a mapping")
+    return sanitized
 
 
 def _price_state_warnings(symbol: str, data: pd.DataFrame) -> list[str]:
@@ -909,7 +979,8 @@ def _load_price_data(
             _record_warning(
                 warnings,
                 warning_collector,
-                f"{symbol} price cache unreadable; provider retry used: {exc}",
+                f"{symbol} price cache unreadable; provider retry used: "
+                f"{safe_exception_summary(exc)}",
                 code=WarningCode.PRICE_CACHE_UNAVAILABLE,
                 severity=WarningSeverity.WARNING,
                 scope=WarningScope.PRICE_PROVIDER,
@@ -1045,7 +1116,8 @@ def _load_fundamental_data(
             _record_warning(
                 warnings,
                 warning_collector,
-                f"{symbol} fundamental cache unreadable; provider retry used: {exc}",
+                f"{symbol} fundamental cache unreadable; provider retry used: "
+                f"{safe_exception_summary(exc)}",
                 code=WarningCode.FUNDAMENTAL_DATA_UNAVAILABLE,
                 severity=WarningSeverity.WARNING,
                 scope=WarningScope.FUNDAMENTAL,
@@ -1634,26 +1706,26 @@ def _unavailable_benchmark(
 def _record_benchmark_attempt_warnings(
     warnings: list[str],
     warning_collector: Optional[StructuredWarningCollector],
-    loaded: object,
+    loaded: BenchmarkLoadResult,
     config: RealResearchConfig,
 ) -> None:
-    messages = list(getattr(loaded, "warnings", ()))
+    messages = list(loaded.warnings)
     if not messages:
         return
-    diagnostic = dict(getattr(loaded, "diagnostic", {}))
-    symbol = str(diagnostic.get("canonical_symbol") or getattr(loaded, "canonical_symbol", ""))
-    attempts = [dict(item) for item in diagnostic.get("attempts", []) if isinstance(item, Mapping)]
+    diagnostic = dict(loaded.diagnostic)
+    symbol = str(diagnostic.get("canonical_symbol") or loaded.canonical_symbol)
+    attempts = list(loaded.attempts)
     artifact_refs = (f"benchmark_diagnostics.json#/benchmarks/{symbol}",)
     cursor = 0
 
-    cache_attempts = [
-        attempt
-        for attempt in attempts
-        if attempt.get("status") != "success"
-        and (
-            attempt.get("provider") == "ParquetCache"
-            or dict(attempt.get("source_metadata") or {}).get("role") == "cache"
+    def is_cache_attempt(attempt: ProviderAttempt) -> bool:
+        source_metadata = attempt.source_metadata
+        return attempt.provider == "ParquetCache" or (
+            type(source_metadata) is dict and source_metadata.get("role") == "cache"
         )
+
+    cache_attempts = [
+        attempt for attempt in attempts if attempt.status != "success" and is_cache_attempt(attempt)
     ]
     for attempt in cache_attempts:
         if cursor >= len(messages):
@@ -1668,8 +1740,8 @@ def _record_benchmark_attempt_warnings(
             source="benchmark_cache",
             evidence={
                 "canonical_symbol": symbol,
-                "reason_code": str(attempt.get("reason_code") or "cache_unreadable"),
-                "provider": str(attempt.get("provider") or "ParquetCache"),
+                "reason_code": str(attempt.reason_code or "cache_unreadable"),
+                "provider": str(attempt.provider or "ParquetCache"),
                 "request_window": {
                     "start_date": config.start_date,
                     "end_date": config.end_date,
@@ -1684,12 +1756,12 @@ def _record_benchmark_attempt_warnings(
     provider_attempts = [
         attempt
         for attempt in attempts
-        if attempt.get("status") != "success" and attempt not in cache_attempts
+        if attempt.status != "success" and not is_cache_attempt(attempt)
     ]
     for attempt in provider_attempts:
         if cursor >= len(messages):
             break
-        fallback_succeeded = getattr(loaded, "status", None) == "success"
+        fallback_succeeded = loaded.status == "success"
         _record_warning(
             warnings,
             warning_collector,
@@ -1704,8 +1776,8 @@ def _record_benchmark_attempt_warnings(
             source="benchmark_provider_chain",
             evidence={
                 "canonical_symbol": symbol,
-                "reason_code": str(attempt.get("reason_code") or "provider_exception"),
-                "provider": str(attempt.get("provider") or "unknown"),
+                "reason_code": str(attempt.reason_code or "provider_exception"),
+                "provider": str(attempt.provider or "unknown"),
                 "request_window": {
                     "start_date": config.start_date,
                     "end_date": config.end_date,
@@ -1728,7 +1800,7 @@ def _record_benchmark_attempt_warnings(
                 if cache_write_failed
                 else (
                     WarningCode.BENCHMARK_PROVIDER_FALLBACK_USED
-                    if getattr(loaded, "status", None) == "success"
+                    if loaded.status == "success"
                     else WarningCode.BENCHMARK_DATA_UNAVAILABLE
                 )
             ),
@@ -1740,7 +1812,7 @@ def _record_benchmark_attempt_warnings(
                 "reason_code": (
                     "cache_write_failed"
                     if cache_write_failed
-                    else str(getattr(loaded, "reason_code", None) or "provider_exception")
+                    else str(loaded.reason_code or "provider_exception")
                 ),
                 "provider": str(diagnostic.get("selected_provider") or "unknown"),
                 "request_window": {
@@ -2165,7 +2237,10 @@ def _run_manifest(
     }
     if macro_validation_diagnostics is not None:
         manifest["macro_validation_diagnostics"] = dict(macro_validation_diagnostics)
-    return manifest
+    sanitized = sanitize_public_payload(manifest)
+    if type(sanitized) is not dict:  # pragma: no cover - manifest is fixed above.
+        raise TypeError("run manifest serialization must remain a mapping")
+    return sanitized
 
 
 def _period_returns(values: object, date_format: str) -> dict[str, float]:
@@ -2212,7 +2287,7 @@ def _prepare_market_inputs(
             _record_warning(
                 warnings,
                 warning_collector,
-                f"{symbol} price provider failed: {exc}",
+                f"{symbol} price provider failed: {safe_exception_summary(exc)}",
                 code=WarningCode.PRICE_PROVIDER_FAILED,
                 severity=WarningSeverity.ERROR,
                 scope=WarningScope.PRICE_PROVIDER,
@@ -2225,13 +2300,12 @@ def _prepare_market_inputs(
                 retryable=True,
             )
             source_records.append(
-                {
-                    "data_type": "price",
-                    "symbol": symbol,
-                    "source": price_provider.__class__.__name__,
-                    "status": "failed",
-                    "error": str(exc),
-                }
+                _safe_failure_source_record(
+                    data_type="price",
+                    symbol=symbol,
+                    source=price_provider.__class__.__name__,
+                    exc=exc,
+                )
             )
 
     if not price_data:
@@ -2266,7 +2340,7 @@ def _prepare_market_inputs(
                 affected_symbols=(symbol,),
             )
         except Exception as exc:
-            warning = f"{symbol} fundamental provider failed: {exc}"
+            warning = f"{symbol} fundamental provider failed: " f"{safe_exception_summary(exc)}"
             _record_warning(
                 warnings,
                 warning_collector,
@@ -2289,13 +2363,12 @@ def _prepare_market_inputs(
                 warnings=[warning],
             )
             source_records.append(
-                {
-                    "data_type": "fundamental",
-                    "symbol": symbol,
-                    "source": fundamental_provider.__class__.__name__,
-                    "status": "failed",
-                    "error": str(exc),
-                }
+                _safe_failure_source_record(
+                    data_type="fundamental",
+                    symbol=symbol,
+                    source=fundamental_provider.__class__.__name__,
+                    exc=exc,
+                )
             )
 
     return price_data, fundamentals, source_records, warnings
@@ -2401,7 +2474,11 @@ def run_real_data_research(
         {
             "data_type": "macro",
             "source": macro_source,
-            "path": str(config.macro_csv_path) if macro_provider is None else None,
+            "path": (
+                safe_cache_reference(config.macro_csv_path, fallback="macro_data")
+                if macro_provider is None
+                else None
+            ),
             "rows": len(macro_data),
             "point_in_time": bool(
                 not macro_data.empty
@@ -2460,8 +2537,12 @@ def run_real_data_research(
     warning_collector.commit_stage(benchmark_warnings, benchmark_warning_collector)
 
     limitations = _point_in_time_limitations(config, fundamental_results, macro_data)
-    warnings = _dedupe_warnings(warnings)
-    structured_warnings = warning_collector.project(warnings)
+    authoritative_warnings = _dedupe_warnings(warnings)
+    structured_warnings = warning_collector.project(authoritative_warnings)
+    warnings, structured_warnings = _sanitize_warning_outputs(
+        authoritative_warnings,
+        structured_warnings,
+    )
     coverage_summary = _build_coverage_summary(
         config,
         price_data,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import builtins
+from collections.abc import Mapping
 import hashlib
 import json
 import socket
@@ -23,14 +24,17 @@ from autowealth.data.index_provider import (
     exchange_prefixed_index_symbol,
 )
 from autowealth.data.index_provider_chain import (
+    MAX_BENCHMARK_DIAGNOSTIC_ATTEMPTS,
     IndexProviderChain,
     IndexProviderChainError,
+    ProviderAttempt,
     _write_benchmark_cache,
     default_index_provider_chain,
     load_benchmark_with_cache,
 )
 from autowealth.data.index_quality import validate_benchmark_data
 from autowealth.data.schema import normalize_market_data
+from autowealth.security import REDACTED_ABSOLUTE_PATH, REDACTED_UNSAFE_VALUE
 
 START = "2024-01-02"
 END = "2024-01-31"
@@ -229,7 +233,7 @@ def test_primary_exception_falls_back_and_preserves_sanitized_attempt() -> None:
     assert result.attempts[1].source_metadata["role"] == "fallback"
     assert "secret" not in result.attempts[0].reason
     assert "secret" not in result.attempts[0].exception
-    assert "[redacted-url]" in result.attempts[0].reason
+    assert result.attempts[0].reason == "RuntimeError [details redacted]"
 
 
 def test_primary_resolver_exception_falls_back_with_auditable_attempt() -> None:
@@ -288,6 +292,56 @@ def test_provider_attempt_serialization_contains_stable_request_window() -> None
     assert json.loads(json.dumps(payload, ensure_ascii=False)) == payload
 
 
+def test_provider_attempt_source_metadata_is_recursively_sanitized() -> None:
+    attempt = ProviderAttempt(
+        provider="fixture",
+        endpoint="fixture_daily",
+        canonical_symbol="000300",
+        provider_symbol="fixture:000300",
+        status="failed",
+        started_at=FIXED_TIME.isoformat(),
+        completed_at=FIXED_TIME.isoformat(),
+        reason_code="provider_exception",
+        reason="safe reason",
+        source_metadata={
+            "cache_path": "D:/private/benchmark.parquet",
+            "fallback_path": r"\\server\share\benchmark.parquet",
+            "documentation": "https://example.com/benchmark/path",
+        },
+    )
+
+    payload = attempt.to_dict()
+
+    assert payload["source_metadata"]["cache_path"] == REDACTED_ABSOLUTE_PATH
+    assert payload["source_metadata"]["fallback_path"] == REDACTED_ABSOLUTE_PATH
+    assert payload["source_metadata"]["documentation"] == ("https://example.com/benchmark/path")
+
+
+def test_provider_attempt_does_not_expand_custom_source_metadata() -> None:
+    class UnboundedMapping(Mapping):
+        def __getitem__(self, key):
+            raise AssertionError("custom mapping must not be indexed")
+
+        def __iter__(self):
+            raise AssertionError("custom mapping must not be iterated")
+
+        def __len__(self):
+            raise AssertionError("custom mapping length must not be trusted")
+
+    attempt = ProviderAttempt(
+        provider="fixture",
+        endpoint="fixture_daily",
+        canonical_symbol="000300",
+        provider_symbol="fixture:000300",
+        status="failed",
+        started_at=FIXED_TIME.isoformat(),
+        completed_at=FIXED_TIME.isoformat(),
+        source_metadata=UnboundedMapping(),
+    )
+
+    assert attempt.to_dict()["source_metadata"] == REDACTED_UNSAFE_VALUE
+
+
 def test_provider_exception_redacts_headers_and_limits_length() -> None:
     primary = FakeIndexProvider(
         RuntimeError("Authorization: Bearer topsecret " + "x" * 700),
@@ -299,8 +353,42 @@ def test_provider_exception_redacts_headers_and_limits_length() -> None:
 
     reason = result.attempts[0].reason
     assert "topsecret" not in reason
-    assert "authorization=[redacted]" in reason.lower()
-    assert len(reason) <= 500
+    assert reason == "RuntimeError [details redacted]"
+    assert len(reason) <= 256
+
+
+def test_provider_exception_diagnostics_never_copy_paths_secrets_or_tracebacks() -> None:
+    primary = FakeIndexProvider(
+        RuntimeError(
+            "C:\\Users\\name\\cache.parquet apiKey=key-secret "
+            "accessToken=access-secret clientSecret=client-secret "
+            "Authorization: Bearer auth-secret Cookie: cookie-secret\n"
+            "Traceback (most recent call last):\n"
+            'File "\\\\server\\share\\provider.py", line 1\n'
+            "RuntimeError at 0x7FFABCDEF123"
+        ),
+        provider_name="primary",
+    )
+    fallback = FakeIndexProvider(_benchmark_frame(), provider_name="fallback")
+
+    result = _chain(primary, fallback).fetch_daily("000300", START, END)
+    serialized = json.dumps(result.attempts[0].to_dict(), ensure_ascii=False)
+
+    assert result.selected_provider == "fallback"
+    assert result.attempts[0].reason == "RuntimeError [details redacted]"
+    assert result.attempts[0].exception == "RuntimeError [details redacted]"
+    for secret in (
+        "C:\\Users\\name",
+        "\\\\server\\share",
+        "key-secret",
+        "access-secret",
+        "client-secret",
+        "auth-secret",
+        "cookie-secret",
+        "Traceback",
+        "0x7FFABCDEF123",
+    ):
+        assert secret not in serialized
 
 
 @pytest.mark.parametrize(
@@ -496,6 +584,32 @@ def _load_to_cache(tmp_path: Path) -> tuple[Path, Path]:
     return cache_path, metadata_path
 
 
+def test_new_benchmark_cache_metadata_sanitizes_provider_identifiers(
+    tmp_path: Path,
+) -> None:
+    provider = FakeIndexProvider(
+        _benchmark_frame(),
+        provider_name="provider apiKey=source-secret",
+        endpoint=r"D:\private\endpoint accessToken=endpoint-secret",
+    )
+
+    result = load_benchmark_with_cache(
+        tmp_path,
+        _chain(provider),
+        "000300",
+        START,
+        END,
+        clock=lambda: FIXED_TIME,
+    )
+
+    metadata_path = next(tmp_path.glob("*.meta.json"))
+    metadata_text = metadata_path.read_text(encoding="utf-8")
+    assert result.status == "success"
+    assert "source-secret" not in metadata_text
+    assert "endpoint-secret" not in metadata_text
+    assert "D:\\private" not in metadata_text
+
+
 def _assert_no_committed_generation_cache(tmp_path: Path) -> None:
     assert list(tmp_path.glob("*.meta.json")) == []
     assert list(tmp_path.glob("*.data.parquet")) == []
@@ -530,6 +644,18 @@ def test_valid_cache_short_circuits_every_provider(tmp_path: Path) -> None:
     assert metadata["coverage_ratio"] == 1.0
     assert metadata["data_file"]
     assert provider.calls == 0
+    expected_cache_reference = (
+        ParquetCache(tmp_path)
+        .path_for(
+            "benchmark_000300",
+            START,
+            END,
+            "none",
+        )
+        .name
+    )
+    assert result.source_record["cache_path"] == expected_cache_reference
+    assert not Path(str(result.source_record["cache_path"])).is_absolute()
 
 
 def test_legacy_cache_layout_remains_readable(tmp_path: Path) -> None:
@@ -917,3 +1043,37 @@ def test_all_provider_failures_return_unavailable_diagnostics(tmp_path: Path) ->
         "empty_response",
         "provider_exception",
     ]
+
+
+def test_benchmark_diagnostics_bound_attempt_array_without_changing_provider_flow(
+    tmp_path: Path,
+) -> None:
+    failing = [
+        FakeIndexProvider(pd.DataFrame(), provider_name=f"failed_{index:02d}")
+        for index in range(MAX_BENCHMARK_DIAGNOSTIC_ATTEMPTS + 2)
+    ]
+    success = FakeIndexProvider(_benchmark_frame(), provider_name="final_success")
+
+    result = load_benchmark_with_cache(
+        tmp_path,
+        _chain(*failing, success),
+        "000300",
+        START,
+        END,
+        clock=lambda: FIXED_TIME,
+    )
+
+    assert result.status == "success"
+    assert all(provider.calls == 1 for provider in failing)
+    assert success.calls == 1
+    assert result.diagnostic["attempts_total"] == len(failing) + 1
+    assert result.diagnostic["attempts_truncated"] is True
+    assert len(result.diagnostic["attempts"]) == MAX_BENCHMARK_DIAGNOSTIC_ATTEMPTS
+    assert result.diagnostic["omitted_count"] == 3
+    assert "attempt_count" not in result.diagnostic
+    assert "omitted_attempt_count" not in result.diagnostic
+    assert result.diagnostic["attempts"][0]["provider"] == "failed_00"
+    assert result.diagnostic["attempts"][-1]["provider"] == "failed_31"
+    assert len(result.attempts) == len(failing) + 1
+    assert result.attempts[-1].provider == "final_success"
+    assert len(result.warnings) == len(failing)

@@ -34,9 +34,14 @@ GET /research/runs/{run_id}/report?locale=en-US
 
 请求不会修改 artifacts、访问行情 provider、调用真实 DeepSeek、执行交易或运行
 参数寻优。报告不包含当前时间等运行外变量，因此相同 artifacts 会生成相同结构。
-新 run 的基准复核把完整 provider attempts 放在 `provider_diagnostics` 技术证据
-中；用户摘要仍使用 `benchmark_metrics.json` 的简洁原因。旧 run 缺少该可选
-artifact 时返回空诊断，不影响报告生成或原七类 artifact 的兼容读取。
+新 run 的基准复核只把公开有界 provider attempts 放在 `provider_diagnostics`
+技术证据中：按执行顺序保留前 32 项，并返回 `attempts_total`、
+`attempts_truncated`、`omitted_count`。完整 runtime attempts 不进入报告；用户摘要
+仍使用 `benchmark_metrics.json` 的简洁原因。旧 run 缺少该可选 artifact 时返回
+空诊断，不影响报告生成或原七类 artifact 的兼容读取。报告与 run detail 复用
+RunStore 已规范化、脱敏和限界的公开诊断；报告最终仍执行有界递归安全检查，但其
+报告专用深度预算会容纳这份已经限界的嵌套证据，不会把正常可选诊断误判为必需
+artifact 损坏。
 
 ## 响应契约
 
@@ -109,7 +114,11 @@ artifact 时返回空诊断，不影响报告生成或原七类 artifact 的兼�
 `neutral_fallback` 状态，也不参与 risk severity、指标或 warning 推导。
 
 旧 run 缺少该字段时 evidence 标记 `absent`；字段损坏时标记 `invalid`，报告仍
-正常生成且 HTTP 状态不变。报告不会复制原始宏观行、完整异常、路径或凭据。
+正常生成且 HTTP 状态不变。RunStore 只在内存中将已知可选
+`macro_validation_diagnostics` 与必需 manifest 主体分开校验；NaN、Infinity、
+超限或其他不安全内容只把该可选诊断公开为 `{"status":"invalid"}`，不会改写磁盘
+artifact。manifest 其他字段仍按必需 artifact 严格校验。报告不会复制原始宏观行、
+完整异常、路径或凭据。
 
 Historical Valuation 当前仅定义数据契约，尚未接入真实 artifacts 或本报告。
 
@@ -134,6 +143,37 @@ Research Notes 使用当前全局选中的 `run_id`：
 - 不支持的 `locale`：HTTP 422，FastAPI 结构化参数错误。
 
 错误响应不返回服务器磁盘路径、环境变量、密钥或 Python 堆栈。
+
+## 历史 Artifact 防御性读取
+
+历史 run 保持只读，不执行迁移、重写或删除。RunStore 和报告在公开返回前递归处理
+manifest、metrics、benchmark metrics/diagnostics、warning 和 parquet 可公开文本/
+对象字段：
+
+- Windows drive、Windows forward-slash、UNC、POSIX 与 `file://` 绝对路径替换为
+  `[redacted-absolute-path]`。
+- 明确的 API key、Token、Authorization、Cookie、Password、Bearer 和 header
+  内容替换为稳定脱敏值。
+- traceback 与对象内存地址不进入报告。
+- HTTP(S) URL、artifact/repository 相对引用和 JSON pointer 保持原值。
+
+raw warning 仍是兼容权威来源。公开替换只处理每条 warning 内的危险片段，不改变
+数量、顺序、legacy 分类、`warning_count` 或 `run_status`；普通非敏感 warning
+逐字不变。合法 structured message 与安全 raw warning 继续同位置一致。旧 structured
+evidence 超限或损坏时保持 `structured_status=invalid`，raw warning 仍可读且 HTTP
+仍为 200。
+
+损坏、超限或计数矛盾的可选 `benchmark_diagnostics.json` 会被隔离为
+`{"status":"invalid","reason_code":"invalid_diagnostics"}`；缺失文件仍保持
+`absent`/空诊断语义。两者都不改变 `benchmark_metrics.json` 的
+`available/unavailable` 状态、HTTP 200、原 run status 或报告风险等级。必需 JSON
+缺失或损坏继续使用原有 404/422 语义；manifest 必需字段以及
+`metrics.json`、`benchmark_metrics.json` 中的非有限值同样按损坏处理，不会转换为
+`null`、零值或字符串。
+该防御不能保证识别任意自然语言中无标签、经过编码或未知格式的所有秘密。
+
+本变更没有 artifact 迁移。若需要回滚，只需回滚应用代码；历史 run 无需恢复，
+但公开读取将同时失去本节描述的新增防御性脱敏。
 
 ## 已知边界
 
