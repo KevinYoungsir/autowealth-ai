@@ -5,12 +5,26 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 import json
-import math
 import re
 from types import MappingProxyType
 from typing import Any, Mapping, Optional, Sequence
 
+from autowealth.security import (
+    contains_absolute_path,
+    contains_sensitive_value,
+    is_forbidden_payload_key,
+    is_sensitive_key,
+    safe_exception_record,
+    validate_bounded_json,
+)
+
 STRUCTURED_WARNINGS_SCHEMA_VERSION = 1
+STRUCTURED_WARNING_EVIDENCE_MAX_DEPTH = 3
+STRUCTURED_WARNING_EVIDENCE_MAX_MAPPING_KEYS = 32
+STRUCTURED_WARNING_EVIDENCE_MAX_LIST_ITEMS = 32
+STRUCTURED_WARNING_EVIDENCE_MAX_STRING_LENGTH = 512
+STRUCTURED_WARNING_EVIDENCE_MAX_JSON_BYTES = 16 * 1024
+STRUCTURED_WARNINGS_MAX_JSON_BYTES = 4 * 1024 * 1024
 
 
 class WarningSeverity(str, Enum):
@@ -45,9 +59,36 @@ class WarningCode(str, Enum):
 
 
 _SOURCE_PATTERN = re.compile(r"^[a-z][a-z0-9_.-]*$")
-_ARTIFACT_REF_PATTERN = re.compile(
-    r"^[A-Za-z0-9][A-Za-z0-9_.-]*\.(?:json|parquet)(?:#(?:/[^#]*)?)?$"
-)
+_ARTIFACT_PATH_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*\.(?:json|parquet)$")
+_WINDOWS_DRIVE_IN_POINTER = re.compile(r"(?i)[A-Z]:[\\/]")
+_WINDOWS_DRIVE_RELATIVE_SEGMENT = re.compile(r"(?i)^[A-Z]:")
+_INVALID_JSON_POINTER_ESCAPE = re.compile(r"~(?![01])")
+_CONTROL_CHARACTER = re.compile(r"[\x00-\x1f\x7f]")
+_URI_SCHEME = re.compile(r"(?i)^[a-z][a-z0-9+.-]*://")
+_POINTER_URI = re.compile(r"(?i)^/[a-z][a-z0-9+.-]*:(?:/|~1){2}")
+_POSIX_ROOT_SEGMENTS = {
+    "app",
+    "bin",
+    "boot",
+    "dev",
+    "etc",
+    "home",
+    "media",
+    "mnt",
+    "opt",
+    "private",
+    "proc",
+    "root",
+    "run",
+    "srv",
+    "sys",
+    "tmp",
+    "usr",
+    "users",
+    "var",
+    "volumes",
+    "workspace",
+}
 _ARTIFACT_FILENAMES = {
     "config.json",
     "run_manifest.json",
@@ -55,41 +96,12 @@ _ARTIFACT_FILENAMES = {
     "benchmark_metrics.json",
     "benchmark_diagnostics.json",
     "warnings.json",
+    "docs.json",
     "equity_curve.parquet",
     "benchmark_curve.parquet",
     "holdings.parquet",
     "trades.parquet",
     "factor_snapshots.parquet",
-}
-_WINDOWS_ABSOLUTE_PATH = re.compile(r"(?i)(?<![a-z0-9])[a-z]:[\\/]")
-_WINDOWS_PATH_VALUE = re.compile(r"(?i)(?<![a-z0-9])[a-z]:[\\/][^,;\r\n)\]}\"']*")
-_UNC_PATH_VALUE = re.compile(r"\\\\[^,;\r\n)\]}\"']+")
-_POSIX_PATH_VALUE = re.compile(r"(?<![:/\w])/(?![/\s])[^,;\r\n)\]}\"']*")
-_SECRET_LABEL = (
-    r"(?:authorization|proxy[_ .-]?authorization|api[_ .-]?(?:key|token)|"
-    r"access[_ .-]?token|refresh[_ .-]?token|client[_ .-]?secret|"
-    r"bearer[_ .-]?token|set[_ .-]?cookie|cookie|password|passwd|"
-    r"private[_ .-]?key|secret)"
-)
-_SECRET_ASSIGNMENT = re.compile(rf"(?i)\b{_SECRET_LABEL}\b\s*[:=]")
-_SECRET_VALUE = re.compile(rf"(?i)\b{_SECRET_LABEL}\b\s*[:=]\s*[^,;]+")
-_BEARER_VALUE = re.compile(r"(?i)\bbearer\s+[^,;\s]+")
-_SECRET_KEYS = {
-    "authorization",
-    "proxy_authorization",
-    "api_key",
-    "apikey",
-    "token",
-    "access_token",
-    "refresh_token",
-    "cookie",
-    "secret",
-    "client_secret",
-    "password",
-    "passwd",
-    "credential",
-    "credentials",
-    "private_key",
 }
 _REQUIRED_FIELDS = {"code", "severity", "scope", "message", "source"}
 _OPTIONAL_FIELDS = {
@@ -102,63 +114,64 @@ _OPTIONAL_FIELDS = {
 }
 
 
-def _secret_key(value: str) -> bool:
-    separated = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", value)
-    separated = re.sub(r"(?<=[A-Z])(?=[A-Z][a-z])", "_", separated)
-    normalized = re.sub(r"[^a-z0-9]+", "_", separated.lower()).strip("_")
-    return normalized in _SECRET_KEYS or any(
-        normalized.endswith(f"_{suffix}")
-        for suffix in (
-            "api_key",
-            "token",
-            "secret",
-            "password",
-            "private_key",
-            "cookie",
-        )
-    )
-
-
-def _contains_absolute_path(value: str) -> bool:
-    stripped = value.strip()
-    if _ARTIFACT_REF_PATTERN.fullmatch(stripped):
-        return False
-    return bool(
-        stripped.startswith(("/", "\\\\"))
-        or "file://" in value.lower()
-        or _WINDOWS_ABSOLUTE_PATH.search(value)
-        or _UNC_PATH_VALUE.search(value)
-        or _POSIX_PATH_VALUE.search(value)
-    )
-
-
 def _validate_safe_string(value: str, path: str) -> str:
-    if _contains_absolute_path(value):
+    if contains_absolute_path(value):
         raise ValueError(f"{path} must not contain an absolute path")
-    if _SECRET_ASSIGNMENT.search(value) or _BEARER_VALUE.search(value):
+    if contains_sensitive_value(value):
         raise ValueError(f"{path} must not contain secret-like content")
     return value
 
 
-def _validated_json_value(value: object, path: str) -> object:
-    if value is None or isinstance(value, (bool, int, str)):
-        return _validate_safe_string(value, path) if isinstance(value, str) else value
-    if isinstance(value, float):
-        if not math.isfinite(value):
-            raise ValueError(f"{path} must contain only finite floats")
+def _validate_artifact_ref(value: str) -> str:
+    if len(value) > 769 or value.count("#") > 1:
+        raise ValueError("artifact_refs contain an invalid artifact reference")
+    artifact_path, separator, pointer = value.partition("#")
+    if (
+        not artifact_path
+        or len(artifact_path) > 256
+        or artifact_path not in _ARTIFACT_FILENAMES
+        or not _ARTIFACT_PATH_PATTERN.fullmatch(artifact_path)
+        or ".." in artifact_path
+        or "/" in artifact_path
+        or "\\" in artifact_path
+        or "://" in artifact_path
+        or "%" in artifact_path
+        or contains_sensitive_value(artifact_path)
+    ):
+        raise ValueError("artifact_refs must contain approved relative artifact filenames")
+    if not separator:
         return value
-    if isinstance(value, list):
-        return [_validated_json_value(item, f"{path}[{index}]") for index, item in enumerate(value)]
-    if isinstance(value, Mapping):
-        result: dict[str, object] = {}
-        for key, item in value.items():
-            if not isinstance(key, str):
-                raise TypeError(f"{path} keys must be strings")
-            if _secret_key(key):
-                raise ValueError(f"{path} contains a secret-like key")
-            result[key] = _validated_json_value(item, f"{path}.{key}")
-        return result
-    raise TypeError(f"{path} contains a non-JSON-safe value: {type(value).__name__}")
+    if (
+        not pointer
+        or len(pointer) > 512
+        or not pointer.startswith("/")
+        or pointer.startswith("//")
+        or "\\" in pointer
+        or "%" in pointer
+        or _CONTROL_CHARACTER.search(pointer)
+        or _WINDOWS_DRIVE_IN_POINTER.search(pointer)
+        or _INVALID_JSON_POINTER_ESCAPE.search(pointer)
+        or "file://" in pointer.lower()
+        or _POINTER_URI.match(pointer)
+        or contains_sensitive_value(pointer)
+    ):
+        raise ValueError("artifact_refs contain an unsafe JSON pointer")
+    decoded_segments = [
+        segment.replace("~1", "/").replace("~0", "~") for segment in pointer.split("/")[1:]
+    ]
+    if any(
+        contains_absolute_path(segment)
+        or contains_sensitive_value(segment)
+        or segment.startswith(("//", "\\\\"))
+        or _WINDOWS_DRIVE_RELATIVE_SEGMENT.match(segment)
+        or _URI_SCHEME.match(segment)
+        or segment in {".", ".."}
+        or is_sensitive_key(segment)
+        or is_forbidden_payload_key(segment)
+        for segment in decoded_segments
+    ) or (decoded_segments and decoded_segments[0].lower() in _POSIX_ROOT_SEGMENTS):
+        raise ValueError("artifact_refs JSON pointer names forbidden payload data")
+    return value
 
 
 def _freeze_json(value: object) -> object:
@@ -178,12 +191,12 @@ def _thaw_json(value: object) -> object:
 
 
 def _stable_strings(values: Sequence[str], field_name: str) -> tuple[str, ...]:
-    if not isinstance(values, (list, tuple)):
+    if type(values) not in (list, tuple):
         raise TypeError(f"{field_name} must be a string sequence")
     result: list[str] = []
     seen: set[str] = set()
     for value in values:
-        if not isinstance(value, str) or not value.strip():
+        if type(value) is not str or not value.strip():
             raise ValueError(f"{field_name} must contain non-empty strings")
         if value not in seen:
             seen.add(value)
@@ -228,20 +241,21 @@ class StructuredWarning:
             raise ValueError("message must be a non-empty string")
         if not isinstance(self.source, str) or not _SOURCE_PATTERN.fullmatch(self.source):
             raise ValueError("source must be a non-empty lowercase machine identifier")
-        if not isinstance(self.evidence, Mapping):
-            raise TypeError("evidence must be a mapping")
-        validated_evidence = _validated_json_value(dict(self.evidence), "evidence")
+        if type(self.evidence) is not dict:
+            raise TypeError("evidence must be an exact dict")
+        validated_evidence = validate_bounded_json(
+            self.evidence,
+            field_name="evidence",
+            maximum_depth=STRUCTURED_WARNING_EVIDENCE_MAX_DEPTH,
+            maximum_mapping_keys=STRUCTURED_WARNING_EVIDENCE_MAX_MAPPING_KEYS,
+            maximum_list_items=STRUCTURED_WARNING_EVIDENCE_MAX_LIST_ITEMS,
+            maximum_string_length=STRUCTURED_WARNING_EVIDENCE_MAX_STRING_LENGTH,
+            maximum_json_bytes=STRUCTURED_WARNING_EVIDENCE_MAX_JSON_BYTES,
+        )
         symbols = _stable_strings(self.affected_symbols, "affected_symbols")
         artifact_refs = _stable_strings(self.artifact_refs, "artifact_refs")
         for reference in artifact_refs:
-            filename = reference.split("#", 1)[0]
-            if (
-                not _ARTIFACT_REF_PATTERN.fullmatch(reference)
-                or filename not in _ARTIFACT_FILENAMES
-            ):
-                raise ValueError(
-                    "artifact_refs must contain artifact filenames and JSON pointers only"
-                )
+            _validate_artifact_ref(reference)
         if self.retryable is not None and not isinstance(self.retryable, bool):
             raise TypeError("retryable must be bool or None")
 
@@ -291,8 +305,8 @@ class StructuredWarning:
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> "StructuredWarning":
-        if not isinstance(payload, Mapping):
-            raise TypeError("structured warning payload must be a mapping")
+        if type(payload) is not dict:
+            raise TypeError("structured warning payload must be an exact dict")
         keys = set(payload)
         missing = _REQUIRED_FIELDS - keys
         unknown = keys - _REQUIRED_FIELDS - _OPTIONAL_FIELDS
@@ -302,9 +316,9 @@ class StructuredWarning:
             raise ValueError(f"structured warning contains unknown fields: {sorted(unknown)}")
         affected_symbols = payload.get("affected_symbols", ())
         artifact_refs = payload.get("artifact_refs", ())
-        if not isinstance(affected_symbols, (list, tuple)):
+        if type(affected_symbols) not in (list, tuple):
             raise TypeError("affected_symbols must be a string sequence")
-        if not isinstance(artifact_refs, (list, tuple)):
+        if type(artifact_refs) not in (list, tuple):
             raise TypeError("artifact_refs must be a string sequence")
         return cls(
             code=payload["code"],
@@ -438,10 +452,13 @@ def validate_structured_warning_sequence(
         or schema_version != STRUCTURED_WARNINGS_SCHEMA_VERSION
     ):
         raise ValueError("structured warnings schema version must be 1")
-    if isinstance(warnings, (str, bytes)) or isinstance(structured_warnings, (str, bytes)):
-        raise TypeError("warning sequences must not be strings")
+    if type(warnings) not in (list, tuple) or type(structured_warnings) not in (
+        list,
+        tuple,
+    ):
+        raise TypeError("warning sequences must be exact lists or tuples")
     normalized = tuple(
-        item if isinstance(item, StructuredWarning) else StructuredWarning.from_dict(item)
+        item if type(item) is StructuredWarning else StructuredWarning.from_dict(item)
         for item in structured_warnings
     )
     if any(not isinstance(message, str) for message in warnings):
@@ -452,31 +469,18 @@ def validate_structured_warning_sequence(
     for index, (message, warning) in enumerate(zip(raw, normalized)):
         if warning.message != message:
             raise ValueError(f"structured warning message mismatch at index {index}")
-    json.dumps(
+    encoded = json.dumps(
         [warning.to_dict() for warning in normalized],
         ensure_ascii=False,
         allow_nan=False,
         sort_keys=True,
-    )
+        separators=(",", ":"),
+    ).encode("utf-8")
+    if len(encoded) > STRUCTURED_WARNINGS_MAX_JSON_BYTES:
+        raise ValueError("structured warnings exceed the JSON byte limit")
     return normalized
 
 
 def safe_exception_evidence(exc: BaseException, reason_code: str) -> dict[str, str]:
     """Return bounded exception metadata without paths, credentials, or tracebacks."""
-    summary = str(exc).replace("\r", " ").replace("\n", " ")
-    summary = _WINDOWS_PATH_VALUE.sub("<redacted_path>", summary)
-    summary = _UNC_PATH_VALUE.sub("<redacted_path>", summary)
-    summary = _POSIX_PATH_VALUE.sub("<redacted_path>", summary)
-    summary = _SECRET_VALUE.sub("<redacted_secret>", summary)
-    summary = _BEARER_VALUE.sub("<redacted_secret>", summary)
-    summary = re.sub(
-        r"(?i)traceback\s*\(most recent call last\)\s*:",
-        "<redacted_traceback>",
-        summary,
-    )
-    summary = summary[:240].strip() or "provider operation failed"
-    return {
-        "exception_type": type(exc).__name__,
-        "reason_code": reason_code,
-        "safe_summary": summary,
-    }
+    return safe_exception_record(exc, reason_code)

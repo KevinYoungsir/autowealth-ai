@@ -94,6 +94,10 @@ available_date <= signal_date
 流水线会重试 provider 或明确失败，也不会覆盖已有缓存文件。metadata 同时
 记录 `fetch_start_date`、`fetch_end_date`、`research_start_date` 和
 `research_end_date`。基本面缓存同样按 fundamental fetch window 区分。
+新生成的 cache metadata、`config.json` 和 manifest source records 只记录 cache
+文件 basename 或稳定逻辑引用，不记录 Windows drive、UNC、POSIX、用户目录或
+容器内部绝对路径。运行时仍使用配置解析后的真实目录，安全引用不改变缓存键、
+cache-first、SHA、覆盖校验或输出目录行为。
 `data/real_cache/` 不提交到 Git。
 
 公开数据源可能出现接口变更、公告日期缺失、历史估值缺失、复权口径差异和临时网络失败。流水线会保留 warning，不会伪造研究结果。
@@ -186,11 +190,20 @@ factor_snapshots = pd.read_parquet(run_dir / "factor_snapshots.parquet")
 
 成功基准继续使用原有指标对象。`benchmark_diagnostics.json` 保存每个 canonical
 symbol 的 selected provider/endpoint、缓存状态、清洗前后行数、首末日期、
-工作日估算覆盖率、实际 minimum coverage ratio 和全部 `ProviderAttempt`。
+工作日估算覆盖率、实际 minimum coverage ratio 和有界 `ProviderAttempt`。
 每次 attempt 增量保存原始请求 symbol、ISO 请求起止日期、供应商 symbol、首末
-数据日期、行数、门槛、reason code 和脱敏异常。异常原因限制长度并脱敏 URL、
-代理凭证、token 和敏感 header。旧 run 没有该文件时 RunStore、API 和真实报告
-返回空诊断，原有 metrics、curve 和 warnings 读取方式不变。
+数据日期、行数、门槛、reason code 和安全异常摘要。异常只保留
+`exception_type`、稳定 reason code 和 `<ExceptionType> [details redacted]`，
+不复制原始异常、provider response、header、traceback 或绝对路径。attempts 最多
+公开 32 项，并严格保留执行顺序中的前 32 项；新 artifact 使用
+`attempts_total`、`attempts_truncated`、`omitted_count` 保留完整计数，不再写入
+旧 `attempt_count` / `omitted_attempt_count`。完整 attempts 只在当前流水线内存中
+用于按顺序对齐 raw 与 structured warning，每条 evidence 只带自身 attempt 的安全
+provider/reason 摘要，不会把完整数组写入 manifest、artifact、report 或 API。
+旧 run 没有该文件时 RunStore、API 和真实报告返回空诊断；旧计数字段仅在内存中
+规范化，不重写历史文件。诊断存在但损坏、超限或计数矛盾时公开为
+`{"status":"invalid","reason_code":"invalid_diagnostics"}`，原有 metrics、curve、
+warnings、run status 和 benchmark availability 均不改变。
 
 默认 minimum coverage ratio 为 80%。质量检查同时限制请求窗口首尾缺失工作日：
 每端绝对上限为 5 个，且上限还受整体覆盖门槛剩余缺失预算约束。新缓存采用不可变
@@ -243,6 +256,15 @@ Artifact writer 对调用方明确传入的 structured 数据仍执行严格验�
 漏登记由离线测试发现。code 由价格、基本面、宏观、股票池、因子、组合或基准的
 明确阶段设置，不根据英文文本推断。详见
 [`structured-warnings.md`](structured-warnings.md)。
+
+发布前安全边界仍先按原始完整 warning 字符串执行原有去重，再逐项替换危险路径、
+credential、header 和 traceback 片段。因此 warning 数量、顺序、去重语义、
+`warning_count` 和 `run_status` 不变；普通非敏感 warning 逐字不变。Structured
+evidence 超过 3 层、32 键/项、512 字符或 16 KiB 时不会落盘为有效 structured
+metadata。公开递归读取还限制容器宽度、总节点、字符串和最终 JSON 大小，并且不
+展开自定义 Mapping、Sequence、generator 或任意 iterable。`metrics.json` 和
+`benchmark_metrics.json` 中的 NaN、Infinity、-Infinity 继续按必需 artifact
+损坏处理，不会转换为 null、0 或字符串。历史 artifacts 不迁移或重写。
 
 价格矩阵前向填充最多 5 个组合交易日，并在 manifest 记录是否发生、填充
 数量和仍未解决的缺失数。execution date 必须是所有已加载标的都有真实 bar

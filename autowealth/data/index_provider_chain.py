@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from math import isclose, isfinite
 from pathlib import Path
@@ -28,8 +27,16 @@ from autowealth.data.index_quality import (
     validate_minimum_coverage_ratio,
 )
 from autowealth.data.schema import normalize_market_data
+from autowealth.security import (
+    safe_cache_reference,
+    safe_exception_record,
+    safe_exception_summary,
+    sanitize_public_payload,
+    sanitize_public_text,
+)
 
 MAX_DIAGNOSTIC_REASON_LENGTH = 500
+MAX_BENCHMARK_DIAGNOSTIC_ATTEMPTS = 32
 CACHE_LAYOUT_VERSION = 2
 CACHE_METADATA_MISMATCH = "cache_metadata_mismatch"
 
@@ -62,9 +69,33 @@ class ProviderAttempt:
         return self.row_count
 
     def to_dict(self) -> dict[str, Any]:
-        payload = asdict(self)
-        payload["rows"] = self.rows
-        return payload
+        payload = {
+            "provider": self.provider,
+            "endpoint": self.endpoint,
+            "canonical_symbol": self.canonical_symbol,
+            "provider_symbol": self.provider_symbol,
+            "status": self.status,
+            "started_at": self.started_at,
+            "completed_at": self.completed_at,
+            "row_count": self.row_count,
+            "first_date": self.first_date,
+            "last_date": self.last_date,
+            "coverage_ratio": self.coverage_ratio,
+            "reason_code": self.reason_code,
+            "reason": self.reason,
+            "exception_type": self.exception_type,
+            "source_metadata": self.source_metadata,
+            "requested_symbol": self.requested_symbol,
+            "requested_start_date": self.requested_start_date,
+            "requested_end_date": self.requested_end_date,
+            "minimum_coverage_ratio": self.minimum_coverage_ratio,
+            "exception": self.exception,
+            "rows": self.rows,
+        }
+        sanitized = sanitize_public_payload(payload)
+        if type(sanitized) is not dict:  # pragma: no cover - payload is fixed above.
+            raise TypeError("provider attempt serialization must remain a mapping")
+        return sanitized
 
 
 @dataclass(frozen=True)
@@ -85,6 +116,7 @@ class BenchmarkLoadResult:
     diagnostic: dict[str, Any]
     source_record: dict[str, Any]
     warnings: tuple[str, ...] = ()
+    attempts: tuple[ProviderAttempt, ...] = field(default=(), repr=False)
     reason_code: Optional[str] = None
     reason: Optional[str] = None
 
@@ -329,6 +361,7 @@ def load_benchmark_with_cache(
                 canonical_symbol=canonical,
                 diagnostic=diagnostic,
                 source_record=_source_record(diagnostic, cache_path),
+                attempts=tuple(attempts),
             )
         warnings.append(f"benchmark {canonical} cache rejected: {cache_attempt.reason_code}")
 
@@ -342,7 +375,7 @@ def load_benchmark_with_cache(
         attempts.extend(exc.attempts)
         warnings.extend(_failed_attempt_warnings(canonical, exc.attempts))
         reason_code = exc.attempts[-1].reason_code if exc.attempts else "provider_exception"
-        reason = exc.attempts[-1].reason if exc.attempts else _sanitize_reason(str(exc))
+        reason = exc.attempts[-1].reason if exc.attempts else safe_exception_summary(exc)
         diagnostic = _benchmark_diagnostic(
             "unavailable",
             canonical,
@@ -365,6 +398,7 @@ def load_benchmark_with_cache(
             diagnostic=diagnostic,
             source_record=_source_record(diagnostic, cache_path),
             warnings=tuple(warnings),
+            attempts=tuple(attempts),
             reason_code=reason_code,
             reason=reason,
         )
@@ -387,7 +421,7 @@ def load_benchmark_with_cache(
         except Exception as exc:
             cache_status = "write_failed"
             warnings.append(
-                f"benchmark {canonical} cache write failed: {_sanitize_reason(str(exc))}"
+                f"benchmark {canonical} cache write failed: {safe_exception_summary(exc)}"
             )
 
     diagnostic = _benchmark_diagnostic(
@@ -410,6 +444,7 @@ def load_benchmark_with_cache(
         diagnostic=diagnostic,
         source_record=_source_record(diagnostic, cache_path),
         warnings=tuple(warnings),
+        attempts=tuple(attempts),
     )
 
 
@@ -650,8 +685,8 @@ def _write_benchmark_cache(
             "data_type": "benchmark",
             "data_file": generation_path.name,
             "symbol": result.canonical_symbol,
-            "source": result.selected_provider,
-            "endpoint": result.selected_endpoint,
+            "source": sanitize_public_text(result.selected_provider),
+            "endpoint": sanitize_public_text(result.selected_endpoint),
             "fetch_start_date": _date_text(start_date),
             "fetch_end_date": _date_text(end_date),
             "start_date": _date_text(start_date),
@@ -666,8 +701,8 @@ def _write_benchmark_cache(
             "sha256": _sha256(parquet_temp),
         }
         metadata["source_fingerprint"] = _source_fingerprint(
-            result.selected_provider,
-            result.selected_endpoint,
+            metadata["source"],
+            metadata["endpoint"],
         )
         metadata["metadata_fingerprint"] = _metadata_fingerprint(metadata)
         metadata_temp.write_text(
@@ -706,7 +741,11 @@ def _benchmark_diagnostic(
     reason_code: Optional[str] = None,
     reason: Optional[str] = None,
 ) -> dict[str, Any]:
-    return {
+    attempts_total = len(attempts)
+    attempts_truncated = attempts_total > MAX_BENCHMARK_DIAGNOSTIC_ATTEMPTS
+    published_attempts = list(attempts[:MAX_BENCHMARK_DIAGNOSTIC_ATTEMPTS])
+    serialized_attempts = [attempt.to_dict() for attempt in published_attempts]
+    payload = {
         "status": status,
         "canonical_symbol": canonical_symbol,
         "requested_symbol": requested_symbol,
@@ -724,8 +763,15 @@ def _benchmark_diagnostic(
         "cache_status": cache_status,
         "reason_code": reason_code,
         "reason": reason,
-        "attempts": [attempt.to_dict() for attempt in attempts],
+        "attempts_total": attempts_total,
+        "attempts_truncated": attempts_truncated,
+        "omitted_count": max(0, attempts_total - len(serialized_attempts)),
+        "attempts": serialized_attempts,
     }
+    sanitized = sanitize_public_payload(payload)
+    if type(sanitized) is not dict:  # pragma: no cover - payload is fixed above.
+        raise TypeError("benchmark diagnostics serialization must remain a mapping")
+    return sanitized
 
 
 def _source_record(diagnostic: Mapping[str, Any], cache_path: Path) -> dict[str, Any]:
@@ -745,7 +791,7 @@ def _source_record(diagnostic: Mapping[str, Any], cache_path: Path) -> dict[str,
         "coverage_basis": diagnostic.get("coverage_basis"),
         "minimum_coverage_ratio": diagnostic.get("minimum_coverage_ratio"),
         "cache_status": diagnostic.get("cache_status"),
-        "cache_path": str(cache_path),
+        "cache_path": safe_cache_reference(cache_path, fallback="benchmark_cache"),
     }
 
 
@@ -847,7 +893,8 @@ def _exception_attempt(
     minimum_coverage_ratio: Optional[float] = None,
     source_metadata: Optional[Mapping[str, Any]] = None,
 ) -> ProviderAttempt:
-    sanitized_exception = _sanitize_reason(str(exc))
+    exception_details = safe_exception_record(exc, reason_code)
+    sanitized_exception = exception_details["safe_summary"]
     return ProviderAttempt(
         provider=provider,
         endpoint=endpoint,
@@ -858,7 +905,7 @@ def _exception_attempt(
         completed_at=completed_at,
         reason_code=reason_code,
         reason=sanitized_exception,
-        exception_type=type(exc).__name__,
+        exception_type=exception_details["exception_type"],
         source_metadata={"role": role, **dict(source_metadata or {})},
         requested_symbol=requested_symbol,
         requested_start_date=requested_start_date,
@@ -876,16 +923,5 @@ def _utc_text(value: datetime) -> str:
 
 
 def _sanitize_reason(value: str) -> str:
-    text = str(value).replace("\r", " ").replace("\n", " ")
-    text = re.sub(r"https?://\S+", "[redacted-url]", text, flags=re.IGNORECASE)
-    text = re.sub(
-        (
-            r"(?i)\b(authorization|proxy-authorization|x-api-key|"
-            r"api[_-]?key|token|password)\b\s*[:=]\s*"
-            r"(?:bearer\s+)?[^\s,&;]+"
-        ),
-        r"\1=[redacted]",
-        text,
-    )
-    text = re.sub(r"//[^/@\s:]+:[^/@\s]+@", "//[redacted]@", text)
+    text = sanitize_public_text(str(value)).replace("\r", " ").replace("\n", " ")
     return text[:MAX_DIAGNOSTIC_REASON_LENGTH]

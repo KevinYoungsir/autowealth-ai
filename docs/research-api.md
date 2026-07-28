@@ -188,6 +188,11 @@ locale 返回 HTTP 422。语言切换只改变展示文本，不改变指标数�
 全局 artifact schema 升级。Historical Valuation 当前只是 Python contract，
 尚未通过 API 暴露。
 
+`macro_validation_diagnostics` 是 manifest 中已知的可选子树。公开读取先严格校验
+manifest 的其余必需内容，再独立校验该子树；NaN、Infinity、超限或其他不安全值只
+使可选子树在内存中降级为 `{"status":"invalid"}`。磁盘文件不会被重写，必需
+manifest 字段损坏仍返回既有 HTTP 422。
+
 真实运行响应统一包含 `data_source: "real_artifacts"`。`run_status` 显示为
 `success`、`partial_success` 或 `failed`；看板分别解释为完成、部分完成
 和失败。失败运行不应展示误导性的绩效结论。
@@ -229,8 +234,41 @@ run 仍返回 HTTP 200 与原始 warning；损坏不会改变 run status。`seve
 基准失败时 API 返回 `status: "unavailable"`、各标的 `reason` 和空 points，
 不会创建或推断基准曲线。成功基准继续返回已落盘的真实曲线。
 新 run 的详情和确定性报告会保留 `benchmark_diagnostics.json` 中的 provider
-attempts 作为技术证据；用户摘要仍使用简洁失败原因。旧 run 缺少该可选
-artifact 时正常读取，不改变 `benchmark_metrics.json` 的既有响应结构。
+attempts 作为技术证据；公开 attempts 最多 32 项，并显式返回总数、截断标志和
+省略数量：`attempts_total`、`attempts_truncated`、`omitted_count`。公开数组严格
+是原执行顺序中的前 32 项；完整 runtime attempts 不进入 API。cache reference
+仅返回经过凭据检查的安全 basename，不返回服务器目录。用户摘要仍使用简洁失败
+原因。旧 run 缺少该可选 artifact 时正常读取；旧 attempts 计数字段只在内存规范化，
+不重写文件，也不改变 `benchmark_metrics.json` 的既有响应结构。
+
+## Artifact 公开安全边界
+
+RunStore、API 和确定性报告把磁盘 artifacts 视为不可信输入。新 run 不持久化
+绝对 cache path、请求/响应 header、原始 provider response、traceback 或完整异常
+文本；异常只保留 exception type、稳定 reason code 和确定性安全摘要。
+
+旧 artifacts 不重写。公开读取时递归替换绝对路径和明确的 credential/header/
+traceback 片段，同时保持对象中的非敏感字段。warning summary 仍按脱敏前原完整
+字符串执行原有类别判断，并保持 warning 数量、顺序、`total`、`raw_returned`、
+`raw_truncated`、structured 三态和 run status。普通非敏感 warning 逐字不变。
+
+公开文本只把完整终止的既有占位符视为安全值；占位符后紧邻的敏感后缀会重新
+脱敏。Bearer token 的 JWT 内部句点继续属于 token，句末标点和后续状态文本保留。
+Authorization/Proxy-Authorization 保留 scheme 并脱敏 credential；Cookie 连续
+脱敏 `name=value` 的 value，Set-Cookie 保留安全属性并继续执行路径和凭据检查。
+合法 artifact reference 增量允许 `docs.json#/a~1b/~0value`，仍拒绝任意未登记
+JSON 文件、绝对路径、URL、凭据或非法 JSON Pointer。
+
+可选 benchmark diagnostics 缺失时返回空对象并保持 `absent` 语义；文件存在但
+JSON 损坏、超限或计数矛盾时返回
+`{"status":"invalid","reason_code":"invalid_diagnostics"}`。两种情况都不会使 run
+detail/report 返回 500，也不改变原 risk/run/benchmark 状态。必需 artifact 缺失或
+损坏继续沿用既有 404/422；metrics 中 NaN、Infinity、-Infinity 不会静默转换。
+run detail 与 report 使用同一份 RunStore 公开规范化诊断和相同 attempts 计数语义；
+正常、`invalid` 与 `absent` 三种可选诊断状态都保持 HTTP 200。
+上述规则不改变 Pydantic 字段、API 路径、HTTP 成功状态、指标、曲线、因子分数、
+组合结果或 benchmark 可用性。检测规则针对明确路径与凭据形式，不能保证识别任意
+无标签或经过编码的秘密。
 
 ## 前端 Fallback
 

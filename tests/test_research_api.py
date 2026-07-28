@@ -31,6 +31,12 @@ from autowealth.research.warnings import (
     WarningScope,
     WarningSeverity,
 )
+from autowealth.security import (
+    REDACTED_ABSOLUTE_PATH,
+    REDACTED_SENSITIVE_VALUE,
+    REDACTED_TRACEBACK,
+    sanitize_public_text,
+)
 
 client = TestClient(app)
 REAL_RUN_ID = "20250201T000000Z_cccccccccc"
@@ -283,20 +289,397 @@ def test_real_run_detail_and_report_include_benchmark_diagnostics(
         json.dumps(diagnostics, ensure_ascii=False),
         encoding="utf-8",
     )
+    public_diagnostics = json.loads(json.dumps(diagnostics))
+    public_benchmark = public_diagnostics["benchmarks"]["000300"]
+    public_benchmark["attempts"][0]["reason"] = "Exception [details redacted]"
+    public_benchmark.update(
+        {
+            "attempts_total": 1,
+            "attempts_truncated": False,
+            "omitted_count": 0,
+        }
+    )
+
+    detail = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}")
+    report = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}/report")
+
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["benchmark_diagnostics"] == public_diagnostics
+    assert report.status_code == 200, report.text
+    report_payload = report.json()
+    assert report_payload["run_status"] == "partial_success"
+    assert report_payload["benchmark_status"] == "unavailable"
+    assert (
+        report_payload["benchmark_review"]["evidence"]["provider_diagnostics"] == public_diagnostics
+    )
+    assert "benchmark_diagnostics.json" in (
+        report_payload["research_boundaries"]["evidence"]["source_artifacts"]
+    )
+
+
+def test_corrupt_optional_benchmark_diagnostics_keep_detail_and_report_available(
+    real_runs_client: TestClient,
+    real_runs_root: Path,
+) -> None:
+    diagnostics_path = real_runs_root / REAL_RUN_ID / "benchmark_diagnostics.json"
+    diagnostics_path.write_text("{not-json", encoding="utf-8")
+
+    detail = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}")
+    report = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}/report")
+
+    assert detail.status_code == 200, detail.text
+    assert report.status_code == 200, report.text
+    assert detail.json()["benchmark_diagnostics"] == {
+        "status": "invalid",
+        "reason_code": "invalid_diagnostics",
+    }
+    assert detail.json()["summary"]["run_status"] == "partial_success"
+    assert report.json()["run_status"] == "partial_success"
+    assert report.json()["benchmark_status"] == "unavailable"
+    assert report.json()["benchmark_review"]["evidence"]["diagnostics_status"] == "invalid"
+    assert report.json()["benchmark_review"]["status"] == "unavailable"
+
+
+@pytest.mark.parametrize("payload", [{}, {"schema_version": 1}])
+def test_incomplete_optional_benchmark_diagnostics_are_invalid_http_200(
+    real_runs_client: TestClient,
+    real_runs_root: Path,
+    payload: dict[str, object],
+) -> None:
+    diagnostics_path = real_runs_root / REAL_RUN_ID / "benchmark_diagnostics.json"
+    diagnostics_path.write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
+
+    detail = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}")
+    report = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}/report")
+
+    assert detail.status_code == 200, detail.text
+    assert report.status_code == 200, report.text
+    assert detail.json()["benchmark_diagnostics"] == {
+        "status": "invalid",
+        "reason_code": "invalid_diagnostics",
+    }
+    assert detail.json()["summary"]["run_status"] == "partial_success"
+    assert report.json()["run_status"] == "partial_success"
+    assert report.json()["benchmark_status"] == "unavailable"
+    assert report.json()["benchmark_review"]["evidence"]["diagnostics_status"] == "invalid"
+
+
+@pytest.mark.parametrize("constant", ["NaN", "Infinity", "-Infinity"])
+def test_required_metrics_non_finite_values_return_existing_422_error(
+    real_runs_client: TestClient,
+    real_runs_root: Path,
+    constant: str,
+) -> None:
+    metrics_path = real_runs_root / REAL_RUN_ID / "metrics.json"
+    metrics_path.write_text(
+        '{"annualized_return":' + constant + ',"total_return":0.1}',
+        encoding="utf-8",
+    )
+
+    detail = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}")
+    report = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}/report")
+
+    assert detail.status_code == 422
+    assert report.status_code == 422
+    assert detail.json()["code"] == "invalid_research_artifact"
+    assert report.json()["code"] == "invalid_research_artifact"
+    assert "metrics.json" in detail.json()["message"]
+    assert "metrics.json" in report.json()["message"]
+    assert '"annualized_return":null' not in detail.text
+
+
+@pytest.mark.parametrize(
+    "value",
+    [float("nan"), float("inf"), float("-inf")],
+    ids=["nan", "positive-infinity", "negative-infinity"],
+)
+def test_required_manifest_non_finite_value_remains_http_422(
+    real_runs_client: TestClient,
+    real_runs_root: Path,
+    value: float,
+) -> None:
+    manifest_path = real_runs_root / REAL_RUN_ID / "run_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["coverage_summary"]["price_coverage_ratio"] = value
+    manifest_path.write_text(
+        json.dumps(manifest, allow_nan=True),
+        encoding="utf-8",
+    )
+    before = manifest_path.read_bytes()
+
+    detail = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}")
+    report = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}/report")
+
+    assert detail.status_code == 422
+    assert report.status_code == 422
+    assert detail.json()["code"] == "invalid_research_artifact"
+    assert report.json()["code"] == "invalid_research_artifact"
+    assert "run_manifest.json" in detail.json()["message"]
+    assert "run_manifest.json" in report.json()["message"]
+    assert manifest_path.read_bytes() == before
+
+
+def test_required_manifest_structure_damage_remains_http_422(
+    real_runs_client: TestClient,
+    real_runs_root: Path,
+) -> None:
+    manifest_path = real_runs_root / REAL_RUN_ID / "run_manifest.json"
+    manifest_path.write_text("[]", encoding="utf-8")
+    before = manifest_path.read_bytes()
+
+    detail = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}")
+    report = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}/report")
+
+    assert detail.status_code == 422
+    assert report.status_code == 422
+    assert detail.json()["code"] == "invalid_research_artifact"
+    assert report.json()["code"] == "invalid_research_artifact"
+    assert "run_manifest.json" in detail.json()["message"]
+    assert "run_manifest.json" in report.json()["message"]
+    assert manifest_path.read_bytes() == before
+
+
+def test_optional_benchmark_non_finite_value_degrades_to_invalid_http_200(
+    real_runs_client: TestClient,
+    real_runs_root: Path,
+) -> None:
+    diagnostics_path = real_runs_root / REAL_RUN_ID / "benchmark_diagnostics.json"
+    diagnostics_path.write_text(
+        '{"schema_version":1,"benchmarks":{"000300":{"coverage_ratio":NaN}}}',
+        encoding="utf-8",
+    )
 
     detail = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}")
     report = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}/report")
 
     assert detail.status_code == 200
-    assert detail.json()["benchmark_diagnostics"] == diagnostics
     assert report.status_code == 200
-    report_payload = report.json()
-    assert report_payload["run_status"] == "partial_success"
-    assert report_payload["benchmark_status"] == "unavailable"
-    assert report_payload["benchmark_review"]["evidence"]["provider_diagnostics"] == diagnostics
-    assert "benchmark_diagnostics.json" in (
-        report_payload["research_boundaries"]["evidence"]["source_artifacts"]
+    assert detail.json()["benchmark_diagnostics"] == {
+        "status": "invalid",
+        "reason_code": "invalid_diagnostics",
+    }
+    assert report.json()["benchmark_review"]["evidence"]["diagnostics_status"] == "invalid"
+
+
+def test_old_artifact_sensitive_content_is_redacted_at_api_and_report_boundaries(
+    real_runs_client: TestClient,
+    real_runs_root: Path,
+) -> None:
+    run_directory = real_runs_root / REAL_RUN_ID
+    manifest_path = run_directory / "run_manifest.json"
+    warnings_path = run_directory / "warnings.json"
+    diagnostics_path = run_directory / "benchmark_diagnostics.json"
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["data_sources"] = [
+        {
+            "status": "failed",
+            "exception_type": "RuntimeError",
+            "error": "RuntimeError: confidential source response",
+            "cache_path": r"C:\Users\researcher\cache.parquet",
+            "source_metadata": {
+                "fallback_path": "D:/private/fallback.parquet",
+                "unc_path": r"\\server\share\benchmark.parquet",
+                "posix_path": "/tmp/research/cache.parquet",
+                "documentation": "https://example.com/research/path",
+                "artifact": "warnings.json#/structured_warnings/0",
+                "apiKey": "manifest-secret",
+            },
+        }
+    ]
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False),
+        encoding="utf-8",
     )
+    raw_warnings = [
+        "ordinary warning",
+        r"600001 price provider failed: C:\Users\name\cache.parquet",
+        "benchmark 000300 unavailable: accessToken=benchmark-secret",
+        "macro provider failed: Authorization: Bearer macro-secret",
+        "fundamental provider failed: Cookie: session=fundamental-secret",
+        (
+            "600001 price quality warning: Traceback (most recent call last):\n"
+            'File "/tmp/provider.py", line 1\nRuntimeError: failed'
+        ),
+    ]
+    warnings_path.write_text(
+        json.dumps({"warnings": raw_warnings}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    diagnostics = {
+        "schema_version": 1,
+        "benchmarks": {
+            "000300": {
+                "status": "unavailable",
+                "canonical_symbol": "000300",
+                "attempts": [
+                    {
+                        "provider": "fixture",
+                        "status": "failed",
+                        "reason_code": "provider_exception",
+                        "reason": (
+                            "provider failed at /home/service/provider.py "
+                            "clientSecret=diagnostic-secret"
+                        ),
+                        "exception_type": "RuntimeError",
+                        "exception": "RuntimeError: confidential diagnostic response",
+                    }
+                ],
+            }
+        },
+    }
+    diagnostics_path.write_text(
+        json.dumps(diagnostics, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    before = {
+        path.name: path.read_bytes() for path in (manifest_path, warnings_path, diagnostics_path)
+    }
+
+    detail_response = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}")
+    warnings_response = real_runs_client.get(
+        f"/research/runs/{REAL_RUN_ID}/warnings?sample_limit=10&raw_limit=20"
+    )
+    report_response = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}/report")
+
+    assert detail_response.status_code == 200, detail_response.text
+    assert warnings_response.status_code == 200, warnings_response.text
+    assert report_response.status_code == 200, report_response.text
+    detail = detail_response.json()
+    warning_summary = warnings_response.json()["summary"]
+    report = report_response.json()
+    assert detail["summary"]["run_status"] == "partial_success"
+    assert report["run_status"] == "partial_success"
+    assert report["benchmark_status"] == "unavailable"
+    assert detail["manifest"]["data_sources"][0]["cache_path"] == (REDACTED_ABSOLUTE_PATH)
+    metadata = detail["manifest"]["data_sources"][0]["source_metadata"]
+    assert metadata["documentation"] == "https://example.com/research/path"
+    assert metadata["artifact"] == "warnings.json#/structured_warnings/0"
+    assert metadata["apiKey"] == REDACTED_SENSITIVE_VALUE
+    assert warning_summary["total"] == len(raw_warnings)
+    assert warning_summary["raw_returned"] == len(raw_warnings)
+    assert warning_summary["raw_truncated"] is False
+    assert warning_summary["raw_warnings"][0] == "ordinary warning"
+    assert warning_summary["structured_status"] == "absent"
+    assert report["warning_count"] == len(raw_warnings)
+    assert report["data_quality_review"]["evidence"]["warnings"] == (
+        warning_summary["raw_warnings"]
+    )
+    assert report["data_quality_review"]["evidence"]["warning_categories"] == (
+        warning_summary["categories"]
+    )
+    public_text = json.dumps(
+        {
+            "detail": detail,
+            "warning_summary": warning_summary,
+            "report": report,
+        },
+        ensure_ascii=False,
+    )
+    for secret in (
+        "C:\\Users\\researcher",
+        "D:/private",
+        "\\\\server\\share",
+        "/tmp/research",
+        "/home/service",
+        "manifest-secret",
+        "benchmark-secret",
+        "macro-secret",
+        "fundamental-secret",
+        "diagnostic-secret",
+        "confidential source response",
+        "confidential diagnostic response",
+        "/tmp/provider.py",
+    ):
+        assert secret not in public_text
+    assert REDACTED_ABSOLUTE_PATH in public_text
+    assert REDACTED_SENSITIVE_VALUE in public_text
+    assert REDACTED_TRACEBACK in public_text
+    assert before == {
+        path.name: path.read_bytes() for path in (manifest_path, warnings_path, diagnostics_path)
+    }
+
+
+def test_old_header_warnings_remain_compatible_across_api_and_report(
+    real_runs_client: TestClient,
+    real_runs_root: Path,
+) -> None:
+    run_directory = real_runs_root / REAL_RUN_ID
+    warnings_path = run_directory / "warnings.json"
+    manifest_path = run_directory / "run_manifest.json"
+    raw = [
+        "Authorization: Basic basic-secret-value; retry succeeded",
+        ("Cookie: session=session-secret-value; " "csrftoken=csrf-secret-value; retry succeeded"),
+        (f"apiKey={REDACTED_SENSITIVE_VALUE}" ".appended-secret-value; retry succeeded"),
+        "Bearer bearer-secret-value. retry succeeded",
+        "ordinary non-sensitive warning",
+    ]
+    expected = [
+        f"Authorization: Basic {REDACTED_SENSITIVE_VALUE}; retry succeeded",
+        (
+            f"Cookie: session={REDACTED_SENSITIVE_VALUE}; "
+            f"csrftoken={REDACTED_SENSITIVE_VALUE}; retry succeeded"
+        ),
+        f"apiKey={REDACTED_SENSITIVE_VALUE}; retry succeeded",
+        f"Bearer {REDACTED_SENSITIVE_VALUE}. retry succeeded",
+        raw[-1],
+    ]
+    warnings_path.write_text(
+        json.dumps({"warnings": raw}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["coverage_summary"]["warning_count"] = len(raw)
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    before = {path.name: path.read_bytes() for path in (warnings_path, manifest_path)}
+
+    warnings_response = real_runs_client.get(
+        f"/research/runs/{REAL_RUN_ID}/warnings?sample_limit=5&raw_limit=5"
+    )
+    report_response = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}/report")
+
+    assert warnings_response.status_code == 200
+    assert report_response.status_code == 200
+    summary = warnings_response.json()["summary"]
+    report = report_response.json()
+    assert summary["total"] == len(raw)
+    assert summary["raw_warnings"] == expected
+    assert summary["raw_returned"] == len(raw)
+    assert summary["raw_truncated"] is False
+    assert summary["categories"]["system"] == len(raw)
+    assert sum(summary["categories"].values()) == len(raw)
+    assert summary["samples"] == {"system": expected}
+    assert report["warning_count"] == len(raw)
+    assert report["run_status"] == "partial_success"
+    assert report["benchmark_status"] == "unavailable"
+    assert report["data_quality_review"]["evidence"]["warnings"] == expected
+    assert not any(flag["code"] == "warning_count_mismatch" for flag in report["risk_flags"])
+    assert (
+        next(flag for flag in report["risk_flags"] if flag["code"] == "persisted_warnings")[
+            "severity"
+        ]
+        == "medium"
+    )
+    assert [sanitize_public_text(item) for item in expected] == expected
+    serialized = json.dumps(
+        {"warnings": summary, "report": report},
+        ensure_ascii=False,
+    )
+    for secret in (
+        "basic-secret-value",
+        "session-secret-value",
+        "csrf-secret-value",
+        "appended-secret-value",
+        "bearer-secret-value",
+    ):
+        assert secret not in serialized
+    assert before == {path.name: path.read_bytes() for path in (warnings_path, manifest_path)}
 
 
 def test_real_run_report_is_deterministic_and_preserves_limitations(
@@ -334,7 +717,7 @@ def test_real_run_report_is_deterministic_and_preserves_limitations(
     ):
         response = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}/report")
 
-    assert response.status_code == 200
+    assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["run_id"] == REAL_RUN_ID
     assert payload["locale"] == "en-US"
@@ -346,6 +729,7 @@ def test_real_run_report_is_deterministic_and_preserves_limitations(
     assert payload["warning_count"] == 3
     assert payload["benchmark_review"]["status"] == "unavailable"
     assert payload["benchmark_review"]["evidence"]["entries"]["000300"]["status"] == "unavailable"
+    assert payload["benchmark_review"]["evidence"]["diagnostics_status"] == "absent"
     assert payload["macro_review"]["status"] == "neutral_fallback"
     assert payload["macro_review"]["evidence"]["macro_validation_diagnostics"] == {
         "schema_version": 1,
@@ -509,8 +893,8 @@ def test_malformed_macro_validation_diagnostics_do_not_change_report_status(
     detail_response = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}")
     report_response = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}/report")
 
-    assert detail_response.status_code == 200
-    assert report_response.status_code == 200
+    assert detail_response.status_code == 200, detail_response.text
+    assert report_response.status_code == 200, report_response.text
     detail = detail_response.json()
     payload = report_response.json()
     assert detail["manifest"]["macro_validation_diagnostics"] == malformed_diagnostics
@@ -578,8 +962,8 @@ def _assert_macro_diagnostics_rejected_safely(
     detail_response = client.get(f"/research/runs/{REAL_RUN_ID}")
     report_response = client.get(f"/research/runs/{REAL_RUN_ID}/report")
 
-    assert detail_response.status_code == 200
-    assert report_response.status_code == 200
+    assert detail_response.status_code == 200, detail_response.text
+    assert report_response.status_code == 200, report_response.text
     detail = detail_response.json()
     report = report_response.json()
     assert detail["manifest"]["macro_validation_diagnostics"] == diagnostics
@@ -637,21 +1021,29 @@ def test_non_finite_macro_coverage_is_invalid_without_changing_report(
     diagnostics["coverage_ratio"] = coverage_ratio
     manifest["macro_validation_diagnostics"] = diagnostics
     manifest_path.write_text(json.dumps(manifest, allow_nan=True), encoding="utf-8")
+    before = manifest_path.read_bytes()
 
+    detail_response = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}")
     response = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}/report")
 
-    assert response.status_code == 200
+    assert detail_response.status_code == 200, detail_response.text
+    assert response.status_code == 200, response.text
+    detail = detail_response.json()
     report = response.json()
+    assert detail["manifest"]["macro_validation_diagnostics"] == {"status": "invalid"}
+    assert detail["summary"]["run_status"] == baseline["run_status"]
     assert report["run_status"] == baseline["run_status"]
     assert report["macro_review"]["status"] == baseline["macro_review"]["status"]
     assert report["macro_review"]["evidence"]["macro_validation_diagnostics"] == {
         "status": "invalid"
     }
     assert report["risk_flags"] == baseline["risk_flags"]
+    assert report["performance_review"] == baseline["performance_review"]
     assert (
         report["data_quality_review"]["evidence"]["warnings"]
         == baseline["data_quality_review"]["evidence"]["warnings"]
     )
+    assert manifest_path.read_bytes() == before
 
 
 def _invalid_macro_diagnostics_case(case: str) -> dict[str, object]:
@@ -978,6 +1370,31 @@ def test_real_run_warnings_corrupt_structured_fields_keep_raw_and_risk_flags(
     assert after["run_status"] == "partial_success"
     assert after["benchmark_status"] == "unavailable"
     assert after["risk_flags"] == before["risk_flags"]
+
+
+def test_oversized_structured_evidence_returns_http_200_as_invalid(
+    real_runs_client: TestClient,
+    real_runs_root: Path,
+) -> None:
+    path = real_runs_root / REAL_RUN_ID / "warnings.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["structured_warnings"][0]["evidence"] = {"value": "x" * 513}
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    response = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}/warnings?raw_limit=20")
+    report = real_runs_client.get(f"/research/runs/{REAL_RUN_ID}/report")
+
+    assert response.status_code == 200, response.text
+    assert report.status_code == 200
+    summary = response.json()["summary"]
+    assert summary["structured_status"] == "invalid"
+    assert summary["structured_available"] is False
+    assert summary["structured_warnings"] == []
+    assert len(summary["raw_warnings"]) == 3
+    report_payload = report.json()
+    assert report_payload["run_status"] == "partial_success"
+    assert report_payload["benchmark_status"] == "unavailable"
+    assert report_payload["data_quality_review"]["evidence"]["structured_status"] == ("invalid")
 
 
 def test_structured_recursion_error_returns_http_200_and_preserves_raw(
