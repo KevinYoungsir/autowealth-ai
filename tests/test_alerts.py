@@ -22,10 +22,10 @@ import pytest
 from autowealth.alerts.monitor import Alert, AlertMonitor, AlertRule
 from autowealth.alerts.notifier import AlertNotifier, NotificationRecord
 
-
 # ============================================================
 # 测试数据工厂
 # ============================================================
+
 
 def make_market_data(rows=30, last_close=155.0, last_volume=5000000, seed=42):
     """
@@ -50,13 +50,16 @@ def make_market_data(rows=30, last_close=155.0, last_volume=5000000, seed=42):
     volumes = rng.randint(1000000, 3000000, rows).astype(float)
     volumes[-1] = last_volume
 
-    df = pd.DataFrame({
-        "Open": prices + rng.randn(rows) * 0.3,
-        "High": prices + np.abs(rng.randn(rows)),
-        "Low": prices - np.abs(rng.randn(rows)),
-        "Close": prices,
-        "Volume": volumes,
-    }, index=dates)
+    df = pd.DataFrame(
+        {
+            "Open": prices + rng.randn(rows) * 0.3,
+            "High": prices + np.abs(rng.randn(rows)),
+            "Low": prices - np.abs(rng.randn(rows)),
+            "Close": prices,
+            "Volume": volumes,
+        },
+        index=dates,
+    )
 
     return df
 
@@ -87,12 +90,15 @@ def make_macd_data(golden_cross=False, death_cross=False):
         macd = [0.1, 0.2, 0.3, 0.4, 0.5]
         signal = [0.0, 0.1, 0.2, 0.3, 0.4]
 
-    df = pd.DataFrame({
-        "Close": [100, 101, 102, 103, 104],
-        "Volume": [1000000] * 5,
-        "MACD": macd,
-        "MACD_Signal": signal,
-    }, index=dates)
+    df = pd.DataFrame(
+        {
+            "Close": [100, 101, 102, 103, 104],
+            "Volume": [1000000] * 5,
+            "MACD": macd,
+            "MACD_Signal": signal,
+        },
+        index=dates,
+    )
 
     return df
 
@@ -100,6 +106,7 @@ def make_macd_data(golden_cross=False, death_cross=False):
 # ============================================================
 # 测试：AlertRule 数据类
 # ============================================================
+
 
 class TestAlertRule:
 
@@ -128,6 +135,7 @@ class TestAlertRule:
 # 测试：Alert 数据类
 # ============================================================
 
+
 class TestAlert:
 
     def test_alert_creation(self):
@@ -153,6 +161,7 @@ class TestAlert:
 # ============================================================
 # 测试：规则添加/移除
 # ============================================================
+
 
 class TestRuleManagement:
 
@@ -191,8 +200,7 @@ class TestRuleManagement:
         """测试添加指标交叉规则"""
         monitor = AlertMonitor()
         rule_id = monitor.add_rule(
-            "AAPL", "indicator_cross",
-            {"indicator": "MACD", "cross_type": "golden"}
+            "AAPL", "indicator_cross", {"indicator": "MACD", "cross_type": "golden"}
         )
         assert rule_id
         assert len(monitor.get_active_rules()) == 1
@@ -236,6 +244,7 @@ class TestRuleManagement:
 # ============================================================
 # 测试：价格预警触发
 # ============================================================
+
 
 class TestPriceAlerts:
 
@@ -295,6 +304,7 @@ class TestPriceAlerts:
 # ============================================================
 # 测试：涨跌幅预警触发
 # ============================================================
+
 
 class TestPctChangeAlerts:
 
@@ -356,6 +366,7 @@ class TestPctChangeAlerts:
 # 测试：成交量异常预警
 # ============================================================
 
+
 class TestVolumeSpikeAlerts:
 
     def test_volume_spike_triggered(self):
@@ -388,14 +399,16 @@ class TestVolumeSpikeAlerts:
 # 测试：指标交叉预警
 # ============================================================
 
+
 class TestIndicatorCrossAlerts:
 
     def test_macd_golden_cross_triggered(self):
         """测试MACD金叉触发"""
         monitor = AlertMonitor()
         monitor.add_rule(
-            "AAPL", "indicator_cross",
-            {"indicator": "MACD", "cross_type": "golden", "message": "MACD金叉"}
+            "AAPL",
+            "indicator_cross",
+            {"indicator": "MACD", "cross_type": "golden", "message": "MACD金叉"},
         )
         data = make_macd_data(golden_cross=True)
         alerts = monitor.check_alerts(data)
@@ -406,8 +419,9 @@ class TestIndicatorCrossAlerts:
         """测试MACD死叉触发"""
         monitor = AlertMonitor()
         monitor.add_rule(
-            "AAPL", "indicator_cross",
-            {"indicator": "MACD", "cross_type": "death", "message": "MACD死叉"}
+            "AAPL",
+            "indicator_cross",
+            {"indicator": "MACD", "cross_type": "death", "message": "MACD死叉"},
         )
         data = make_macd_data(death_cross=True)
         alerts = monitor.check_alerts(data)
@@ -417,10 +431,7 @@ class TestIndicatorCrossAlerts:
     def test_macd_no_cross_not_triggered(self):
         """测试无交叉时不触发"""
         monitor = AlertMonitor()
-        monitor.add_rule(
-            "AAPL", "indicator_cross",
-            {"indicator": "MACD", "cross_type": "golden"}
-        )
+        monitor.add_rule("AAPL", "indicator_cross", {"indicator": "MACD", "cross_type": "golden"})
         data = make_macd_data(golden_cross=False, death_cross=False)
         alerts = monitor.check_alerts(data)
         assert len(alerts) == 0
@@ -428,10 +439,7 @@ class TestIndicatorCrossAlerts:
     def test_indicator_cross_missing_columns(self):
         """测试缺少MACD列时不触发"""
         monitor = AlertMonitor()
-        monitor.add_rule(
-            "AAPL", "indicator_cross",
-            {"indicator": "MACD", "cross_type": "golden"}
-        )
+        monitor.add_rule("AAPL", "indicator_cross", {"indicator": "MACD", "cross_type": "golden"})
         data = make_market_data(rows=30)
         alerts = monitor.check_alerts(data)
         assert len(alerts) == 0
@@ -440,6 +448,7 @@ class TestIndicatorCrossAlerts:
 # ============================================================
 # 测试：check_alerts 边界情况
 # ============================================================
+
 
 class TestCheckAlertsEdgeCases:
 
@@ -479,6 +488,7 @@ class TestCheckAlertsEdgeCases:
 # 测试：通知发送
 # ============================================================
 
+
 class TestAlertNotifier:
 
     def test_init_default_channels(self):
@@ -517,8 +527,7 @@ class TestAlertNotifier:
         """测试添加webhook"""
         notifier = AlertNotifier()
         result = notifier.add_webhook(
-            "https://oapi.dingtalk.com/robot/send?access_token=test",
-            "dingtalk"
+            "https://oapi.dingtalk.com/robot/send?access_token=test", "dingtalk"
         )
         assert result is True
 

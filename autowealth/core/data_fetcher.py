@@ -1,6 +1,7 @@
 """
 数据获取模块 - 负责从各种数据源获取金融数据
 """
+
 import logging
 import time
 from datetime import datetime, timedelta
@@ -44,6 +45,7 @@ class EastMoneyDataSource:
     def __init__(self):
         try:
             import akshare as ak
+
             self.ak = ak
         except ImportError:
             raise ImportError("使用 EastMoneyDataSource 需要安装 akshare: pip install akshare")
@@ -77,19 +79,21 @@ class EastMoneyDataSource:
                 period="daily",
                 start_date=(datetime.now() - self._parse_period(period)).strftime("%Y%m%d"),
                 end_date=datetime.now().strftime("%Y%m%d"),
-                adjust="qfq"  # 前复权
+                adjust="qfq",  # 前复权
             )
             if df.empty:
                 raise ValueError(f"无法获取 {symbol} 的数据")
             # 标准化列名以匹配 yfinance 格式
-            df = df.rename(columns={
-                "日期": "Date",
-                "开盘": "Open",
-                "收盘": "Close",
-                "最高": "High",
-                "最低": "Low",
-                "成交量": "Volume",
-            })
+            df = df.rename(
+                columns={
+                    "日期": "Date",
+                    "开盘": "Open",
+                    "收盘": "Close",
+                    "最高": "High",
+                    "最低": "Low",
+                    "成交量": "Volume",
+                }
+            )
             df["Date"] = pd.to_datetime(df["Date"])
             df = df.set_index("Date")
             # 保留标准OHLCV列
@@ -178,6 +182,7 @@ class BinanceDataSource:
     def __init__(self):
         try:
             import requests
+
             self.requests = requests
         except ImportError:
             raise ImportError("使用 BinanceDataSource 需要安装 requests: pip install requests")
@@ -197,9 +202,19 @@ class BinanceDataSource:
             logger.info(f"从币安获取加密货币数据: {symbol}")
             # 转换interval格式
             interval_map = {
-                "1m": "1m", "2m": "3m", "5m": "5m", "15m": "15m", "30m": "30m",
-                "60m": "1h", "90m": "1h", "1h": "1h", "1d": "1d", "5d": "1w",
-                "1wk": "1w", "1mo": "1M", "3mo": "3M"
+                "1m": "1m",
+                "2m": "3m",
+                "5m": "5m",
+                "15m": "15m",
+                "30m": "30m",
+                "60m": "1h",
+                "90m": "1h",
+                "1h": "1h",
+                "1d": "1d",
+                "5d": "1w",
+                "1wk": "1w",
+                "1mo": "1M",
+                "3mo": "3M",
             }
             binance_interval = interval_map.get(interval, interval)
             url = f"{self.base_url}/api/v3/klines"
@@ -213,11 +228,23 @@ class BinanceDataSource:
             data = response.json()
             if not data:
                 raise ValueError(f"无法获取 {symbol} 的数据")
-            df = pd.DataFrame(data, columns=[
-                "Open time", "Open", "High", "Low", "Close", "Volume",
-                "Close time", "Quote asset volume", "Number of trades",
-                "Taker buy base asset volume", "Taker buy quote asset volume", "Ignore"
-            ])
+            df = pd.DataFrame(
+                data,
+                columns=[
+                    "Open time",
+                    "Open",
+                    "High",
+                    "Low",
+                    "Close",
+                    "Volume",
+                    "Close time",
+                    "Quote asset volume",
+                    "Number of trades",
+                    "Taker buy base asset volume",
+                    "Taker buy quote asset volume",
+                    "Ignore",
+                ],
+            )
             df["Date"] = pd.to_datetime(df["Open time"], unit="ms")
             df = df.set_index("Date")
             # 转换数值类型
@@ -289,6 +316,7 @@ class DataFetcher:
     def _get_twelve_data(self):
         if self._twelve_data is None:
             from autowealth.core.twelve_data_source import TwelveDataSource
+
             self._twelve_data = TwelveDataSource(api_key=self.twelve_data_api_key)
         return self._twelve_data
 
@@ -318,10 +346,16 @@ class DataFetcher:
                 return func()
             except Exception as e:
                 error_msg = str(e)
-                if "Too Many Requests" in error_msg or "Rate limited" in error_msg or "429" in error_msg:
+                if (
+                    "Too Many Requests" in error_msg
+                    or "Rate limited" in error_msg
+                    or "429" in error_msg
+                ):
                     if attempt < max_retries - 1:
                         delay = base_delay * (attempt + 1)
-                        logger.warning(f"请求被限流，{delay}秒后重试 (第{attempt + 1}/{max_retries}次)")
+                        logger.warning(
+                            f"请求被限流，{delay}秒后重试 (第{attempt + 1}/{max_retries}次)"
+                        )
                         time.sleep(delay)
                         continue
                 raise
@@ -376,7 +410,9 @@ class DataFetcher:
             # 1. 优先尝试 Twelve Data (真实数据)
             try:
                 logger.info(f"尝试从Twelve Data获取真实数据: {symbol}")
-                return self._get_twelve_data().get_stock_data(symbol, period=period, interval=interval)
+                return self._get_twelve_data().get_stock_data(
+                    symbol, period=period, interval=interval
+                )
             except Exception as td_err:
                 logger.warning(f"Twelve Data失败: {td_err}")
             # 2. 尝试 yfinance
@@ -388,9 +424,11 @@ class DataFetcher:
                     return pd.read_csv(cache_file, index_col=0, parse_dates=True)
             try:
                 logger.info(f"尝试从Yahoo Finance获取数据: {symbol}")
+
                 def _do_fetch():
                     ticker = yf.Ticker(symbol)
                     return ticker.history(period=period, interval=interval)
+
                 data = self._fetch_with_retry(_do_fetch)
                 if data.empty:
                     raise ValueError(f"无法获取 {symbol} 的数据")
@@ -400,12 +438,17 @@ class DataFetcher:
             except Exception as yf_err:
                 error_msg = str(yf_err)
                 # 3. 限流时用模拟数据
-                if "Too Many Requests" in error_msg or "Rate limited" in error_msg or "429" in error_msg:
+                if (
+                    "Too Many Requests" in error_msg
+                    or "Rate limited" in error_msg
+                    or "429" in error_msg
+                ):
                     logger.warning(f"所有真实数据源限流，使用模拟数据: {symbol}")
                 else:
                     logger.warning(f"Yahoo Finance失败: {yf_err}，使用模拟数据")
                 try:
                     from autowealth.core.demo_data import DemoDataGenerator
+
                     generator = DemoDataGenerator()
                     data = generator.generate_stock_data(symbol, days=365)
                     if not data.empty:
@@ -427,10 +470,10 @@ class DataFetcher:
         # 如果是加密货币
         if self.is_crypto_symbol(symbol):
             return self._get_binance().get_crypto_info(symbol)
-        
+
         # 去除后缀
         clean_symbol = symbol.replace(".SS", "").replace(".SZ", "").replace(".BJ", "")
-        
+
         # 如果是A股（以6/0/3/8/4开头，且长度为6）
         if clean_symbol.startswith(("6", "0", "3", "8", "4")) and len(clean_symbol) == 6:
             try:
@@ -453,7 +496,7 @@ class DataFetcher:
                     "website": "N/A",
                     "description": "N/A",
                 }
-        
+
         # 默认使用 yfinance
         try:
             ticker = yf.Ticker(symbol)

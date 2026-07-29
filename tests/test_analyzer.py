@@ -4,6 +4,7 @@ AutoWealth AI - 分析器模块测试
 使用 pytest 对 TechnicalAnalyzer 和 FundamentalAnalyzer 的所有方法进行全面测试，
 包括正常情况、边界情况和异常情况。
 """
+
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -12,7 +13,7 @@ from unittest.mock import MagicMock
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Mock yfinance 以避免安装依赖
-sys.modules['yfinance'] = MagicMock()
+sys.modules["yfinance"] = MagicMock()
 
 import numpy as np
 import pandas as pd
@@ -20,10 +21,10 @@ import pytest
 
 from autowealth.core.analyzer import FundamentalAnalyzer, TechnicalAnalyzer
 
-
 # ============================================================
 # 测试数据工厂
 # ============================================================
+
 
 def make_stock_data(rows=120, seed=42, trend="normal"):
     """
@@ -61,13 +62,16 @@ def make_stock_data(rows=120, seed=42, trend="normal"):
     open_ = low + rng.uniform(0, 1, rows) * (high - low)
     volume = rng.randint(1000000, 10000000, rows).astype(float)
 
-    df = pd.DataFrame({
-        "Open": open_,
-        "High": high,
-        "Low": low,
-        "Close": close,
-        "Volume": volume,
-    }, index=dates)
+    df = pd.DataFrame(
+        {
+            "Open": open_,
+            "High": high,
+            "Low": low,
+            "Close": close,
+            "Volume": volume,
+        },
+        index=dates,
+    )
 
     return df
 
@@ -84,13 +88,16 @@ def make_all_up_data(rows=120, seed=99):
     open_ = low + rng.uniform(0, 0.5, rows) * (high - low)
     volume = rng.randint(1000000, 5000000, rows).astype(float)
 
-    return pd.DataFrame({
-        "Open": open_,
-        "High": high,
-        "Low": low,
-        "Close": close,
-        "Volume": volume,
-    }, index=dates)
+    return pd.DataFrame(
+        {
+            "Open": open_,
+            "High": high,
+            "Low": low,
+            "Close": close,
+            "Volume": volume,
+        },
+        index=dates,
+    )
 
 
 def make_all_down_data(rows=120, seed=88):
@@ -105,13 +112,16 @@ def make_all_down_data(rows=120, seed=88):
     open_ = low + rng.uniform(0, 0.5, rows) * (high - low)
     volume = rng.randint(1000000, 5000000, rows).astype(float)
 
-    return pd.DataFrame({
-        "Open": open_,
-        "High": high,
-        "Low": low,
-        "Close": close,
-        "Volume": volume,
-    }, index=dates)
+    return pd.DataFrame(
+        {
+            "Open": open_,
+            "High": high,
+            "Low": low,
+            "Close": close,
+            "Volume": volume,
+        },
+        index=dates,
+    )
 
 
 def make_suspended_data(rows=120, seed=77):
@@ -123,18 +133,22 @@ def make_suspended_data(rows=120, seed=77):
     price = 100.0
     volume = 0.0  # 停牌无成交
 
-    return pd.DataFrame({
-        "Open": [price] * rows,
-        "High": [price] * rows,
-        "Low": [price] * rows,
-        "Close": [price] * rows,
-        "Volume": [volume] * rows,
-    }, index=dates)
+    return pd.DataFrame(
+        {
+            "Open": [price] * rows,
+            "High": [price] * rows,
+            "Low": [price] * rows,
+            "Close": [price] * rows,
+            "Volume": [volume] * rows,
+        },
+        index=dates,
+    )
 
 
 # ============================================================
 # TechnicalAnalyzer 测试
 # ============================================================
+
 
 class TestCalculateMA:
     """测试 TechnicalAnalyzer.calculate_ma 方法"""
@@ -413,13 +427,27 @@ class TestFullAnalysis:
         result = TechnicalAnalyzer.full_analysis(data)
 
         expected_cols = [
-            "MA5", "MA10", "MA20", "MA60",
-            "EMA12", "EMA26",
-            "MACD", "MACD_Signal", "MACD_Histogram",
+            "MA5",
+            "MA10",
+            "MA20",
+            "MA60",
+            "EMA12",
+            "EMA26",
+            "MACD",
+            "MACD_Signal",
+            "MACD_Histogram",
             "RSI",
-            "BB_Middle", "BB_Upper", "BB_Lower", "BB_Width", "BB_Position",
-            "K", "D", "J",
-            "Volume_MA5", "Volume_MA20", "Volume_Ratio",
+            "BB_Middle",
+            "BB_Upper",
+            "BB_Lower",
+            "BB_Width",
+            "BB_Position",
+            "K",
+            "D",
+            "J",
+            "Volume_MA5",
+            "Volume_MA20",
+            "Volume_Ratio",
         ]
         for col in expected_cols:
             assert col in result.columns, f"缺少列: {col}"
@@ -457,9 +485,9 @@ class TestTechnicalAnalyzerEdgeCases:
 
     def test_single_row_data(self):
         """测试只有一行数据的情况"""
-        data = pd.DataFrame({
-            "Open": [100], "High": [101], "Low": [99], "Close": [100], "Volume": [1000000]
-        })
+        data = pd.DataFrame(
+            {"Open": [100], "High": [101], "Low": [99], "Close": [100], "Volume": [1000000]}
+        )
         result = TechnicalAnalyzer.calculate_ma(data)
         assert len(result) == 1
         assert pd.isna(result["MA5"].iloc[0])  # 单行不足以计算 MA5
@@ -503,6 +531,7 @@ class TestTechnicalAnalyzerEdgeCases:
 # FundamentalAnalyzer 测试
 # ============================================================
 
+
 class TestAnalyzeValuation:
     """测试 FundamentalAnalyzer.analyze_valuation 方法"""
 
@@ -515,8 +544,13 @@ class TestAnalyzeValuation:
         }
         result = FundamentalAnalyzer.analyze_valuation(stock_info)
         expected_keys = [
-            "pe_ratio", "pb_ratio", "dividend_yield",
-            "pe_score", "pb_score", "dividend_score", "valuation_score",
+            "pe_ratio",
+            "pb_ratio",
+            "dividend_yield",
+            "pe_score",
+            "pb_score",
+            "dividend_score",
+            "valuation_score",
         ]
         for key in expected_keys:
             assert key in result
@@ -529,14 +563,22 @@ class TestAnalyzeValuation:
 
     def test_valuation_low_pe_high_score(self):
         """验证低 PE 比率产生较高的 PE 评分"""
-        low_pe = FundamentalAnalyzer.analyze_valuation({"pe_ratio": 5, "pb_ratio": 1, "dividend_yield": 0})
-        high_pe = FundamentalAnalyzer.analyze_valuation({"pe_ratio": 50, "pb_ratio": 1, "dividend_yield": 0})
+        low_pe = FundamentalAnalyzer.analyze_valuation(
+            {"pe_ratio": 5, "pb_ratio": 1, "dividend_yield": 0}
+        )
+        high_pe = FundamentalAnalyzer.analyze_valuation(
+            {"pe_ratio": 50, "pb_ratio": 1, "dividend_yield": 0}
+        )
         assert low_pe["pe_score"] > high_pe["pe_score"]
 
     def test_valuation_high_dividend_high_score(self):
         """验证高股息率产生较高的股息评分"""
-        low_div = FundamentalAnalyzer.analyze_valuation({"pe_ratio": 0, "pb_ratio": 0, "dividend_yield": 0.005})
-        high_div = FundamentalAnalyzer.analyze_valuation({"pe_ratio": 0, "pb_ratio": 0, "dividend_yield": 0.05})
+        low_div = FundamentalAnalyzer.analyze_valuation(
+            {"pe_ratio": 0, "pb_ratio": 0, "dividend_yield": 0.005}
+        )
+        high_div = FundamentalAnalyzer.analyze_valuation(
+            {"pe_ratio": 0, "pb_ratio": 0, "dividend_yield": 0.05}
+        )
         assert high_div["dividend_score"] > low_div["dividend_score"]
 
     def test_valuation_missing_fields(self):

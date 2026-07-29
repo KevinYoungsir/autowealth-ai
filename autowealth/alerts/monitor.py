@@ -28,6 +28,7 @@ class AlertRule:
         created_at: 创建时间
         active: 是否活跃
     """
+
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     symbol: str = ""
     rule_type: str = ""
@@ -49,6 +50,7 @@ class Alert:
         triggered_at: 触发时间
         data_snapshot: 触发时的数据快照
     """
+
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     rule_id: str = ""
     symbol: str = ""
@@ -115,9 +117,7 @@ class AlertMonitor:
             )
             self._rules[rule.id] = rule
 
-            logger.info(
-                f"添加预警规则: {rule.id} | {symbol} | {rule_type} | {params}"
-            )
+            logger.info(f"添加预警规则: {rule.id} | {symbol} | {rule_type} | {params}")
             return rule.id
 
         except Exception as e:
@@ -207,8 +207,7 @@ class AlertMonitor:
                 rule_id=rule.id,
                 symbol=rule.symbol,
                 message=rule.params.get(
-                    "message",
-                    f"{rule.symbol} 价格突破 {threshold}，当前 {current_price:.2f}"
+                    "message", f"{rule.symbol} 价格突破 {threshold}，当前 {current_price:.2f}"
                 ),
                 severity="warning",
                 data_snapshot={"price": current_price, "threshold": threshold},
@@ -228,8 +227,7 @@ class AlertMonitor:
                 rule_id=rule.id,
                 symbol=rule.symbol,
                 message=rule.params.get(
-                    "message",
-                    f"{rule.symbol} 价格跌破 {threshold}，当前 {current_price:.2f}"
+                    "message", f"{rule.symbol} 价格跌破 {threshold}，当前 {current_price:.2f}"
                 ),
                 severity="warning",
                 data_snapshot={"price": current_price, "threshold": threshold},
@@ -263,7 +261,7 @@ class AlertMonitor:
                 symbol=rule.symbol,
                 message=rule.params.get(
                     "message",
-                    f"{rule.symbol} {direction_str} {abs(pct_change):.2f}%，超过阈值 {threshold}%"
+                    f"{rule.symbol} {direction_str} {abs(pct_change):.2f}%，超过阈值 {threshold}%",
                 ),
                 severity="warning" if abs(pct_change) < 10 else "critical",
                 data_snapshot={
@@ -293,8 +291,7 @@ class AlertMonitor:
                 rule_id=rule.id,
                 symbol=rule.symbol,
                 message=rule.params.get(
-                    "message",
-                    f"{rule.symbol} 成交量异常放大 {volume_ratio:.1f} 倍"
+                    "message", f"{rule.symbol} 成交量异常放大 {volume_ratio:.1f} 倍"
                 ),
                 severity="info",
                 data_snapshot={

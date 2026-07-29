@@ -65,9 +65,7 @@ class PortfolioOptimizer:
             weights = weights / weights.sum()
         return weights
 
-    def mean_variance_optimization(
-        self, target_return: Optional[float] = None
-    ) -> Dict:
+    def mean_variance_optimization(self, target_return: Optional[float] = None) -> Dict:
         """
         Markowitz mean-variance optimization.
 
@@ -102,7 +100,7 @@ class PortfolioOptimizer:
 
         target_daily = target_return / self.ann_factor
 
-        denominator = a * c - b ** 2
+        denominator = a * c - b**2
         if abs(denominator) < 1e-10:
             # Fallback to equal weights if matrix is singular
             weights = np.ones(self.n_assets) / self.n_assets

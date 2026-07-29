@@ -123,13 +123,22 @@ class MLPredictor:
 
             # 收集特征列名
             feature_candidates = [
-                "MA_5", "MA_10", "MA_20", "MA_60",
+                "MA_5",
+                "MA_10",
+                "MA_20",
+                "MA_60",
                 "RSI_14",
-                "MACD", "MACD_Signal", "MACD_Histogram",
+                "MACD",
+                "MACD_Signal",
+                "MACD_Histogram",
                 "BB_Position",
                 "Volatility_20",
-                "Volume_Change", "Volume_MA_5", "Volume_Ratio",
-                "Momentum_5", "Momentum_10", "Momentum_20",
+                "Volume_Change",
+                "Volume_MA_5",
+                "Volume_Ratio",
+                "Momentum_5",
+                "Momentum_10",
+                "Momentum_20",
                 "Return_1",
                 "Price_Position_20",
             ]

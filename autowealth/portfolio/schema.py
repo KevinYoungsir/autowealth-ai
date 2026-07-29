@@ -82,4 +82,3 @@ class PortfolioBuildResult:
         self.cash_weight = float(max(0.0, min(1.0, self.cash_weight)))
         if self.equity_weight is None:
             self.equity_weight = float(sum(self.target_weights.values()))
-

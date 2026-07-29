@@ -4,6 +4,7 @@ AutoWealth AI - 智能体模块测试
 测试所有智能体（BaseAgent、TechnicalAgent、FundamentalAgent、SentimentAgent、AgentCoordinator）
 的功能和边界情况。
 """
+
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -11,7 +12,7 @@ from unittest.mock import MagicMock
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Mock yfinance
-sys.modules['yfinance'] = MagicMock()
+sys.modules["yfinance"] = MagicMock()
 
 import numpy as np
 import pandas as pd
@@ -23,10 +24,10 @@ from autowealth.agents.fundamental_agent import FundamentalAgent
 from autowealth.agents.sentiment_agent import SentimentAgent
 from autowealth.agents.technical_agent import TechnicalAgent
 
-
 # ============================================================
 # 测试数据工厂
 # ============================================================
+
 
 def make_stock_data(rows=120, trend="normal"):
     """创建模拟股票数据"""
@@ -49,13 +50,16 @@ def make_stock_data(rows=120, trend="normal"):
     open_ = low + rng.uniform(0, 1, rows) * (high - low)
     volume = rng.randint(1000000, 10000000, rows).astype(float)
 
-    return pd.DataFrame({
-        "Open": open_,
-        "High": high,
-        "Low": low,
-        "Close": close,
-        "Volume": volume,
-    }, index=dates)
+    return pd.DataFrame(
+        {
+            "Open": open_,
+            "High": high,
+            "Low": low,
+            "Close": close,
+            "Volume": volume,
+        },
+        index=dates,
+    )
 
 
 def make_stock_info():
@@ -73,6 +77,7 @@ def make_stock_info():
 # ============================================================
 # BaseAgent 测试
 # ============================================================
+
 
 class TestBaseAgent:
     """测试 BaseAgent 基类"""
@@ -138,6 +143,7 @@ class TestBaseAgent:
 # TechnicalAgent 测试
 # ============================================================
 
+
 class TestTechnicalAgent:
     """测试 TechnicalAgent"""
 
@@ -199,6 +205,7 @@ class TestTechnicalAgent:
 # FundamentalAgent 测试
 # ============================================================
 
+
 class TestFundamentalAgent:
     """测试 FundamentalAgent"""
 
@@ -250,6 +257,7 @@ class TestFundamentalAgent:
 # SentimentAgent 测试
 # ============================================================
 
+
 class TestSentimentAgent:
     """测试 SentimentAgent"""
 
@@ -297,6 +305,7 @@ class TestSentimentAgent:
 # ============================================================
 # AgentCoordinator 测试
 # ============================================================
+
 
 class TestAgentCoordinator:
     """测试 AgentCoordinator"""
@@ -349,9 +358,15 @@ class TestAgentCoordinator:
         """验证买入信号聚合"""
         coordinator = AgentCoordinator()
         signals = {
-            "A": AgentSignal(agent_name="A", signal_type="buy", confidence=80, reasoning="买入理由A"),
-            "B": AgentSignal(agent_name="B", signal_type="buy", confidence=70, reasoning="买入理由B"),
-            "C": AgentSignal(agent_name="C", signal_type="hold", confidence=50, reasoning="观望理由C"),
+            "A": AgentSignal(
+                agent_name="A", signal_type="buy", confidence=80, reasoning="买入理由A"
+            ),
+            "B": AgentSignal(
+                agent_name="B", signal_type="buy", confidence=70, reasoning="买入理由B"
+            ),
+            "C": AgentSignal(
+                agent_name="C", signal_type="hold", confidence=50, reasoning="观望理由C"
+            ),
         }
         coordinator.agent_weights = {"A": 0.4, "B": 0.4, "C": 0.2}
         decision = coordinator._aggregate_signals(signals)
@@ -362,9 +377,15 @@ class TestAgentCoordinator:
         """验证卖出信号聚合"""
         coordinator = AgentCoordinator()
         signals = {
-            "A": AgentSignal(agent_name="A", signal_type="sell", confidence=80, reasoning="卖出理由A"),
-            "B": AgentSignal(agent_name="B", signal_type="sell", confidence=70, reasoning="卖出理由B"),
-            "C": AgentSignal(agent_name="C", signal_type="hold", confidence=50, reasoning="观望理由C"),
+            "A": AgentSignal(
+                agent_name="A", signal_type="sell", confidence=80, reasoning="卖出理由A"
+            ),
+            "B": AgentSignal(
+                agent_name="B", signal_type="sell", confidence=70, reasoning="卖出理由B"
+            ),
+            "C": AgentSignal(
+                agent_name="C", signal_type="hold", confidence=50, reasoning="观望理由C"
+            ),
         }
         coordinator.agent_weights = {"A": 0.4, "B": 0.4, "C": 0.2}
         decision = coordinator._aggregate_signals(signals)
@@ -374,8 +395,12 @@ class TestAgentCoordinator:
         """验证目标价聚合"""
         coordinator = AgentCoordinator()
         signals = {
-            "A": AgentSignal(agent_name="A", signal_type="buy", confidence=80, target_price=150, reasoning="买入"),
-            "B": AgentSignal(agent_name="B", signal_type="buy", confidence=70, target_price=160, reasoning="买入"),
+            "A": AgentSignal(
+                agent_name="A", signal_type="buy", confidence=80, target_price=150, reasoning="买入"
+            ),
+            "B": AgentSignal(
+                agent_name="B", signal_type="buy", confidence=70, target_price=160, reasoning="买入"
+            ),
         }
         coordinator.agent_weights = {"A": 0.5, "B": 0.5}
         decision = coordinator._aggregate_signals(signals)
@@ -406,10 +431,14 @@ class TestAgentCoordinator:
         """验证生成决策理由"""
         coordinator = AgentCoordinator()
         signals = {
-            "A": AgentSignal(agent_name="A", signal_type="buy", confidence=80, reasoning="买入理由"),
+            "A": AgentSignal(
+                agent_name="A", signal_type="buy", confidence=80, reasoning="买入理由"
+            ),
         }
         coordinator.agent_weights = {"A": 1.0}
-        reasoning = coordinator._generate_decision_reasoning("buy", 80, signals, {"buy": 0.8, "sell": 0.1, "hold": 0.1})
+        reasoning = coordinator._generate_decision_reasoning(
+            "buy", 80, signals, {"buy": 0.8, "sell": 0.1, "hold": 0.1}
+        )
         assert len(reasoning) > 0
         assert "buy" in reasoning.lower() or "BUY" in reasoning
 
@@ -417,6 +446,7 @@ class TestAgentCoordinator:
 # ============================================================
 # 集成测试
 # ============================================================
+
 
 class TestAgentIntegration:
     """智能体集成测试"""

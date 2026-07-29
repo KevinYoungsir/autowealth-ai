@@ -9,15 +9,12 @@ MESSAGES = {
     ),
     "benchmark_reason_missing": "No benchmark reason was persisted.",
     "benchmark_unavailable_summary": (
-        "The persisted benchmark is unavailable; no benchmark return is "
-        "inferred or fabricated."
+        "The persisted benchmark is unavailable; no benchmark return is " "inferred or fabricated."
     ),
     "benchmark_available_summary": (
         "Persisted benchmark metrics are available for deterministic review."
     ),
-    "benchmark_partial_summary": (
-        "Only part of the requested benchmark set is available."
-    ),
+    "benchmark_partial_summary": ("Only part of the requested benchmark set is available."),
     "benchmark_relative_limitation": (
         "Relative performance cannot be assessed while the benchmark is unavailable."
     ),
@@ -25,9 +22,7 @@ MESSAGES = {
         "Performance values are reproduced from metrics.json and are not "
         "re-estimated by the report endpoint."
     ),
-    "performance_unavailable_summary": (
-        "No persisted core performance metric is available."
-    ),
+    "performance_unavailable_summary": ("No persisted core performance metric is available."),
     "performance_observation": "{label} ({name})={value:.6f}",
     "metric_annualized_return": "Annualized return",
     "metric_total_return": "Total return",
@@ -39,9 +34,7 @@ MESSAGES = {
     "performance_limitation": (
         "Metrics reflect the persisted backtest period, assumptions and data coverage only."
     ),
-    "macro_available_summary": (
-        "Persisted macro observations were available to the research run."
-    ),
+    "macro_available_summary": ("Persisted macro observations were available to the research run."),
     "macro_neutral_summary": (
         "No persisted macro observation was available; the run disclosed a neutral fallback."
     ),
@@ -49,16 +42,12 @@ MESSAGES = {
         "Macro-cycle interpretation is limited because no as-of observation was persisted."
     ),
     "risk_run_title": "Research run is not complete",
-    "risk_run_description": (
-        "The persisted run_status is {run_status} and must remain visible."
-    ),
+    "risk_run_description": ("The persisted run_status is {run_status} and must remain visible."),
     "risk_run_review": (
         "Resolve or explicitly accept every persisted run-status reason before comparison."
     ),
     "risk_benchmark_title": "Benchmark comparison is incomplete",
-    "risk_benchmark_description": (
-        "The persisted benchmark status is {benchmark_status}."
-    ),
+    "risk_benchmark_description": ("The persisted benchmark status is {benchmark_status}."),
     "risk_benchmark_review": (
         "Restore a compatible benchmark artifact before drawing relative-performance conclusions."
     ),
@@ -68,9 +57,7 @@ MESSAGES = {
         "Review warning categories and original warning text; do not infer missing observations."
     ),
     "risk_warning_mismatch_title": "Warning counts differ",
-    "risk_warning_mismatch_description": (
-        "The manifest warning count differs from warnings.json."
-    ),
+    "risk_warning_mismatch_description": ("The manifest warning count differs from warnings.json."),
     "risk_warning_mismatch_review": (
         "Reconcile artifact generation before treating the run as internally consistent."
     ),
@@ -98,9 +85,7 @@ MESSAGES = {
     "risk_factor_review": (
         "Use saved availability and effective weights; never replace missing factors with fabricated values."
     ),
-    "factor_empty_summary": (
-        "The persisted factor snapshot artifact contains no records."
-    ),
+    "factor_empty_summary": ("The persisted factor snapshot artifact contains no records."),
     "factor_insufficient_summary": (
         "Persisted factor snapshots contain one or more coverage ratios below "
         "the configured threshold. Missing values are not converted into "
@@ -116,9 +101,7 @@ MESSAGES = {
         "The run contains {warning_count} persisted warnings; all original warning "
         "strings are included in this response."
     ),
-    "data_quality_empty_summary": (
-        "warnings.json contains no persisted warning strings."
-    ),
+    "data_quality_empty_summary": ("warnings.json contains no persisted warning strings."),
     "executive_summary": (
         "Run {run_id} is preserved as {run_status}. The report is a deterministic "
         "review of persisted artifacts and does not replace the underlying research evidence."
@@ -136,9 +119,7 @@ MESSAGES = {
     "counter_universe_evidence_3": "failed-symbol attribution",
     "counter_universe_assumption_1": "survivorship bias",
     "counter_universe_assumption_2": "investable universe",
-    "counter_universe_value": (
-        "Tests whether results depend on today's surviving securities."
-    ),
+    "counter_universe_value": ("Tests whether results depend on today's surviving securities."),
     "counter_factor_topic": "Data availability and factor degradation",
     "counter_factor_argument": (
         "Factor scores based on reduced inputs may not be comparable across symbols "
@@ -182,9 +163,7 @@ MESSAGES = {
     "counter_macro_evidence_2": "publication dates",
     "counter_macro_assumption_1": "macro multiplier",
     "counter_macro_assumption_2": "regime interpretation",
-    "counter_macro_value": (
-        "Avoids assigning economic meaning to a fallback value."
-    ),
+    "counter_macro_value": ("Avoids assigning economic meaning to a fallback value."),
 }
 
 PERSISTED_MESSAGES: dict[str, str] = {}
@@ -203,6 +182,5 @@ WARNING_CATEGORY_LABELS = {
 }
 
 WARNING_CATEGORY_MESSAGES = {
-    category: "Review the original technical warning."
-    for category in WARNING_CATEGORY_LABELS
+    category: "Review the original technical warning." for category in WARNING_CATEGORY_LABELS
 }

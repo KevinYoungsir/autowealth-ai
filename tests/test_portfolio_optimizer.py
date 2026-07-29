@@ -37,10 +37,12 @@ class TestPortfolioOptimizerInit:
         assert optimizer.ann_factor == 252
 
     def test_init_drops_na(self):
-        data = pd.DataFrame({
-            "A": [0.01, np.nan, 0.02],
-            "B": [0.01, 0.02, 0.03],
-        })
+        data = pd.DataFrame(
+            {
+                "A": [0.01, np.nan, 0.02],
+                "B": [0.01, 0.02, 0.03],
+            }
+        )
         opt = PortfolioOptimizer(data)
         assert len(opt.returns) == 2
 
@@ -197,10 +199,12 @@ class TestEdgeCases:
 
     def test_two_assets(self):
         np.random.seed(123)
-        data = pd.DataFrame({
-            "A": np.random.normal(0.001, 0.02, 100),
-            "B": np.random.normal(0.0005, 0.015, 100),
-        })
+        data = pd.DataFrame(
+            {
+                "A": np.random.normal(0.001, 0.02, 100),
+                "B": np.random.normal(0.0005, 0.015, 100),
+            }
+        )
         opt = PortfolioOptimizer(data)
         result = opt.max_sharpe_ratio()
         weights = np.array(list(result["weights"].values()))

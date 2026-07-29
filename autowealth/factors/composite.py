@@ -58,4 +58,3 @@ def combine_factor_scores(
         explanation="Composite factor score is a weighted research score and does not constitute investment advice.",
         warnings=warnings,
     )
-

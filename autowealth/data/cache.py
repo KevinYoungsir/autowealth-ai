@@ -12,7 +12,6 @@ import pandas as pd
 
 from autowealth.data.schema import normalize_adjust, normalize_date
 
-
 PathLike = Union[str, Path]
 
 
@@ -34,7 +33,9 @@ class ParquetCache:
     def exists(self, symbol: str, start_date: str, end_date: str, adjust: str = "none") -> bool:
         return self.path_for(symbol, start_date, end_date, adjust).exists()
 
-    def read(self, symbol: str, start_date: str, end_date: str, adjust: str = "none") -> pd.DataFrame:
+    def read(
+        self, symbol: str, start_date: str, end_date: str, adjust: str = "none"
+    ) -> pd.DataFrame:
         path = self.path_for(symbol, start_date, end_date, adjust)
         return pd.read_parquet(path)
 
@@ -54,4 +55,3 @@ class ParquetCache:
     @staticmethod
     def _safe_part(value: str) -> str:
         return re.sub(r"[^0-9A-Za-z_.-]+", "_", str(value).strip())
-

@@ -3,6 +3,7 @@
 支持股票、加密货币、投资组合和市场数据的模拟生成。
 数据特征包括：趋势、波动率聚类、成交量变化等真实市场行为。
 """
+
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
@@ -17,24 +18,70 @@ class DemoDataGenerator:
     生成逼真的模拟金融数据，用于演示和测试环境。
     数据具有真实市场的统计特征，包括趋势、波动率聚类、成交量变化等。
     """
+
     # 常见股票的基准价格和波动率参数
     STOCK_PROFILES = {
         "AAPL": {"base_price": 175.0, "volatility": 0.025, "trend": 0.0003, "name": "Apple Inc."},
-        "GOOGL": {"base_price": 140.0, "volatility": 0.028, "trend": 0.0002, "name": "Alphabet Inc."},
-        "MSFT": {"base_price": 380.0, "volatility": 0.022, "trend": 0.0004, "name": "Microsoft Corp."},
-        "AMZN": {"base_price": 185.0, "volatility": 0.030, "trend": 0.0003, "name": "Amazon.com Inc."},
-        "META": {"base_price": 500.0, "volatility": 0.035, "trend": 0.0002, "name": "Meta Platforms Inc."},
+        "GOOGL": {
+            "base_price": 140.0,
+            "volatility": 0.028,
+            "trend": 0.0002,
+            "name": "Alphabet Inc.",
+        },
+        "MSFT": {
+            "base_price": 380.0,
+            "volatility": 0.022,
+            "trend": 0.0004,
+            "name": "Microsoft Corp.",
+        },
+        "AMZN": {
+            "base_price": 185.0,
+            "volatility": 0.030,
+            "trend": 0.0003,
+            "name": "Amazon.com Inc.",
+        },
+        "META": {
+            "base_price": 500.0,
+            "volatility": 0.035,
+            "trend": 0.0002,
+            "name": "Meta Platforms Inc.",
+        },
         "TSLA": {"base_price": 250.0, "volatility": 0.045, "trend": 0.0001, "name": "Tesla Inc."},
         "NVDA": {"base_price": 900.0, "volatility": 0.040, "trend": 0.0005, "name": "NVIDIA Corp."},
-        "JPM": {"base_price": 195.0, "volatility": 0.020, "trend": 0.0002, "name": "JPMorgan Chase"},
+        "JPM": {
+            "base_price": 195.0,
+            "volatility": 0.020,
+            "trend": 0.0002,
+            "name": "JPMorgan Chase",
+        },
         "V": {"base_price": 280.0, "volatility": 0.018, "trend": 0.0002, "name": "Visa Inc."},
-        "JNJ": {"base_price": 155.0, "volatility": 0.015, "trend": 0.0001, "name": "Johnson & Johnson"},
+        "JNJ": {
+            "base_price": 155.0,
+            "volatility": 0.015,
+            "trend": 0.0001,
+            "name": "Johnson & Johnson",
+        },
         "600545.SS": {"base_price": 8.5, "volatility": 0.028, "trend": -0.0002, "name": "卓郎智能"},
-        "600519.SS": {"base_price": 1800.0, "volatility": 0.022, "trend": 0.0001, "name": "贵州茅台"},
-        "000001.SS": {"base_price": 3200.0, "volatility": 0.018, "trend": 0.0001, "name": "上证指数"},
+        "600519.SS": {
+            "base_price": 1800.0,
+            "volatility": 0.022,
+            "trend": 0.0001,
+            "name": "贵州茅台",
+        },
+        "000001.SS": {
+            "base_price": 3200.0,
+            "volatility": 0.018,
+            "trend": 0.0001,
+            "name": "上证指数",
+        },
         "000858.SZ": {"base_price": 150.0, "volatility": 0.025, "trend": 0.0002, "name": "五粮液"},
         "002594.SZ": {"base_price": 280.0, "volatility": 0.035, "trend": 0.0003, "name": "比亚迪"},
-        "300750.SZ": {"base_price": 220.0, "volatility": 0.040, "trend": 0.0002, "name": "宁德时代"},
+        "300750.SZ": {
+            "base_price": 220.0,
+            "volatility": 0.040,
+            "trend": 0.0002,
+            "name": "宁德时代",
+        },
         "601318.SS": {"base_price": 48.0, "volatility": 0.025, "trend": 0.0001, "name": "中国平安"},
         "600036.SS": {"base_price": 35.0, "volatility": 0.022, "trend": 0.0001, "name": "招商银行"},
     }
@@ -51,16 +98,27 @@ class DemoDataGenerator:
 
     # A股代码到名称的映射（用于显示正确的公司名称）
     A_SHARE_NAMES = {
-        "600545": "卓郎智能", "600545.SS": "卓郎智能",
-        "600519": "贵州茅台", "600519.SS": "贵州茅台",
-        "000001": "平安银行", "000001.SS": "平安银行", "000001.SZ": "平安银行",
-        "000858": "五粮液", "000858.SZ": "五粮液",
-        "002594": "比亚迪", "002594.SZ": "比亚迪",
-        "300750": "宁德时代", "300750.SZ": "宁德时代",
-        "601318": "中国平安", "601318.SS": "中国平安",
-        "600036": "招商银行", "600036.SS": "招商银行",
-        "000333": "美的集团", "000333.SZ": "美的集团",
-        "002415": "海康威视", "002415.SZ": "海康威视",
+        "600545": "卓郎智能",
+        "600545.SS": "卓郎智能",
+        "600519": "贵州茅台",
+        "600519.SS": "贵州茅台",
+        "000001": "平安银行",
+        "000001.SS": "平安银行",
+        "000001.SZ": "平安银行",
+        "000858": "五粮液",
+        "000858.SZ": "五粮液",
+        "002594": "比亚迪",
+        "002594.SZ": "比亚迪",
+        "300750": "宁德时代",
+        "300750.SZ": "宁德时代",
+        "601318": "中国平安",
+        "601318.SS": "中国平安",
+        "600036": "招商银行",
+        "600036.SS": "招商银行",
+        "000333": "美的集团",
+        "000333.SZ": "美的集团",
+        "002415": "海康威视",
+        "002415.SZ": "海康威视",
     }
 
     def __init__(self, seed: int = 42):
@@ -111,7 +169,7 @@ class DemoDataGenerator:
         returns = np.zeros(n)
         sigma = np.zeros(n)
         sigma[0] = volatility
-        omega = volatility ** 2 * 0.05  # 长期方差
+        omega = volatility**2 * 0.05  # 长期方差
         alpha = 0.10  # ARCH 系数（近期冲击影响）
         beta = 0.85  # GARCH 系数（前期方差影响）
         for i in range(1, n):
@@ -125,27 +183,37 @@ class DemoDataGenerator:
         open_prices = prices * (1 + self.rng.normal(0, 0.003, n))
         close_prices = prices
         intra_vol = sigma * prices
-        high_prices = np.maximum(open_prices, close_prices) + np.abs(self.rng.normal(0, intra_vol * 0.3))
-        low_prices = np.minimum(open_prices, close_prices) - np.abs(self.rng.normal(0, intra_vol * 0.3))
+        high_prices = np.maximum(open_prices, close_prices) + np.abs(
+            self.rng.normal(0, intra_vol * 0.3)
+        )
+        low_prices = np.minimum(open_prices, close_prices) - np.abs(
+            self.rng.normal(0, intra_vol * 0.3)
+        )
         # 成交量：基础成交量 + 随机变化 + 波动率影响
         base_volume = base_price * 1000000  # 基础成交量与价格相关
         volume = base_volume * (
-            1 + 0.3 * self.rng.normal(size=n)
+            1
+            + 0.3 * self.rng.normal(size=n)
             + 0.5 * (sigma / volatility - 1)  # 波动率增大时成交量增加
         )
         volume = np.maximum(volume, base_volume * 0.1)  # 成交量下限
-        df = pd.DataFrame({
-            "Open": np.round(open_prices, 2),
-            "High": np.round(high_prices, 2),
-            "Low": np.round(low_prices, 2),
-            "Close": np.round(close_prices, 2),
-            "Volume": np.round(volume).astype(int),
-        }, index=pd.DatetimeIndex(dates, name="Date"))
+        df = pd.DataFrame(
+            {
+                "Open": np.round(open_prices, 2),
+                "High": np.round(high_prices, 2),
+                "Low": np.round(low_prices, 2),
+                "Close": np.round(close_prices, 2),
+                "Volume": np.round(volume).astype(int),
+            },
+            index=pd.DatetimeIndex(dates, name="Date"),
+        )
         # 确保 High >= Low
         df["High"] = df[["High", "Low", "Open", "Close"]].max(axis=1)
         df["Low"] = df[["High", "Low", "Open", "Close"]].min(axis=1)
-        logger.info(f"生成模拟股票数据: {symbol}, {days}个交易日, "
-                     f"起始价={base_price:.2f}, 终止价={prices[-1]:.2f}")
+        logger.info(
+            f"生成模拟股票数据: {symbol}, {days}个交易日, "
+            f"起始价={base_price:.2f}, 终止价={prices[-1]:.2f}"
+        )
         return df
 
     def generate_crypto_data(
@@ -181,7 +249,7 @@ class DemoDataGenerator:
         returns = np.zeros(n)
         sigma = np.zeros(n)
         sigma[0] = volatility
-        omega = volatility ** 2 * 0.05
+        omega = volatility**2 * 0.05
         alpha = 0.15  # 更高的ARCH系数，加密货币冲击影响更大
         beta = 0.80
         for i in range(1, n):
@@ -197,26 +265,32 @@ class DemoDataGenerator:
         open_prices = prices * (1 + self.rng.normal(0, 0.005, n))
         close_prices = prices
         intra_vol = sigma * prices
-        high_prices = np.maximum(open_prices, close_prices) + np.abs(self.rng.normal(0, intra_vol * 0.4))
-        low_prices = np.minimum(open_prices, close_prices) - np.abs(self.rng.normal(0, intra_vol * 0.4))
+        high_prices = np.maximum(open_prices, close_prices) + np.abs(
+            self.rng.normal(0, intra_vol * 0.4)
+        )
+        low_prices = np.minimum(open_prices, close_prices) - np.abs(
+            self.rng.normal(0, intra_vol * 0.4)
+        )
         # 加密货币成交量模式：更不稳定
         base_volume = base_price * 500000
-        volume = base_volume * (
-            1 + 0.5 * self.rng.normal(size=n)
-            + 0.8 * (sigma / volatility - 1)
-        )
+        volume = base_volume * (1 + 0.5 * self.rng.normal(size=n) + 0.8 * (sigma / volatility - 1))
         volume = np.maximum(volume, base_volume * 0.05)
-        df = pd.DataFrame({
-            "Open": np.round(open_prices, 4),
-            "High": np.round(high_prices, 4),
-            "Low": np.round(low_prices, 4),
-            "Close": np.round(close_prices, 4),
-            "Volume": np.round(volume).astype(int),
-        }, index=pd.DatetimeIndex(dates, name="Date"))
+        df = pd.DataFrame(
+            {
+                "Open": np.round(open_prices, 4),
+                "High": np.round(high_prices, 4),
+                "Low": np.round(low_prices, 4),
+                "Close": np.round(close_prices, 4),
+                "Volume": np.round(volume).astype(int),
+            },
+            index=pd.DatetimeIndex(dates, name="Date"),
+        )
         df["High"] = df[["High", "Low", "Open", "Close"]].max(axis=1)
         df["Low"] = df[["High", "Low", "Open", "Close"]].min(axis=1)
-        logger.info(f"生成模拟加密货币数据: {symbol}, {days}天, "
-                     f"起始价={base_price:.4f}, 终止价={prices[-1]:.4f}")
+        logger.info(
+            f"生成模拟加密货币数据: {symbol}, {days}天, "
+            f"起始价={base_price:.4f}, 终止价={prices[-1]:.4f}"
+        )
         return df
 
     def generate_portfolio(self) -> Dict:
@@ -239,9 +313,7 @@ class DemoDataGenerator:
         for holding in holdings:
             change_pct = self.rng.normal(0.05, 0.15)  # 平均5%收益，15%标准差
             holding["current_price"] = round(holding["cost_basis"] * (1 + change_pct), 2)
-            holding["market_value"] = round(
-                holding["quantity"] * holding["current_price"], 2
-            )
+            holding["market_value"] = round(holding["quantity"] * holding["current_price"], 2)
             holding["gain_loss"] = round(
                 (holding["current_price"] - holding["cost_basis"]) * holding["quantity"], 2
             )
@@ -256,7 +328,9 @@ class DemoDataGenerator:
             "total_value": round(total_value, 2),
             "total_cost": round(total_cost, 2),
             "total_gain_loss": round(total_gain_loss, 2),
-            "total_return_pct": round(total_gain_loss / total_cost * 100, 2) if total_cost > 0 else 0,
+            "total_return_pct": (
+                round(total_gain_loss / total_cost * 100, 2) if total_cost > 0 else 0
+            ),
         }
         logger.info(f"生成模拟投资组合: {len(holdings)}只股票, 总市值={total_value:,.2f}")
         return portfolio
@@ -362,7 +436,9 @@ class DemoDataGenerator:
         info = {
             "symbol": symbol,
             "name": name,
-            "sector": self.rng.choice(["Technology", "Finance", "Healthcare", "Consumer", "Energy"]),
+            "sector": self.rng.choice(
+                ["Technology", "Finance", "Healthcare", "Consumer", "Energy"]
+            ),
             "industry": name,
             "market_cap": round(market_cap, 0),
             "pe_ratio": round(pe_ratio, 2),

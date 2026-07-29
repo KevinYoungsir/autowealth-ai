@@ -1,6 +1,7 @@
 """
 基本面分析智能体 - 基于公司基本面数据生成交易信号
 """
+
 from typing import Any, Dict
 
 from autowealth.agents.base_agent import AgentSignal, BaseAgent
@@ -16,10 +17,7 @@ class FundamentalAgent(BaseAgent):
     """
 
     def __init__(self):
-        super().__init__(
-            name="FundamentalAnalyst",
-            description="基于基本面分析生成中长期投资建议"
-        )
+        super().__init__(name="FundamentalAnalyst", description="基于基本面分析生成中长期投资建议")
         self.analyzer = FundamentalAnalyzer()
 
     def analyze(self, symbol: str, data: Dict[str, Any]) -> AgentSignal:
@@ -38,7 +36,7 @@ class FundamentalAgent(BaseAgent):
                 agent_name=self.name,
                 signal_type="hold",
                 confidence=0,
-                reasoning="缺少基本面数据，无法进行分析"
+                reasoning="缺少基本面数据，无法进行分析",
             )
 
         stock_info = data["stock_info"]
@@ -98,7 +96,7 @@ class FundamentalAgent(BaseAgent):
                 "pe_ratio": valuation.get("pe_ratio", 0),
                 "pb_ratio": valuation.get("pb_ratio", 0),
                 "trend": growth.get("trend", "unknown"),
-            }
+            },
         )
 
     def _generate_buy_reason(self, valuation: Dict, growth: Dict) -> str:

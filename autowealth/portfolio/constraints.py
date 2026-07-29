@@ -72,4 +72,3 @@ def validate_holdings_against_constraints(
         if weight > constraints.max_industry_weight + 1e-12:
             warnings.append(f"{industry} exceeds max_industry_weight")
     return warnings
-

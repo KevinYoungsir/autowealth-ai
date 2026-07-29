@@ -7,14 +7,10 @@ MESSAGES = {
         "历史研究结果不代表未来表现。"
     ),
     "benchmark_reason_missing": "artifacts 未保存基准不可用原因。",
-    "benchmark_unavailable_summary": (
-        "基准数据暂不可用，当前无法得出相对表现结论。"
-    ),
+    "benchmark_unavailable_summary": ("基准数据暂不可用，当前无法得出相对表现结论。"),
     "benchmark_available_summary": "已落盘的基准指标可用于确定性复核。",
     "benchmark_partial_summary": "所请求的基准中仅有部分数据可用。",
-    "benchmark_relative_limitation": (
-        "基准不可用期间，不能据此评价组合的相对表现。"
-    ),
+    "benchmark_relative_limitation": ("基准不可用期间，不能据此评价组合的相对表现。"),
     "performance_available_summary": (
         "本节直接复现 metrics.json 中的历史表现指标，报告接口未重新估算这些数值。"
     ),
@@ -27,65 +23,42 @@ MESSAGES = {
     "metric_sharpe_ratio": "夏普比率",
     "metric_calmar_ratio": "卡玛比率",
     "metric_turnover": "换手率",
-    "performance_limitation": (
-        "指标仅反映已落盘回测区间、既定假设与实际数据覆盖范围。"
-    ),
+    "performance_limitation": ("指标仅反映已落盘回测区间、既定假设与实际数据覆盖范围。"),
     "macro_available_summary": "本次研究运行使用了当时可用且已落盘的宏观观测。",
     "macro_neutral_summary": "由于缺少可用宏观数据，本次研究使用中性回退值。",
-    "macro_missing_limitation": (
-        "未保存可按时点使用的宏观观测，因此不能对宏观周期作有效判断。"
-    ),
+    "macro_missing_limitation": ("未保存可按时点使用的宏观观测，因此不能对宏观周期作有效判断。"),
     "risk_run_title": "研究运行未完整完成",
-    "risk_run_description": (
-        "已落盘的 run_status 为 {run_status}，该状态必须持续明确展示。"
-    ),
+    "risk_run_description": ("已落盘的 run_status 为 {run_status}，该状态必须持续明确展示。"),
     "risk_run_review": "开展横向比较前，应逐项解决或明确接受已保存的运行状态原因。",
     "risk_benchmark_title": "基准对比不完整",
-    "risk_benchmark_description": (
-        "已落盘的 benchmark_status 为 {benchmark_status}。"
-    ),
-    "risk_benchmark_review": (
-        "在得出相对表现结论前，需要补充与研究区间兼容的基准 artifacts。"
-    ),
+    "risk_benchmark_description": ("已落盘的 benchmark_status 为 {benchmark_status}。"),
+    "risk_benchmark_review": ("在得出相对表现结论前，需要补充与研究区间兼容的基准 artifacts。"),
     "risk_warnings_title": "已落盘警告需要复核",
     "risk_warnings_description": "本次运行保存了 {warning_count} 条原始警告。",
-    "risk_warnings_review": (
-        "应按类别核对原始警告，不得对缺失观测作推断性补全。"
-    ),
+    "risk_warnings_review": ("应按类别核对原始警告，不得对缺失观测作推断性补全。"),
     "risk_warning_mismatch_title": "警告数量不一致",
     "risk_warning_mismatch_description": (
         "run_manifest.json 记录的警告数量与 warnings.json 不一致。"
     ),
-    "risk_warning_mismatch_review": (
-        "应先核对 artifacts 生成过程，再判断该运行是否内部一致。"
-    ),
+    "risk_warning_mismatch_review": ("应先核对 artifacts 生成过程，再判断该运行是否内部一致。"),
     "risk_price_title": "候选股票行情覆盖不完整",
     "risk_price_description": "已落盘的行情覆盖率为 {price_coverage:.2%}。",
-    "risk_price_review": (
-        "应评估被排除股票对股票池代表性和组合集中度的影响。"
-    ),
+    "risk_price_review": ("应评估被排除股票对股票池代表性和组合集中度的影响。"),
     "risk_macro_title": "宏观输入使用了中性回退值",
     "risk_macro_description": "本次运行未保存可用的宏观观测。",
-    "risk_macro_review": (
-        "宏观状态应视为不可判断，不应把中性回退值解释为宏观环境真实中性。"
-    ),
+    "risk_macro_review": ("宏观状态应视为不可判断，不应把中性回退值解释为宏观环境真实中性。"),
     "risk_holdings_title": "部分调仓日持仓数低于 min_holdings",
     "risk_holdings_description": "已落盘持仓数量未满足配置中的最低持仓约束。",
     "risk_holdings_review": "应复核组合集中度及导致可选标的减少的数据排除原因。",
     "risk_factor_title": "配置因子的数据覆盖不足",
     "risk_factor_description": "至少一个已落盘因子覆盖率低于本次运行阈值。",
-    "risk_factor_review": (
-        "应使用已保存的可用性标记和实际权重，不得用虚构值替代缺失因子。"
-    ),
+    "risk_factor_review": ("应使用已保存的可用性标记和实际权重，不得用虚构值替代缺失因子。"),
     "factor_empty_summary": "已落盘的 factor_snapshots.parquet 不包含记录。",
     "factor_insufficient_summary": (
-        "已落盘因子快照中至少一个覆盖率低于配置阈值；"
-        "本报告不会把缺失值转换为虚构评分。"
+        "已落盘因子快照中至少一个覆盖率低于配置阈值；" "本报告不会把缺失值转换为虚构评分。"
     ),
     "factor_available_summary": "已落盘的因子快照和覆盖率可用于复核。",
-    "factor_limitation": (
-        "因子可比性取决于调仓时点的数据覆盖及已保存的实际复合权重。"
-    ),
+    "factor_limitation": ("因子可比性取决于调仓时点的数据覆盖及已保存的实际复合权重。"),
     "data_quality_warnings_summary": (
         "本次运行包含 {warning_count} 条已落盘警告；响应继续保留全部原始警告字符串。"
     ),

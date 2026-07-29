@@ -15,7 +15,6 @@ from autowealth.macro import (
     score_macro_environment,
 )
 
-
 AS_OF_DATE = "2024-12-31"
 
 
@@ -150,4 +149,3 @@ def test_load_macro_csv_and_latest_row(tmp_path):
     assert "cpi_yoy" in loaded.columns
     assert latest["date"] == "2024-02-29"
     assert latest["pmi"] == 51.0
-

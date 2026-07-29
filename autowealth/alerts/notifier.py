@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class NotificationRecord:
     """通知记录数据类"""
+
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     channel: str = ""
     alert_id: str = ""
@@ -80,24 +81,28 @@ class AlertNotifier:
 
                 results[channel] = success
 
-                self._history.append(NotificationRecord(
-                    channel=channel,
-                    alert_id=alert.id,
-                    message=alert.message,
-                    success=success,
-                    error="" if success else f"渠道 {channel} 发送失败",
-                ))
+                self._history.append(
+                    NotificationRecord(
+                        channel=channel,
+                        alert_id=alert.id,
+                        message=alert.message,
+                        success=success,
+                        error="" if success else f"渠道 {channel} 发送失败",
+                    )
+                )
 
             except Exception as e:
                 logger.error(f"通过 {channel} 发送通知失败: {e}")
                 results[channel] = False
-                self._history.append(NotificationRecord(
-                    channel=channel,
-                    alert_id=alert.id,
-                    message=alert.message,
-                    success=False,
-                    error=str(e),
-                ))
+                self._history.append(
+                    NotificationRecord(
+                        channel=channel,
+                        alert_id=alert.id,
+                        message=alert.message,
+                        success=False,
+                        error=str(e),
+                    )
+                )
 
         return results
 
@@ -139,9 +144,7 @@ class AlertNotifier:
                     if response.status_code == 200:
                         logger.info(f"Webhook通知已发送到 {name}")
                     else:
-                        logger.warning(
-                            f"Webhook {name} 返回状态码: {response.status_code}"
-                        )
+                        logger.warning(f"Webhook {name} 返回状态码: {response.status_code}")
                         all_success = False
 
                 except requests.RequestException as e:

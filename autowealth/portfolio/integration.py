@@ -54,12 +54,12 @@ def _candidate_from_score(symbol: str, score_object: object, industry: str) -> S
     score = float(getattr(score_object, "score", score_object))
     factor_scores = {}
     if isinstance(score_object, CompositeFactorScore):
-        factor_scores = {
-            name: factor.score for name, factor in score_object.factor_scores.items()
-        }
+        factor_scores = {name: factor.score for name, factor in score_object.factor_scores.items()}
     elif isinstance(score_object, FactorScore):
         factor_scores = {score_object.factor_name: score_object.score}
-    elif hasattr(score_object, "raw_values") and isinstance(getattr(score_object, "raw_values"), dict):
+    elif hasattr(score_object, "raw_values") and isinstance(
+        getattr(score_object, "raw_values"), dict
+    ):
         factor_scores = dict(getattr(score_object, "raw_values"))
     return StockCandidate(
         symbol=symbol,
@@ -67,4 +67,3 @@ def _candidate_from_score(symbol: str, score_object: object, industry: str) -> S
         factor_scores=factor_scores,
         industry=industry,
     )
-

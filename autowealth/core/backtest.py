@@ -168,16 +168,12 @@ class BacktestEngine:
         # Daily returns for Sharpe
         daily_returns = np.diff(equity) / equity[:-1]
         if len(daily_returns) > 1 and np.std(daily_returns) > 0:
-            sharpe_ratio = (np.mean(daily_returns) * 252) / (
-                np.std(daily_returns) * np.sqrt(252)
-            )
+            sharpe_ratio = (np.mean(daily_returns) * 252) / (np.std(daily_returns) * np.sqrt(252))
         else:
             sharpe_ratio = 0.0
 
         # Win rate from completed trades
-        completed_trades = [
-            t for t in self.trade_history if t["type"] == "sell" and "pnl" in t
-        ]
+        completed_trades = [t for t in self.trade_history if t["type"] == "sell" and "pnl" in t]
         if completed_trades:
             wins = sum(1 for t in completed_trades if t["pnl"] > 0)
             win_rate = wins / len(completed_trades)

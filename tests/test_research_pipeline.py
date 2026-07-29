@@ -16,7 +16,6 @@ from autowealth.research import (
     summarize_research_result,
 )
 
-
 FORBIDDEN_PHRASES = ["建议买入", "建议卖出", "推荐买入", "推荐卖出", "保证收益"]
 
 
@@ -90,4 +89,3 @@ def test_research_summary_contains_structured_fields():
     assert "cash_weight" in summary.backtest_metrics
     assert "score_buckets" in summary.factor_summary
     assert "regime" in summary.macro_summary
-

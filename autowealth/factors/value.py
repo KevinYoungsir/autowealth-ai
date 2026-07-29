@@ -54,4 +54,3 @@ def _positive_or_none(value: Optional[float]) -> Optional[float]:
     if value is None or value <= 0:
         return None
     return value
-

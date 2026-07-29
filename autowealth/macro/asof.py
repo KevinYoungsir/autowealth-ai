@@ -8,7 +8,6 @@ from typing import Optional, Union
 
 import pandas as pd
 
-
 PathLike = Union[str, Path]
 
 MACRO_ASOF_COLUMNS = [
@@ -61,9 +60,7 @@ def select_macro_asof(
 
     missing_available = int(normalized["available_date"].isna().sum())
     if missing_available:
-        warnings.append(
-            f"ignored {missing_available} macro rows without available_date"
-        )
+        warnings.append(f"ignored {missing_available} macro rows without available_date")
     future_count = int((normalized["available_date"] > cutoff).fillna(False).sum())
     if future_count:
         warnings.append(
@@ -101,7 +98,5 @@ def _normalize_macro_frame(data: pd.DataFrame) -> pd.DataFrame:
             normalized[column] = pd.NA
     normalized = normalized[MACRO_ASOF_COLUMNS]
     normalized["date"] = pd.to_datetime(normalized["date"], errors="coerce")
-    normalized["available_date"] = pd.to_datetime(
-        normalized["available_date"], errors="coerce"
-    )
+    normalized["available_date"] = pd.to_datetime(normalized["available_date"], errors="coerce")
     return normalized

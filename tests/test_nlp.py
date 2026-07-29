@@ -1,6 +1,7 @@
 """
 中文自然语言解析器测试
 """
+
 import pytest
 
 from autowealth.nlp.parser import CHINESE_NAME_TO_SYMBOL, NLPParser
@@ -25,7 +26,9 @@ class TestIntentDetection:
         ]
         for q in queries:
             result = parser.parse_query(q)
-            assert result["intent"] == "analyze_single", f"查询 '{q}' 意图识别失败: {result['intent']}"
+            assert (
+                result["intent"] == "analyze_single"
+            ), f"查询 '{q}' 意图识别失败: {result['intent']}"
 
     def test_analyze_batch_intent(self, parser: NLPParser):
         queries = [
@@ -35,7 +38,9 @@ class TestIntentDetection:
         ]
         for q in queries:
             result = parser.parse_query(q)
-            assert result["intent"] == "analyze_batch", f"查询 '{q}' 意图识别失败: {result['intent']}"
+            assert (
+                result["intent"] == "analyze_batch"
+            ), f"查询 '{q}' 意图识别失败: {result['intent']}"
 
     def test_portfolio_intent(self, parser: NLPParser):
         queries = [

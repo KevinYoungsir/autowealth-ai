@@ -131,4 +131,3 @@ def _get_metric(indicators: Mapping[str, object], name: str) -> Optional[float]:
         return float(value)
     except (TypeError, ValueError):
         return None
-

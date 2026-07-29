@@ -3,6 +3,7 @@ Twelve Data 数据源 - 提供真实美股/全球股票数据
 免费版: 每天800次API调用, 无需信用卡
 注册: https://twelvedata.com/pricing (免费获取API Key)
 """
+
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, Optional
@@ -21,10 +22,12 @@ class TwelveDataSource:
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or "demo"
         self.session = requests.Session()
-        self.session.headers.update({
-            "User-Agent": "AutoWealth-AI/1.0",
-            "Accept": "application/json",
-        })
+        self.session.headers.update(
+            {
+                "User-Agent": "AutoWealth-AI/1.0",
+                "Accept": "application/json",
+            }
+        )
 
     def get_stock_data(
         self,
@@ -99,14 +102,16 @@ class TwelveDataSource:
             # 转换为DataFrame
             records = []
             for v in values:
-                records.append({
-                    "Date": v["datetime"],
-                    "Open": float(v["open"]),
-                    "High": float(v["high"]),
-                    "Low": float(v["low"]),
-                    "Close": float(v["close"]),
-                    "Volume": int(v["volume"]),
-                })
+                records.append(
+                    {
+                        "Date": v["datetime"],
+                        "Open": float(v["open"]),
+                        "High": float(v["high"]),
+                        "Low": float(v["low"]),
+                        "Close": float(v["close"]),
+                        "Volume": int(v["volume"]),
+                    }
+                )
 
             df = pd.DataFrame(records)
             df["Date"] = pd.to_datetime(df["Date"])

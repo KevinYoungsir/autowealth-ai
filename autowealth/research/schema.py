@@ -11,7 +11,6 @@ import pandas as pd
 
 from autowealth.portfolio.schema import PortfolioConstraints
 
-
 RESEARCH_ONLY_EXPLANATION = (
     "This is a research experiment result for analysis and education only; "
     "it is not a trading instruction or a return promise."

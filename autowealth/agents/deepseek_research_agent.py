@@ -32,7 +32,6 @@ from autowealth.agents.schema import (
     RiskFlag,
 )
 
-
 FORBIDDEN_OUTPUT_PHRASES = ["建议买入", "建议卖出", "推荐买入", "推荐卖出", "保证收益"]
 
 
@@ -141,7 +140,9 @@ class DeepSeekResearchAgent:
         ).to_dict()
         return self._ensure_safe_json_output(report)
 
-    def _call_deepseek_json(self, task: str, prompt: str, payload: Mapping[str, Any]) -> Dict[str, Any]:
+    def _call_deepseek_json(
+        self, task: str, prompt: str, payload: Mapping[str, Any]
+    ) -> Dict[str, Any]:
         import requests
 
         endpoint = self.base_url.rstrip("/") + "/chat/completions"
@@ -217,7 +218,9 @@ class DeepSeekResearchAgent:
 
         max_drawdown = self._as_float(metrics.get("max_drawdown"))
         if max_drawdown is not None:
-            severity = "high" if max_drawdown <= -0.35 else "medium" if max_drawdown <= -0.2 else "low"
+            severity = (
+                "high" if max_drawdown <= -0.35 else "medium" if max_drawdown <= -0.2 else "low"
+            )
             flags.append(
                 RiskFlag(
                     category="drawdown",

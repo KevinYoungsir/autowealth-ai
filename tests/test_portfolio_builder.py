@@ -63,7 +63,9 @@ def test_target_weights_sum_does_not_exceed_one():
 
 def test_max_position_weight_constraint():
     constraints = permissive_constraints(max_position_weight=0.1, max_industry_weight=1.0)
-    result = build_factor_portfolio(make_candidates(), constraints=constraints, macro_multiplier=1.0)
+    result = build_factor_portfolio(
+        make_candidates(), constraints=constraints, macro_multiplier=1.0
+    )
 
     assert result.target_weights
     assert max(result.target_weights.values()) <= 0.1 + 1e-12
@@ -71,7 +73,9 @@ def test_max_position_weight_constraint():
 
 def test_max_industry_weight_constraint():
     constraints = permissive_constraints(max_position_weight=0.2, max_industry_weight=0.25)
-    result = build_factor_portfolio(make_candidates(), constraints=constraints, macro_multiplier=1.0)
+    result = build_factor_portfolio(
+        make_candidates(), constraints=constraints, macro_multiplier=1.0
+    )
 
     industry_weights = {}
     for holding in result.holdings:
@@ -112,7 +116,9 @@ def test_macro_multiplier_affects_equity_weight():
 
 def test_low_score_stock_is_rejected():
     constraints = permissive_constraints(min_score=60)
-    result = build_factor_portfolio(make_candidates(), constraints=constraints, macro_multiplier=1.0)
+    result = build_factor_portfolio(
+        make_candidates(), constraints=constraints, macro_multiplier=1.0
+    )
 
     assert "600010" in result.rejected_symbols
     assert "score below threshold" in result.rejected_symbols["600010"]
@@ -171,4 +177,3 @@ def test_integration_builds_target_weights_from_factor_scores():
 
     assert weights
     assert sum(weights.values()) <= 1.0
-

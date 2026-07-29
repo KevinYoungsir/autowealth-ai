@@ -2,6 +2,7 @@
 AutoWealth AI FastAPI Web 服务
 提供股票分析、投资组合分析、回测、组合优化等 RESTful API
 """
+
 import logging
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
@@ -20,6 +21,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Pydantic 请求/响应模型
 # ---------------------------------------------------------------------------
+
 
 class AnalyzeRequest(BaseModel):
     symbol: str = Field(..., description="股票代码，如 AAPL, 600519.SS")
@@ -119,6 +121,7 @@ def get_engine() -> AutoWealthEngine:
 # 生命周期管理
 # ---------------------------------------------------------------------------
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期事件"""
@@ -132,6 +135,7 @@ async def lifespan(app: FastAPI):
 # ---------------------------------------------------------------------------
 # 创建 FastAPI 应用
 # ---------------------------------------------------------------------------
+
 
 def create_app() -> FastAPI:
     """创建并配置 FastAPI 应用"""
@@ -292,6 +296,7 @@ def create_app() -> FastAPI:
 # ---------------------------------------------------------------------------
 # 策略信号生成
 # ---------------------------------------------------------------------------
+
 
 def _generate_signals(data: pd.DataFrame, strategy: str) -> List[str]:
     """根据策略名称生成交易信号列表"""

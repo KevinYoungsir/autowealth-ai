@@ -54,4 +54,3 @@ def quality_factor(
         explanation="Quality score summarizes profitability, cash conversion and leverage for research only.",
         warnings=missing_warnings(raw_values),
     )
-

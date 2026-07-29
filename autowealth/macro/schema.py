@@ -7,7 +7,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
-
 SUPPORTED_REGIMES = {
     "expansion",
     "slowdown",
@@ -86,9 +85,7 @@ class MacroRiskScore:
         self.credit_score = clip_score(self.credit_score)
         self.policy_score = clip_score(self.policy_score)
         self.external_risk_score = clip_score(self.external_risk_score)
-        self.equity_position_multiplier = float(
-            max(0.6, min(1.2, self.equity_position_multiplier))
-        )
+        self.equity_position_multiplier = float(max(0.6, min(1.2, self.equity_position_multiplier)))
 
 
 def clip_score(value: Optional[float]) -> float:
@@ -98,4 +95,3 @@ def clip_score(value: Optional[float]) -> float:
     if value is None:
         return 50.0
     return float(max(0.0, min(100.0, value)))
-

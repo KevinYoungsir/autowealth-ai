@@ -1,6 +1,7 @@
 """
 AutoWealth AI 全局配置管理
 """
+
 import os
 from pathlib import Path
 from typing import Optional

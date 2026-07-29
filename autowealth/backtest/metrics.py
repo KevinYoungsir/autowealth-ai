@@ -7,7 +7,6 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-
 TRADING_DAYS_PER_YEAR = 252
 
 
@@ -29,7 +28,9 @@ def total_return(equity_curve: pd.Series) -> float:
     return float(equity.iloc[-1] / equity.iloc[0] - 1)
 
 
-def annualized_return(equity_curve: pd.Series, periods_per_year: int = TRADING_DAYS_PER_YEAR) -> float:
+def annualized_return(
+    equity_curve: pd.Series, periods_per_year: int = TRADING_DAYS_PER_YEAR
+) -> float:
     """
     Calculate compound annualized return.
     """
@@ -116,9 +117,7 @@ def annual_returns(equity_curve: pd.Series) -> pd.Series:
     first_year = int(equity.index[0].year)
     first_year_equity = equity[equity.index.year == first_year]
     if len(first_year_equity) >= 2 and first_year_equity.iloc[0] != 0:
-        returns.iloc[0] = (
-            first_year_equity.iloc[-1] / first_year_equity.iloc[0] - 1
-        )
+        returns.iloc[0] = first_year_equity.iloc[-1] / first_year_equity.iloc[0] - 1
     return returns.dropna()
 
 
@@ -141,4 +140,3 @@ def _as_series(values: pd.Series) -> pd.Series:
     if not isinstance(series.index, pd.DatetimeIndex):
         return series
     return series.sort_index()
-

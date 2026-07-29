@@ -178,4 +178,3 @@ def _allocate_weights(
         warnings.append("unallocated equity budget left as cash")
 
     return weights, warnings
-

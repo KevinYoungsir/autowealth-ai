@@ -34,4 +34,3 @@ __all__ = [
     "validate_constraints",
     "validate_holdings_against_constraints",
 ]
-

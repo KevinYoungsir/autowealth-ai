@@ -13,7 +13,6 @@ from autowealth.research.real_pipeline import (
     run_real_data_research,
 )
 
-
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(
@@ -54,9 +53,7 @@ def test_real_data_short_window_smoke(tmp_path: Path) -> None:
             "min_score": 0.0,
         },
         "benchmark_symbols": ["000300"],
-        "macro_csv_path": str(
-            Path("configs/macro_data_template.csv").resolve()
-        ),
+        "macro_csv_path": str(Path("configs/macro_data_template.csv").resolve()),
         "cache_directory": str(tmp_path / "cache"),
         "output_directory": str(tmp_path / "runs"),
     }
