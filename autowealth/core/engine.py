@@ -177,7 +177,16 @@ class AutoWealthEngine:
         self.logger.info("获取市场概览...")
 
         try:
-            indices = self.data_fetcher.get_market_indices("global")
+            index_symbols = [
+                "^GSPC",
+                "^DJI",
+                "^IXIC",
+                "^FTSE",
+                "^N225",
+                "000001.SS",
+                "^HSI",
+            ]
+            indices = self.data_fetcher.get_multiple_stocks(index_symbols, period="6mo")
             overview = {}
 
             for symbol, data in indices.items():

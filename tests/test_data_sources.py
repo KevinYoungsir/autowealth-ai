@@ -146,13 +146,13 @@ class TestDataFetcherInit:
 
     @patch("autowealth.core.data_fetcher.get_settings")
     def test_default_source(self, mock_get_settings):
-        """验证默认数据源为 yfinance"""
+        """验证默认数据源为 auto"""
         mock_settings = MagicMock()
         mock_settings.data_cache_dir = "/tmp/test_cache"
         mock_get_settings.return_value = mock_settings
 
         fetcher = DataFetcher()
-        assert fetcher.source == "yfinance"
+        assert fetcher.source == "auto"
 
     @patch("autowealth.core.data_fetcher.get_settings")
     def test_yfinance_source(self, mock_get_settings):

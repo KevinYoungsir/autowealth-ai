@@ -193,16 +193,29 @@ class TestMarketOverviewEndpoint:
 
     @patch("autowealth.core.data_fetcher.DataFetcher.get_multiple_stocks")
     def test_market_overview(self, mock_multi, client: TestClient):
+        expected_symbols = [
+            "^GSPC",
+            "^DJI",
+            "^IXIC",
+            "^FTSE",
+            "^N225",
+            "000001.SS",
+            "^HSI",
+        ]
         mock_multi.return_value = {
             "^GSPC": _mock_stock_data(50),
             "^DJI": _mock_stock_data(50),
+            "^IXIC": pd.DataFrame(),
         }
 
         response = client.get("/market/overview")
         assert response.status_code == 200
         data = response.json()
-        assert "success" in data
+        assert data["success"] is True
         assert "indices" in data
+        assert list(data["indices"]) == ["^GSPC", "^DJI"]
+        assert "^IXIC" not in data["indices"]
+        mock_multi.assert_called_once_with(expected_symbols, period="6mo")
 
 
 class TestBacktestEndpoint:
