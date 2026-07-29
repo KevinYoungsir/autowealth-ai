@@ -7,88 +7,34 @@
 
 ## [未发布]
 
-### 新增
-- 添加更多技术指标（OBV、ATR、DMI）
-- 支持加密货币分析
-- 添加回测系统
-- v0.16.0 P0 增加价格与基本面 warm-up 配置、四层窗口 manifest 以及
-  factor snapshot 的 `signal_date` / `execution_date` 审计字段。
-- v0.16.0 PR2 增加统一 `IndexDataProvider`、canonical benchmark symbol、
-  AKShare primary/fallback provider chain 和 `benchmark_diagnostics.json`。
-- v0.16.0 PR3 在现有 `warnings.json` 中增量增加 schema version 1 的 structured
-  warnings，并通过 RunStore、API 和确定性报告只读暴露；raw warning 保持兼容。
-- v0.16.0 PR4 增加宏观 observation、shadow validation 与有界 manifest diagnostics，
-  并定义历史估值 metric、严格 canonical record、availability 和 provider protocol。
+## [0.16.0] - 2026-07-29
 
-### 优化
-- 提升数据分析性能
-- 优化可视化界面
-- 真实研究信号改用 execution date 前一个组合对齐真实交易日，收盘调仓权重
-  只影响成交后的收益区间；正式净值与指标继续严格限定在 research window。
-- 因子最小样本要求集中管理，样本不足的输入标记为 unavailable，coverage 与
-  实际参与评分的数据保持一致。
-- 价格缓存按实际 fetch window 区分并验证覆盖，价格估值前向填充限制为 5 个
-  组合交易日。
-- 基准缓存增加 symbol、fetch 区间、SHA256、行数、首末日期和 source 校验；
-  provider 返回值统一执行有限正数 close、80% 工作日估算总覆盖及首尾边界门槛，
-  并保留包含请求窗口和安全异常摘要的失败 attempt 诊断。
-- 基准缓存细分 hit、不可读、SHA 不匹配、覆盖不足和 metadata 不一致 reason code；
-  新写入使用不可变 generation parquet，并以最后原子替换的 metadata 作为 commit
-  marker，旧缓存格式继续兼容读取。
-- 新基准诊断通过 RunStore、API 和确定性真实报告只读暴露；旧 run 缺少该可选
-  artifact 时继续按原结构读取，`benchmark_metrics.json` 保持兼容。
-- Structured warning collector 按完整 raw 字符串保持首次顺序并同步去重；旧 run
-  返回 `absent`，损坏结构返回 `invalid`，均不改变 legacy 分类或运行状态。
-- Structured enrichment 改为阶段本地、best-effort 提交；漏登记时保留权威 raw
-  warning 并发布 raw-only artifact，不再把 metadata 完整性升级为研究任务失败。
-- 宏观校验在现有 as-of 与 scoring 之外旁路运行；开关关闭、记录无效或 validator
-  异常均不改变 warning、运行状态、宏观 multiplier、持仓、指标和曲线。
-- 真实报告在宏观 evidence 中增量展示压缩 diagnostics；旧 run 缺失字段或字段
-  损坏时分别显示 `absent` / `invalid`，不影响 HTTP 或报告风险等级。
-- 历史估值 availability 增加严格 status/reason 矩阵，并要求 requested、available、
-  missing metrics 完整分区；聚合入口验证 requested symbol、请求窗口和 `as_of_date`。
-- 估值 diagnostics 改为固定 schema，并限制嵌套深度、键数、列表长度、字符串长度
-  和 16 KiB JSON 总大小；provider code 只允许在 adapter 边界转换。
+### 新增
+- 分离 research、fetch、signal、execution 和 metrics 窗口。
+- 增加 resilient benchmark provider chain、严格质量校验和有界 diagnostics。
+- 增加 additive structured warnings。
+- 增加 shadow macro validation 和 historical valuation contracts。
+
+### 变更
+- 调仓与收益生效日期严格分离，warm-up 不进入正式指标。
+- 因子最小样本、coverage 和 unavailable 语义统一。
+- Benchmark cache 增加 SHA、coverage、generation 和原子发布校验。
+- RunStore、API 和报告增量读取 benchmark、macro 与 warning diagnostics。
+
+### 修复
+- Structured warning enrichment 保持 best-effort，不改变研究运行结果。
+- 可选 benchmark diagnostics 保持 normal、invalid、absent 兼容。
+- 可选 macro diagnostics 损坏不再使必需 manifest 整体失效。
 
 ### 安全
-- P0 不修改历史 research run，不访问真实网络，不调用 DeepSeek，不执行交易，
-  不新增参数寻优或当前估值回填。
-- PR2 不伪造、插值或替代不可用基准；异常技术文本限制长度并脱敏，artifact
-  采用 staging 后原子发布，写入失败不留下半成品 run。
-- PR3 对 structured evidence 强制 JSON-safe、有限浮点、相对 artifact 引用及
-  路径/凭据检查；不回填历史 warning，不从原文动态推断 code。
-- Structured evidence 增加 camelCase/PascalCase 凭据键识别、Bearer 脱敏和被标点
-  包裹的 Windows、UNC、POSIX 绝对路径拒绝，同时允许状态计数、URL 和相对引用。
-- PR4 未接新的真实 macro provider；shadow diagnostics 只作为可选 manifest 字段写入，
-  可由现有 run detail/report API 间接读取，但没有新增专用 endpoint 或写接口。
-- Historical Valuation 保持 contract-only，不接 real pipeline、factor、artifact、API、
-  真实 provider、cache 或 chain。契约要求显式历史日期，但不能证明供应商日期真实性，
-  也不能检测所有当前 snapshot 伪装历史序列的情况。
-- v0.16.0 发布前安全加固使新 run 不再持久化缓存绝对路径、请求/响应头或原始异常
-  文本；异常证据只保留类型、稳定 reason code 和最长 256 字符的确定性安全摘要。
-- Structured Warning evidence 明确限制为最多 3 层、每层 32 个键或列表项、单字符串
-  512 字符及 16 KiB UTF-8 JSON；超限的旧 structured 字段按 `invalid` 降级。
-- 旧 artifacts 不重写，RunStore、API 和确定性报告在公开读取时递归替换路径、凭据、
-  header 和 traceback 片段；非敏感 warning 原文、warning 数量、顺序、分类、
-  `run_status`、指标和曲线保持不变。
-- 公开脱敏改为精确、幂等的敏感 span 替换；URL 与本地路径共存时保留 URL，
-  伪造或拼接内部占位符不能绕过脱敏；cache reference 在 basename 解码及规范化
-  前后检查凭据且不回退原始路径。
-- 占位符完整边界拒绝 `.abc123`、`)abc123`、`!abc123` 等紧邻后缀；Bearer 保留
-  句末标点，Authorization 保留 scheme 并脱敏凭据，Cookie 连续脱敏多个 pair。
-  Structured Warning artifact refs 仅增量登记 `docs.json` 安全文件名。
-- 公开递归读取增加深度、容器宽度、节点、字符串和 JSON 总量预算，只展开 exact
-  JSON 容器；自定义 Mapping/Sequence、generator 和任意 iterable 不会被遍历。
-- Benchmark diagnostics 按原顺序公开前 32 个 attempts，并使用
-  `attempts_total`、`attempts_truncated`、`omitted_count` 记录完整计数；完整 attempts
-  仅在单次流水线内存中用于逐条 structured warning 对齐。
-- 可选 benchmark diagnostics 的缺失与损坏分别保持 `absent` 和 `invalid`；必需
-  metrics 的 NaN/Infinity 继续返回既有 invalid artifact 错误，不做静默转换。
-- 修复确定性报告嵌入已限界 benchmark diagnostics 时被报告级深度预算误拒绝的
-  兼容问题；run detail 与 report 继续共享相同的公开 attempts 规范化结果。
-- `run_manifest.json` 中可选 macro diagnostics 改为与必需 manifest 主体隔离校验；
-  非有限值或不安全内容只在内存中降级为 `invalid`，必需 manifest/metrics 的 422
-  语义和磁盘 artifact bytes 保持不变。
+- 公开 artifacts 对路径、凭据、headers、traceback 和异常文本统一脱敏。
+- 递归公开数据、warning evidence、attempts 和 artifact refs 使用确定性预算。
+- 历史 artifacts 不重写；run_status、metrics、curves 和 warning 语义不变。
+
+### 已知限制
+- Macro validator 仍为 shadow mode。
+- Historical valuation 仍为 contract-only。
+- 不新增交易、真实 DeepSeek、参数寻优或历史数据回填。
 
 ## [0.15.1] - 2026-07-17
 
@@ -166,3 +112,6 @@
 - `Removed` 移除
 - `Fixed` 修复
 - `Security` 安全
+
+[未发布]: https://github.com/KevinYoungsir/autowealth-ai/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/KevinYoungsir/autowealth-ai/compare/v0.15.1...v0.16.0

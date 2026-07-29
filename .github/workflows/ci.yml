@@ -6,12 +6,15 @@ on:
     branches:
       - main
 
-permissions:
-  contents: read
+permissions: {}
 
 jobs:
   backend:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      AUTOWEALTH_RUN_REAL_DATA_SMOKE: "0"
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python 3.12
@@ -23,18 +26,34 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev,api]"
-      - name: Run offline research API tests
+      - name: Check Python formatting
+        run: |
+          python -m black --check --line-length 100 \
+            autowealth \
+            tests \
+            scripts/verify_release_metadata.py
+      - name: Compile Python sources
+        run: python -m compileall -q autowealth tests scripts
+      - name: Verify release metadata
+        run: python scripts/verify_release_metadata.py --expected-version 0.16.0
+      - name: Test release metadata validation
+        run: |
+          python -m pytest tests/test_release_metadata.py \
+            -q \
+            --basetemp "${{ runner.temp }}/pytest-release-metadata" \
+            -p no:cacheprovider
+      - name: Run complete offline test suite
         run: |
           python -m pytest \
-            tests/test_research_run_store.py \
-            tests/test_research_api.py \
-            tests/test_real_research_pipeline.py \
+            -m "not integration" \
             -q \
             --basetemp "${{ runner.temp }}/pytest-autowealth" \
             -p no:cacheprovider
 
   frontend:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     defaults:
       run:
         working-directory: frontend
@@ -55,6 +74,8 @@ jobs:
 
   docker:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - name: Build research API image
