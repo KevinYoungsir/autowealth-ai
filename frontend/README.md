@@ -7,6 +7,13 @@
 看板现在优先读取 `data/research_runs` 下已经完成且未被修改的真实研究
 artifacts。真实数据、演示数据和 API 不可用状态会在页面顶部明确区分。
 
+## 前端环境要求
+
+- Node.js 20.9.0 或更高版本。
+- 推荐本地使用 Node.js 20 LTS，CI 当前也使用 Node.js 20。
+- 本次升级不修改 CI workflow 或 Vercel 配置；Vercel 的实际 Node.js
+  版本必须通过 Preview 构建日志确认不低于 20.9.0。
+
 ## 本地启动后端
 
 在仓库根目录运行：
