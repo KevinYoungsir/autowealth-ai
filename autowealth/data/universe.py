@@ -30,9 +30,7 @@ class FixedStockUniverse:
 
     def __init__(self, symbols: Iterable[str]):
         cleaned = list(
-            dict.fromkeys(
-                str(symbol).strip() for symbol in symbols if str(symbol).strip()
-            )
+            dict.fromkeys(str(symbol).strip() for symbol in symbols if str(symbol).strip())
         )
         if not cleaned:
             raise ValueError("fixed candidate_symbols cannot be empty")

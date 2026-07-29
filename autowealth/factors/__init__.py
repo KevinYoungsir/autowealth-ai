@@ -20,4 +20,3 @@ __all__ = [
     "quality_factor",
     "value_factor",
 ]
-

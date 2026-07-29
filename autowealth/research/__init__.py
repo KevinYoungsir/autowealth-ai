@@ -53,4 +53,3 @@ __all__ = [
     "run_real_data_research",
     "summarize_research_result",
 ]
-

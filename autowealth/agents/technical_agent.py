@@ -1,6 +1,7 @@
 """
 技术分析智能体 - 基于技术指标生成交易信号
 """
+
 from typing import Any, Dict
 
 import pandas as pd
@@ -18,10 +19,7 @@ class TechnicalAgent(BaseAgent):
     """
 
     def __init__(self):
-        super().__init__(
-            name="TechnicalAnalyst",
-            description="基于技术指标分析生成交易信号"
-        )
+        super().__init__(name="TechnicalAnalyst", description="基于技术指标分析生成交易信号")
         self.analyzer = TechnicalAnalyzer()
 
     def analyze(self, symbol: str, data: Dict[str, Any]) -> AgentSignal:
@@ -40,7 +38,7 @@ class TechnicalAgent(BaseAgent):
                 agent_name=self.name,
                 signal_type="hold",
                 confidence=0,
-                reasoning="缺少历史数据，无法进行分析"
+                reasoning="缺少历史数据，无法进行分析",
             )
 
         df = data["historical_data"]
@@ -49,7 +47,7 @@ class TechnicalAgent(BaseAgent):
                 agent_name=self.name,
                 signal_type="hold",
                 confidence=30,
-                reasoning="历史数据不足，建议观望"
+                reasoning="历史数据不足，建议观望",
             )
 
         # 计算所有技术指标
@@ -118,10 +116,10 @@ class TechnicalAgent(BaseAgent):
         current_price = latest["Close"]
         if final_signal == "buy":
             target_price = current_price * 1.08  # 8%目标收益
-            stop_loss = current_price * 0.95     # 5%止损
+            stop_loss = current_price * 0.95  # 5%止损
         elif final_signal == "sell":
             target_price = current_price * 0.92  # 8%下跌目标
-            stop_loss = current_price * 1.05     # 5%反弹止损
+            stop_loss = current_price * 1.05  # 5%反弹止损
         else:
             target_price = None
             stop_loss = None
@@ -143,8 +141,8 @@ class TechnicalAgent(BaseAgent):
                     "macd": round(latest.get("MACD", 0), 4),
                     "kdj_k": round(latest.get("K", 0), 2),
                     "kdj_d": round(latest.get("D", 0), 2),
-                }
-            }
+                },
+            },
         )
 
     def _analyze_macd(self, latest: pd.Series, prev: pd.Series) -> Dict:
@@ -166,9 +164,17 @@ class TechnicalAgent(BaseAgent):
         rsi = latest.get("RSI", 50)
 
         if rsi < 30:
-            return {"signal": "buy", "confidence": 70, "reason": f"RSI超卖({rsi:.1f})，可能出现反弹"}
+            return {
+                "signal": "buy",
+                "confidence": 70,
+                "reason": f"RSI超卖({rsi:.1f})，可能出现反弹",
+            }
         elif rsi > 70:
-            return {"signal": "sell", "confidence": 70, "reason": f"RSI超买({rsi:.1f})，可能出现回调"}
+            return {
+                "signal": "sell",
+                "confidence": 70,
+                "reason": f"RSI超买({rsi:.1f})，可能出现回调",
+            }
         elif 40 <= rsi <= 60:
             return {"signal": "hold", "confidence": 60, "reason": f"RSI中性({rsi:.1f})，趋势不明"}
         else:

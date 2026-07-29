@@ -4,6 +4,7 @@ AutoWealth AI - 高级技术指标测试
 使用 pytest 对 TechnicalAnalyzer 新增的6个高级技术指标进行全面测试，
 包括正常情况、边界情况和异常情况。
 """
+
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -12,7 +13,7 @@ from unittest.mock import MagicMock
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Mock yfinance 以避免安装依赖
-sys.modules['yfinance'] = MagicMock()
+sys.modules["yfinance"] = MagicMock()
 
 import numpy as np
 import pandas as pd
@@ -20,10 +21,10 @@ import pytest
 
 from autowealth.core.analyzer import TechnicalAnalyzer
 
-
 # ============================================================
 # 测试数据工厂（与 test_analyzer.py 保持一致）
 # ============================================================
+
 
 def make_stock_data(rows=120, seed=42, trend="normal"):
     """
@@ -61,13 +62,16 @@ def make_stock_data(rows=120, seed=42, trend="normal"):
     open_ = low + rng.uniform(0, 1, rows) * (high - low)
     volume = rng.randint(1000000, 10000000, rows).astype(float)
 
-    df = pd.DataFrame({
-        "Open": open_,
-        "High": high,
-        "Low": low,
-        "Close": close,
-        "Volume": volume,
-    }, index=dates)
+    df = pd.DataFrame(
+        {
+            "Open": open_,
+            "High": high,
+            "Low": low,
+            "Close": close,
+            "Volume": volume,
+        },
+        index=dates,
+    )
 
     return df
 
@@ -80,13 +84,16 @@ def make_suspended_data(rows=120, seed=77):
     price = 100.0
     volume = 0.0
 
-    return pd.DataFrame({
-        "Open": [price] * rows,
-        "High": [price] * rows,
-        "Low": [price] * rows,
-        "Close": [price] * rows,
-        "Volume": [volume] * rows,
-    }, index=dates)
+    return pd.DataFrame(
+        {
+            "Open": [price] * rows,
+            "High": [price] * rows,
+            "Low": [price] * rows,
+            "Close": [price] * rows,
+            "Volume": [volume] * rows,
+        },
+        index=dates,
+    )
 
 
 def make_all_up_data(rows=120, seed=99):
@@ -101,18 +108,22 @@ def make_all_up_data(rows=120, seed=99):
     open_ = low + rng.uniform(0, 0.5, rows) * (high - low)
     volume = rng.randint(1000000, 5000000, rows).astype(float)
 
-    return pd.DataFrame({
-        "Open": open_,
-        "High": high,
-        "Low": low,
-        "Close": close,
-        "Volume": volume,
-    }, index=dates)
+    return pd.DataFrame(
+        {
+            "Open": open_,
+            "High": high,
+            "Low": low,
+            "Close": close,
+            "Volume": volume,
+        },
+        index=dates,
+    )
 
 
 # ============================================================
 # OBV 测试
 # ============================================================
+
 
 class TestCalculateOBV:
     """测试 TechnicalAnalyzer.calculate_obv 方法"""
@@ -157,6 +168,7 @@ class TestCalculateOBV:
 # ATR 测试
 # ============================================================
 
+
 class TestCalculateATR:
     """测试 TechnicalAnalyzer.calculate_atr 方法"""
 
@@ -199,6 +211,7 @@ class TestCalculateATR:
 # ============================================================
 # DMI 测试
 # ============================================================
+
 
 class TestCalculateDMI:
     """测试 TechnicalAnalyzer.calculate_dmi 方法"""
@@ -249,6 +262,7 @@ class TestCalculateDMI:
 # CCI 测试
 # ============================================================
 
+
 class TestCalculateCCI:
     """测试 TechnicalAnalyzer.calculate_cci 方法"""
 
@@ -292,6 +306,7 @@ class TestCalculateCCI:
 # ============================================================
 # WR 测试
 # ============================================================
+
 
 class TestCalculateWR:
     """测试 TechnicalAnalyzer.calculate_wr 方法"""
@@ -337,6 +352,7 @@ class TestCalculateWR:
 # ============================================================
 # PSY 测试
 # ============================================================
+
 
 class TestCalculatePSY:
     """测试 TechnicalAnalyzer.calculate_psy 方法"""
@@ -384,6 +400,7 @@ class TestCalculatePSY:
 # full_analysis 新增列测试
 # ============================================================
 
+
 class TestFullAnalysisAdvancedIndicators:
     """测试 full_analysis 包含所有新增高级指标列"""
 
@@ -394,8 +411,11 @@ class TestFullAnalysisAdvancedIndicators:
 
         expected_cols = [
             "OBV",
-            "TR", "ATR14",
-            "+DI", "-DI", "ADX",
+            "TR",
+            "ATR14",
+            "+DI",
+            "-DI",
+            "ADX",
             "CCI20",
             "WR14",
             "PSY12",

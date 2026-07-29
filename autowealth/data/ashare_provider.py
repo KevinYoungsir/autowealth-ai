@@ -66,4 +66,3 @@ class AShareDataProvider:
         for suffix in (".SH", ".SS", ".SZ", ".BJ"):
             clean = clean.replace(suffix, "")
         return clean
-

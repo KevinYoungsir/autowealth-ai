@@ -145,7 +145,9 @@ class TestGetPerformanceMetrics:
         assert len(signals) == 100
         backtest_engine.run_strategy(sample_price_data, signals)
         metrics = backtest_engine.get_performance_metrics()
-        expected_return = (sample_price_data["Close"].iloc[-1] / sample_price_data["Close"].iloc[0]) - 1
+        expected_return = (
+            sample_price_data["Close"].iloc[-1] / sample_price_data["Close"].iloc[0]
+        ) - 1
         # Should be close to expected (minus commission)
         assert abs(metrics["total_return"] - expected_return) < 0.01
 

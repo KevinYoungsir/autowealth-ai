@@ -110,7 +110,9 @@ def _build_candidates(
             warnings.append(f"{symbol} missing precomputed factor score")
             continue
         score_object = factor_scores[symbol]
-        candidates.append(_candidate_from_score(symbol, score_object, industries.get(symbol, "unknown")))
+        candidates.append(
+            _candidate_from_score(symbol, score_object, industries.get(symbol, "unknown"))
+        )
     return candidates, rejected, warnings
 
 
@@ -154,7 +156,9 @@ def _resolve_macro_multiplier(
     return equity_position_multiplier(str(macro_regime))
 
 
-def _factor_summary(candidates: list[StockCandidate], factor_scores: Mapping[str, object]) -> Dict[str, Any]:
+def _factor_summary(
+    candidates: list[StockCandidate], factor_scores: Mapping[str, object]
+) -> Dict[str, Any]:
     scores = [candidate.score for candidate in candidates]
     by_symbol = {candidate.symbol: candidate.score for candidate in candidates}
     return {
@@ -186,6 +190,9 @@ def _macro_summary(macro_regime: Optional[object], multiplier: float) -> Dict[st
     return summary
 
 
-def _missing_price_warnings(selected_symbols: Iterable[str], price_data: Mapping[str, pd.DataFrame]) -> list[str]:
-    return [f"{symbol} missing price_data" for symbol in selected_symbols if symbol not in price_data]
-
+def _missing_price_warnings(
+    selected_symbols: Iterable[str], price_data: Mapping[str, pd.DataFrame]
+) -> list[str]:
+    return [
+        f"{symbol} missing price_data" for symbol in selected_symbols if symbol not in price_data
+    ]

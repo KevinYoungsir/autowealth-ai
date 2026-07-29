@@ -6,7 +6,6 @@ from __future__ import annotations
 
 from typing import Mapping, Optional
 
-
 BASE_MULTIPLIERS = {
     "recession": 0.6,
     "slowdown": 0.8,
@@ -50,4 +49,3 @@ def _strong_environment(regime: str, scores: Mapping[str, float]) -> bool:
         "external_risk_score",
     ]
     return all(scores.get(key, 0) >= 80 for key in keys)
-

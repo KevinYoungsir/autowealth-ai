@@ -18,7 +18,6 @@ from autowealth.research import (
     run_research_pipeline,
 )
 
-
 FORBIDDEN_PHRASES = ["建议买入", "建议卖出", "推荐买入", "推荐卖出", "保证收益"]
 
 

@@ -27,9 +27,7 @@ def present_warnings(
                 "source_message": source_message,
                 "display_message": display_message,
                 "category": category,
-                "category_label": WARNING_CATEGORY_LABEL_CATALOGS[locale][
-                    category
-                ],
+                "category_label": WARNING_CATEGORY_LABEL_CATALOGS[locale][category],
             }
         )
     return presentations

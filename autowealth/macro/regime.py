@@ -66,4 +66,3 @@ def _safe_float(value):
         return float(value)
     except (TypeError, ValueError):
         return None
-

@@ -108,4 +108,3 @@ def test_schema_fields_are_unified_when_source_fields_are_missing():
     assert list(result.columns) == MARKET_DATA_COLUMNS
     assert pd.isna(result.loc[0, "volume"])
     assert pd.isna(result.loc[0, "amount"])
-

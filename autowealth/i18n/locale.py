@@ -6,7 +6,6 @@ from typing import Any, Literal, cast
 
 from autowealth.i18n.catalogs import CATALOGS, PERSISTED_CATALOGS
 
-
 SupportedLocale = Literal["zh-CN", "en-US"]
 SUPPORTED_LOCALES: tuple[SupportedLocale, ...] = ("zh-CN", "en-US")
 DEFAULT_REPORT_LOCALE: SupportedLocale = "en-US"

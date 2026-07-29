@@ -19,10 +19,10 @@ from autowealth.sentiment.dictionary import (
     get_sentiment_words,
 )
 
-
 # ============================================================
 # Fixtures
 # ============================================================
+
 
 @pytest.fixture
 def analyzer():
@@ -33,6 +33,7 @@ def analyzer():
 # ============================================================
 # 英文文本情绪分析测试
 # ============================================================
+
 
 class TestEnglishSentiment:
     """英文文本情绪分析测试。"""
@@ -76,7 +77,9 @@ class TestEnglishSentiment:
         """测试混合情绪英文文本。"""
         # good(正面), growth(正面), terrible(负面), management(无), losses(负面), profit(正面), crash(负面)
         # 正面3个 vs 负面3个 -> neutral
-        text = "Good growth but terrible management. Losses reported but profit up. Crash risk exists."
+        text = (
+            "Good growth but terrible management. Losses reported but profit up. Crash risk exists."
+        )
         result = analyzer._analyze_text_sentiment(text)
         # 混合情绪应返回 neutral（正面和负面词数量相等）
         assert result["label"] == "neutral"
@@ -86,6 +89,7 @@ class TestEnglishSentiment:
 # ============================================================
 # 中文文本情绪分析测试
 # ============================================================
+
 
 class TestChineseSentiment:
     """中文文本情绪分析测试。"""
@@ -129,6 +133,7 @@ class TestChineseSentiment:
 # ============================================================
 # 空文本和边界情况测试
 # ============================================================
+
 
 class TestEdgeCases:
     """边界情况和异常输入测试。"""
@@ -176,6 +181,7 @@ class TestEdgeCases:
 # ============================================================
 # 关键词提取测试
 # ============================================================
+
 
 class TestKeywordExtraction:
     """关键词提取测试。"""
@@ -251,6 +257,7 @@ class TestKeywordExtraction:
 # Twitter 分析接口测试（mock）
 # ============================================================
 
+
 class TestTwitterAnalysis:
     """Twitter/X 情绪分析接口测试。"""
 
@@ -290,6 +297,7 @@ class TestTwitterAnalysis:
 # 微博分析接口测试（mock）
 # ============================================================
 
+
 class TestWeiboAnalysis:
     """微博情绪分析接口测试。"""
 
@@ -319,6 +327,7 @@ class TestWeiboAnalysis:
 # ============================================================
 # Reddit 分析接口测试（mock）
 # ============================================================
+
 
 class TestRedditAnalysis:
     """Reddit 情绪分析接口测试。"""
@@ -356,6 +365,7 @@ class TestRedditAnalysis:
 # ============================================================
 # 多平台情绪合并测试
 # ============================================================
+
 
 class TestCombinedSentiment:
     """多平台情绪合并测试。"""
@@ -436,6 +446,7 @@ class TestCombinedSentiment:
 # ============================================================
 # 词典模块测试
 # ============================================================
+
 
 class TestDictionary:
     """情绪词典模块测试。"""

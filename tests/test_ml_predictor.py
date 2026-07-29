@@ -23,10 +23,10 @@ import pytest
 
 from autowealth.ml.predictor import MLPredictor
 
-
 # ============================================================
 # 测试数据工厂
 # ============================================================
+
 
 def make_stock_data(rows=200, seed=42, trend="normal"):
     """
@@ -56,13 +56,16 @@ def make_stock_data(rows=200, seed=42, trend="normal"):
 
     prices = base_price + drift + rng.randn(rows) * 2
 
-    df = pd.DataFrame({
-        "Open": prices + rng.randn(rows) * 0.5,
-        "High": prices + np.abs(rng.randn(rows)) * 1.5,
-        "Low": prices - np.abs(rng.randn(rows)) * 1.5,
-        "Close": prices,
-        "Volume": rng.randint(1000000, 10000000, rows),
-    }, index=dates)
+    df = pd.DataFrame(
+        {
+            "Open": prices + rng.randn(rows) * 0.5,
+            "High": prices + np.abs(rng.randn(rows)) * 1.5,
+            "Low": prices - np.abs(rng.randn(rows)) * 1.5,
+            "Close": prices,
+            "Volume": rng.randint(1000000, 10000000, rows),
+        },
+        index=dates,
+    )
 
     return df
 
@@ -70,6 +73,7 @@ def make_stock_data(rows=200, seed=42, trend="normal"):
 # ============================================================
 # 测试：初始化
 # ============================================================
+
 
 class TestMLPredictorInit:
 
@@ -105,6 +109,7 @@ class TestMLPredictorInit:
 # ============================================================
 # 测试：特征工程
 # ============================================================
+
 
 class TestPrepareFeatures:
 
@@ -190,6 +195,7 @@ class TestPrepareFeatures:
 # ============================================================
 # 测试：随机森林训练和预测
 # ============================================================
+
 
 class TestRandomForestTrainPredict:
 
@@ -279,6 +285,7 @@ class TestRandomForestTrainPredict:
 # 测试：LSTM/MLP 训练和预测
 # ============================================================
 
+
 class TestLSTMTrainPredict:
 
     def test_lstm_train_returns_metrics(self):
@@ -319,6 +326,7 @@ class TestLSTMTrainPredict:
 # 测试：模型指标
 # ============================================================
 
+
 class TestModelMetrics:
 
     def test_get_metrics_after_train(self):
@@ -358,6 +366,7 @@ class TestModelMetrics:
 # ============================================================
 # 测试：模型持久化
 # ============================================================
+
 
 class TestModelPersistence:
 
@@ -453,6 +462,7 @@ class TestModelPersistence:
 # ============================================================
 # 测试：数据不足时的处理
 # ============================================================
+
 
 class TestInsufficientData:
 

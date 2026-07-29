@@ -9,7 +9,6 @@ from typing import Union
 
 import pandas as pd
 
-
 PathLike = Union[str, Path]
 
 
@@ -53,4 +52,3 @@ def latest_macro_indicators(path: PathLike) -> dict:
     row = df.iloc[-1].to_dict()
     row["date"] = row["date"].strftime("%Y-%m-%d")
     return row
-

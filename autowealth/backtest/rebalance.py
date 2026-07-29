@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import pandas as pd
 
-
 SUPPORTED_REBALANCE_FREQUENCIES = {"monthly", "quarterly", "yearly", "five_year"}
 
 
@@ -53,4 +52,3 @@ def _period_labels(dates: pd.DatetimeIndex, frequency: str):
     base_year = int(dates[0].year)
     labels = [f"{base_year + ((date.year - base_year) // 5) * 5}" for date in dates]
     return labels
-

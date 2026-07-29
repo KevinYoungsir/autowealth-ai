@@ -2,6 +2,7 @@
 中文自然语言解析器
 将用户的中文输入解析为结构化指令，支持股票分析、批量分析、投资组合、市场概览、回测、组合优化等意图。
 """
+
 import logging
 import re
 from typing import Any, Dict, List, Optional
@@ -110,15 +111,97 @@ CHINESE_NAME_TO_SYMBOL: Dict[str, str] = {
 
 # 非股票大写词黑名单
 _NON_STOCK_WORDS = {
-    "POST", "GET", "API", "NLP", "AI", "HTTP", "HTTPS", "JSON", "XML", "HTML", "CSS",
-    "SQL", "URL", "USA", "UK", "EU", "UN", "NASA", "FBI", "CIA", "IBM", "CPU", "GPU",
-    "RAM", "SSD", "HDD", "USB", "PDF", "DOC", "XLS", "PPT", "CSV", "TXT", "JPG", "PNG",
-    "GIF", "MP3", "MP4", "AVI", "WAV", "ZIP", "RAR", "TAR", "GZ", "EXE", "DLL", "BAT",
-    "CMD", "SH", "PY", "JS", "TS", "JAVA", "CPP", "GO", "RUST", "PHP", "RUBY", "PERL",
-    "LUA", "SWIFT", "KOTLIN", "SCALA", "CLOJURE", "HASKELL", "ERLANG", "ELIXIR", "DART",
-    "FLUTTER", "REACT", "VUE", "ANGULAR", "SVELTE", "NEXT", "NUXT", "DJANGO", "FLASK",
-    "FASTAPI", "SPRING", "LARAVEL", "SYMFONY", "RAILS", "EXPRESS", "NEST", "ASPNET",
-    "HK", "SS", "SZ", "KS", "SW", "PA",
+    "POST",
+    "GET",
+    "API",
+    "NLP",
+    "AI",
+    "HTTP",
+    "HTTPS",
+    "JSON",
+    "XML",
+    "HTML",
+    "CSS",
+    "SQL",
+    "URL",
+    "USA",
+    "UK",
+    "EU",
+    "UN",
+    "NASA",
+    "FBI",
+    "CIA",
+    "IBM",
+    "CPU",
+    "GPU",
+    "RAM",
+    "SSD",
+    "HDD",
+    "USB",
+    "PDF",
+    "DOC",
+    "XLS",
+    "PPT",
+    "CSV",
+    "TXT",
+    "JPG",
+    "PNG",
+    "GIF",
+    "MP3",
+    "MP4",
+    "AVI",
+    "WAV",
+    "ZIP",
+    "RAR",
+    "TAR",
+    "GZ",
+    "EXE",
+    "DLL",
+    "BAT",
+    "CMD",
+    "SH",
+    "PY",
+    "JS",
+    "TS",
+    "JAVA",
+    "CPP",
+    "GO",
+    "RUST",
+    "PHP",
+    "RUBY",
+    "PERL",
+    "LUA",
+    "SWIFT",
+    "KOTLIN",
+    "SCALA",
+    "CLOJURE",
+    "HASKELL",
+    "ERLANG",
+    "ELIXIR",
+    "DART",
+    "FLUTTER",
+    "REACT",
+    "VUE",
+    "ANGULAR",
+    "SVELTE",
+    "NEXT",
+    "NUXT",
+    "DJANGO",
+    "FLASK",
+    "FASTAPI",
+    "SPRING",
+    "LARAVEL",
+    "SYMFONY",
+    "RAILS",
+    "EXPRESS",
+    "NEST",
+    "ASPNET",
+    "HK",
+    "SS",
+    "SZ",
+    "KS",
+    "SW",
+    "PA",
 }
 
 
@@ -221,7 +304,9 @@ class NLPParser:
             return "market"
 
         # 批量分析
-        if re.search(r"批量|batch|多个|多支|多隻|一起分析|全部|所有股票", text) or self._has_multiple_symbols(text):
+        if re.search(
+            r"批量|batch|多个|多支|多隻|一起分析|全部|所有股票", text
+        ) or self._has_multiple_symbols(text):
             return "analyze_batch"
 
         # 单股分析（默认）
@@ -320,11 +405,13 @@ class NLPParser:
 
             symbol = self._resolve_symbol(name_or_symbol)
             if symbol:
-                holdings.append({
-                    "symbol": symbol,
-                    "quantity": quantity,
-                    "cost_basis": cost_basis,
-                })
+                holdings.append(
+                    {
+                        "symbol": symbol,
+                        "quantity": quantity,
+                        "cost_basis": cost_basis,
+                    }
+                )
 
         # 模式2: "持有100股AAPL" / "我有100股苹果"
         if not holdings:
@@ -336,11 +423,13 @@ class NLPParser:
                 name_or_symbol = match.group(2).strip()
                 symbol = self._resolve_symbol(name_or_symbol)
                 if symbol:
-                    holdings.append({
-                        "symbol": symbol,
-                        "quantity": quantity,
-                        "cost_basis": 0.0,
-                    })
+                    holdings.append(
+                        {
+                            "symbol": symbol,
+                            "quantity": quantity,
+                            "cost_basis": 0.0,
+                        }
+                    )
 
         # 模式3: 逗号/顿号分隔的多个持仓
         if not holdings:
@@ -349,20 +438,28 @@ class NLPParser:
                 qty_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:股|股|shares?)", seg)
                 symbol = self._extract_single_symbol(seg)
                 if qty_match and symbol:
-                    cost_match = re.search(r"(?:成本|cost|均价|平均成本|@|at)\s*(\d+(?:\.\d+)?)", seg)
-                    holdings.append({
-                        "symbol": symbol,
-                        "quantity": float(qty_match.group(1)),
-                        "cost_basis": float(cost_match.group(1)) if cost_match else 0.0,
-                    })
+                    cost_match = re.search(
+                        r"(?:成本|cost|均价|平均成本|@|at)\s*(\d+(?:\.\d+)?)", seg
+                    )
+                    holdings.append(
+                        {
+                            "symbol": symbol,
+                            "quantity": float(qty_match.group(1)),
+                            "cost_basis": float(cost_match.group(1)) if cost_match else 0.0,
+                        }
+                    )
 
         return holdings
 
     def _extract_strategy(self, text: str) -> str:
         """提取回测策略名称"""
-        if re.search(r"买入持有|買入持有|buy.?hold|持有策略|长期持有|長期持有", text, re.IGNORECASE):
+        if re.search(
+            r"买入持有|買入持有|buy.?hold|持有策略|长期持有|長期持有", text, re.IGNORECASE
+        ):
             return "buy_hold"
-        if re.search(r"均线交叉|均線交叉|sma.?cross|moving.average|双均线|雙均線", text, re.IGNORECASE):
+        if re.search(
+            r"均线交叉|均線交叉|sma.?cross|moving.average|双均线|雙均線", text, re.IGNORECASE
+        ):
             return "sma_cross"
         if re.search(r"RSI|rsi|相对强弱|相對強弱", text):
             return "rsi"
@@ -370,7 +467,10 @@ class NLPParser:
 
     def _extract_initial_capital(self, text: str) -> float:
         """提取初始资金"""
-        match = re.search(r"(?:本金|资金|資金|capital|初始资金|initial)\s*(?:为|為|是|:)?\s*(\d+(?:\.\d+)?)\s*(?:万|萬|w|万)?", text)
+        match = re.search(
+            r"(?:本金|资金|資金|capital|初始资金|initial)\s*(?:为|為|是|:)?\s*(\d+(?:\.\d+)?)\s*(?:万|萬|w|万)?",
+            text,
+        )
         if match:
             val = float(match.group(1))
             if "万" in text or "萬" in text or "w" in text.lower():
@@ -381,7 +481,10 @@ class NLPParser:
     def _extract_target_return(self, text: str) -> Optional[float]:
         """提取目标收益率"""
         # 匹配 "目标收益10%" / "target return 10%" / "10%收益"
-        match = re.search(r"(?:目标|target|期望|预期)?\s*(?:收益|return|收益率|回报率|報酬率)\s*(?:为|為|是|:)?\s*(\d+(?:\.\d+)?)\s*%", text)
+        match = re.search(
+            r"(?:目标|target|期望|预期)?\s*(?:收益|return|收益率|回报率|報酬率)\s*(?:为|為|是|:)?\s*(\d+(?:\.\d+)?)\s*%",
+            text,
+        )
         if match:
             return float(match.group(1)) / 100.0
         # 匹配 "10%" 在优化语境中

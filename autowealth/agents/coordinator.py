@@ -1,6 +1,7 @@
 """
 智能体协调器 - 负责协调多个智能体的分析和决策
 """
+
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -22,9 +23,9 @@ class AgentCoordinator:
 
         # 默认权重配置
         self.agent_weights = {
-            "TechnicalAnalyst": 0.35,    # 技术分析权重
+            "TechnicalAnalyst": 0.35,  # 技术分析权重
             "FundamentalAnalyst": 0.35,  # 基本面分析权重
-            "SentimentAnalyst": 0.30,    # 情绪分析权重
+            "SentimentAnalyst": 0.30,  # 情绪分析权重
         }
 
     def register_agent(self, agent: BaseAgent, weight: Optional[float] = None):
@@ -38,7 +39,9 @@ class AgentCoordinator:
         self.agents[agent.name] = agent
         if weight is not None:
             self.agent_weights[agent.name] = weight
-        self.logger.info(f"注册智能体: {agent.name} (权重: {self.agent_weights.get(agent.name, 0.33)})")
+        self.logger.info(
+            f"注册智能体: {agent.name} (权重: {self.agent_weights.get(agent.name, 0.33)})"
+        )
 
     def unregister_agent(self, agent_name: str):
         """注销智能体"""
@@ -67,14 +70,16 @@ class AgentCoordinator:
             try:
                 signal = agent.analyze(symbol, data)
                 signals[name] = signal
-                self.logger.info(f"{name} 信号: {signal.signal_type} (置信度: {signal.confidence}%)")
+                self.logger.info(
+                    f"{name} 信号: {signal.signal_type} (置信度: {signal.confidence}%)"
+                )
             except Exception as e:
                 self.logger.error(f"{name} 分析失败: {e}")
                 signals[name] = AgentSignal(
                     agent_name=name,
                     signal_type="hold",
                     confidence=0,
-                    reasoning=f"分析出错: {str(e)}"
+                    reasoning=f"分析出错: {str(e)}",
                 )
 
         # 综合决策
@@ -122,12 +127,14 @@ class AgentCoordinator:
             else:  # hold
                 hold_score += weighted_score
 
-            signal_details.append({
-                "agent": agent_name,
-                "signal": signal.signal_type,
-                "confidence": signal.confidence,
-                "weight": weight,
-            })
+            signal_details.append(
+                {
+                    "agent": agent_name,
+                    "signal": signal.signal_type,
+                    "confidence": signal.confidence,
+                    "weight": weight,
+                }
+            )
 
         # 归一化分数
         if total_weight > 0:
@@ -163,7 +170,9 @@ class AgentCoordinator:
             "signal_type": final_signal,
             "confidence": round(final_confidence, 2),
             "reasoning": reasoning,
-            "target_price": round(sum(target_prices) / len(target_prices), 2) if target_prices else None,
+            "target_price": (
+                round(sum(target_prices) / len(target_prices), 2) if target_prices else None
+            ),
             "stop_loss": round(sum(stop_losses) / len(stop_losses), 2) if stop_losses else None,
             "scores": {k: round(v * 100, 2) for k, v in scores.items()},
             "signal_details": signal_details,
@@ -189,9 +198,11 @@ class AgentCoordinator:
             )
 
         reasons.append("")
-        reasons.append(f"综合评分 - 买入: {scores['buy']*100:.1f}%, "
-                      f"卖出: {scores['sell']*100:.1f}%, "
-                      f"观望: {scores['hold']*100:.1f}%")
+        reasons.append(
+            f"综合评分 - 买入: {scores['buy']*100:.1f}%, "
+            f"卖出: {scores['sell']*100:.1f}%, "
+            f"观望: {scores['hold']*100:.1f}%"
+        )
 
         # 添加关键理由
         if final_signal == "buy":

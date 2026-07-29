@@ -1,6 +1,7 @@
 """
 数据分析模块 - 负责技术指标计算和基本面分析
 """
+
 import logging
 from typing import Dict, List, Optional, Tuple
 
@@ -133,11 +134,14 @@ class TechnicalAnalyzer:
         plus_dm = ((high_diff > low_diff) & (high_diff > 0)) * high_diff
         minus_dm = ((low_diff > high_diff) & (low_diff > 0)) * low_diff
 
-        tr = pd.concat([
-            df["High"] - df["Low"],
-            (df["High"] - df["Close"].shift()).abs(),
-            (df["Low"] - df["Close"].shift()).abs(),
-        ], axis=1).max(axis=1)
+        tr = pd.concat(
+            [
+                df["High"] - df["Low"],
+                (df["High"] - df["Close"].shift()).abs(),
+                (df["Low"] - df["Close"].shift()).abs(),
+            ],
+            axis=1,
+        ).max(axis=1)
 
         atr = tr.rolling(window=period).mean()
         atr = atr.replace(0, 1e-10)
@@ -235,8 +239,16 @@ class FundamentalAnalyzer:
 
         # 计算价格趋势
         recent_price = historical_data["Close"].iloc[-1]
-        price_1m_ago = historical_data["Close"].iloc[-20] if len(historical_data) >= 20 else historical_data["Close"].iloc[0]
-        price_3m_ago = historical_data["Close"].iloc[-60] if len(historical_data) >= 60 else historical_data["Close"].iloc[0]
+        price_1m_ago = (
+            historical_data["Close"].iloc[-20]
+            if len(historical_data) >= 20
+            else historical_data["Close"].iloc[0]
+        )
+        price_3m_ago = (
+            historical_data["Close"].iloc[-60]
+            if len(historical_data) >= 60
+            else historical_data["Close"].iloc[0]
+        )
 
         return_1m = (recent_price - price_1m_ago) / price_1m_ago * 100
         return_3m = (recent_price - price_3m_ago) / price_3m_ago * 100
@@ -264,9 +276,7 @@ class FundamentalAnalyzer:
         }
 
     @classmethod
-    def full_fundamental_analysis(
-        cls, stock_info: Dict, historical_data: pd.DataFrame
-    ) -> Dict:
+    def full_fundamental_analysis(cls, stock_info: Dict, historical_data: pd.DataFrame) -> Dict:
         """执行完整的基本面分析"""
         valuation = cls.analyze_valuation(stock_info)
         growth = cls.analyze_growth(historical_data)

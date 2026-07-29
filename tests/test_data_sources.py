@@ -4,6 +4,7 @@ AutoWealth AI - 多数据源模块测试
 测试 DataFetcher、EastMoneyDataSource、BinanceDataSource 的所有功能，
 包括正常情况、边界情况和异常情况。
 """
+
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch, Mock
@@ -13,7 +14,7 @@ import json
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Mock yfinance 以避免安装依赖
-sys.modules['yfinance'] = MagicMock()
+sys.modules["yfinance"] = MagicMock()
 
 import numpy as np
 import pandas as pd
@@ -21,10 +22,10 @@ import pytest
 
 from autowealth.core.data_fetcher import DataFetcher, EastMoneyDataSource, BinanceDataSource
 
-
 # ============================================================
 # 测试数据工厂
 # ============================================================
+
 
 def make_mock_akshare_data(rows=100):
     """创建模拟的 akshare 返回数据（A股历史数据格式）"""
@@ -50,10 +51,30 @@ def make_mock_akshare_data(rows=100):
 
 def make_mock_akshare_info():
     """创建模拟的 akshare 股票信息"""
-    return pd.DataFrame({
-        "item": ["股票简称", "所属行业", "总市值", "市盈率", "市净率", "52周最高价", "52周最低价", "公司简介"],
-        "value": ["贵州茅台", "白酒", "2000000000000", "30.5", "8.2", "1800.00", "1200.00", "中国白酒龙头企业"]
-    })
+    return pd.DataFrame(
+        {
+            "item": [
+                "股票简称",
+                "所属行业",
+                "总市值",
+                "市盈率",
+                "市净率",
+                "52周最高价",
+                "52周最低价",
+                "公司简介",
+            ],
+            "value": [
+                "贵州茅台",
+                "白酒",
+                "2000000000000",
+                "30.5",
+                "8.2",
+                "1800.00",
+                "1200.00",
+                "中国白酒龙头企业",
+            ],
+        }
+    )
 
 
 def make_mock_binance_klines(rows=100):
@@ -71,17 +92,17 @@ def make_mock_binance_klines(rows=100):
 
         kline = [
             base_time + i * 86400000,  # Open time
-            str(open_price),           # Open
-            str(high_price),           # High
-            str(low_price),            # Low
-            str(close_price),          # Close
-            str(volume),               # Volume
+            str(open_price),  # Open
+            str(high_price),  # High
+            str(low_price),  # Low
+            str(close_price),  # Close
+            str(volume),  # Volume
             base_time + i * 86400000 + 86399999,  # Close time
-            str(volume * close_price), # Quote asset volume
-            rng.randint(100, 1000),    # Number of trades
-            str(volume * 0.5),         # Taker buy base asset volume
+            str(volume * close_price),  # Quote asset volume
+            rng.randint(100, 1000),  # Number of trades
+            str(volume * 0.5),  # Taker buy base asset volume
             str(volume * close_price * 0.5),  # Taker buy quote asset volume
-            "0"                        # Ignore
+            "0",  # Ignore
         ]
         klines.append(kline)
 
@@ -111,7 +132,7 @@ def make_mock_binance_ticker():
         "closeTime": 1704153600000,
         "firstId": 1,
         "lastId": 1000,
-        "count": 1000
+        "count": 1000,
     }
 
 
@@ -119,10 +140,11 @@ def make_mock_binance_ticker():
 # DataFetcher 初始化测试
 # ============================================================
 
+
 class TestDataFetcherInit:
     """测试 DataFetcher 初始化"""
 
-    @patch('autowealth.core.data_fetcher.get_settings')
+    @patch("autowealth.core.data_fetcher.get_settings")
     def test_default_source(self, mock_get_settings):
         """验证默认数据源为 yfinance"""
         mock_settings = MagicMock()
@@ -132,7 +154,7 @@ class TestDataFetcherInit:
         fetcher = DataFetcher()
         assert fetcher.source == "yfinance"
 
-    @patch('autowealth.core.data_fetcher.get_settings')
+    @patch("autowealth.core.data_fetcher.get_settings")
     def test_yfinance_source(self, mock_get_settings):
         """验证 yfinance 数据源设置"""
         mock_settings = MagicMock()
@@ -142,7 +164,7 @@ class TestDataFetcherInit:
         fetcher = DataFetcher(source="yfinance")
         assert fetcher.source == "yfinance"
 
-    @patch('autowealth.core.data_fetcher.get_settings')
+    @patch("autowealth.core.data_fetcher.get_settings")
     def test_eastmoney_source(self, mock_get_settings):
         """验证 eastmoney 数据源设置"""
         mock_settings = MagicMock()
@@ -152,7 +174,7 @@ class TestDataFetcherInit:
         fetcher = DataFetcher(source="eastmoney")
         assert fetcher.source == "eastmoney"
 
-    @patch('autowealth.core.data_fetcher.get_settings')
+    @patch("autowealth.core.data_fetcher.get_settings")
     def test_binance_source(self, mock_get_settings):
         """验证 binance 数据源设置"""
         mock_settings = MagicMock()
@@ -162,7 +184,7 @@ class TestDataFetcherInit:
         fetcher = DataFetcher(source="binance")
         assert fetcher.source == "binance"
 
-    @patch('autowealth.core.data_fetcher.get_settings')
+    @patch("autowealth.core.data_fetcher.get_settings")
     def test_source_case_insensitive(self, mock_get_settings):
         """验证数据源参数大小写不敏感"""
         mock_settings = MagicMock()
@@ -178,7 +200,7 @@ class TestDataFetcherInit:
         fetcher = DataFetcher(source="BINANCE")
         assert fetcher.source == "binance"
 
-    @patch('autowealth.core.data_fetcher.get_settings')
+    @patch("autowealth.core.data_fetcher.get_settings")
     def test_cache_dir_creation(self, mock_get_settings):
         """验证缓存目录自动创建"""
         import tempfile
@@ -201,6 +223,7 @@ class TestDataFetcherInit:
 # ============================================================
 # is_crypto_symbol 静态方法测试
 # ============================================================
+
 
 class TestIsCryptoSymbol:
     """测试 is_crypto_symbol 静态方法"""
@@ -258,22 +281,23 @@ class TestIsCryptoSymbol:
 # EastMoneyDataSource 测试
 # ============================================================
 
+
 class TestEastMoneyDataSource:
     """测试 EastMoneyDataSource 类"""
 
-    @patch('autowealth.core.data_fetcher.get_settings')
+    @patch("autowealth.core.data_fetcher.get_settings")
     def test_init_import_error(self, mock_get_settings):
         """验证 akshare 未安装时抛出 ImportError"""
         mock_settings = MagicMock()
         mock_settings.data_cache_dir = "/tmp/test_cache"
         mock_get_settings.return_value = mock_settings
 
-        with patch.dict('sys.modules', {'akshare': None}):
+        with patch.dict("sys.modules", {"akshare": None}):
             with pytest.raises(ImportError) as exc_info:
                 EastMoneyDataSource()
             assert "akshare" in str(exc_info.value)
 
-    @patch('autowealth.core.data_fetcher.get_settings')
+    @patch("autowealth.core.data_fetcher.get_settings")
     def test_get_stock_data_success(self, mock_get_settings):
         """验证获取A股数据成功"""
         mock_settings = MagicMock()
@@ -284,7 +308,7 @@ class TestEastMoneyDataSource:
         mock_data = make_mock_akshare_data(50)
         mock_ak.stock_zh_a_hist.return_value = mock_data
 
-        with patch.dict('sys.modules', {'akshare': mock_ak}):
+        with patch.dict("sys.modules", {"akshare": mock_ak}):
             source = EastMoneyDataSource()
             source.ak = mock_ak
 
@@ -298,7 +322,7 @@ class TestEastMoneyDataSource:
             assert "Volume" in result.columns
             assert len(result) == 50
 
-    @patch('autowealth.core.data_fetcher.get_settings')
+    @patch("autowealth.core.data_fetcher.get_settings")
     def test_get_stock_data_with_suffix(self, mock_get_settings):
         """验证带后缀的A股代码处理"""
         mock_settings = MagicMock()
@@ -309,7 +333,7 @@ class TestEastMoneyDataSource:
         mock_data = make_mock_akshare_data(50)
         mock_ak.stock_zh_a_hist.return_value = mock_data
 
-        with patch.dict('sys.modules', {'akshare': mock_ak}):
+        with patch.dict("sys.modules", {"akshare": mock_ak}):
             source = EastMoneyDataSource()
             source.ak = mock_ak
 
@@ -323,7 +347,7 @@ class TestEastMoneyDataSource:
             call_args = mock_ak.stock_zh_a_hist.call_args
             assert call_args[1]["symbol"] == "000001"
 
-    @patch('autowealth.core.data_fetcher.get_settings')
+    @patch("autowealth.core.data_fetcher.get_settings")
     def test_get_stock_data_empty_result(self, mock_get_settings):
         """验证空数据时抛出 ValueError"""
         mock_settings = MagicMock()
@@ -333,7 +357,7 @@ class TestEastMoneyDataSource:
         mock_ak = MagicMock()
         mock_ak.stock_zh_a_hist.return_value = pd.DataFrame()
 
-        with patch.dict('sys.modules', {'akshare': mock_ak}):
+        with patch.dict("sys.modules", {"akshare": mock_ak}):
             source = EastMoneyDataSource()
             source.ak = mock_ak
 
@@ -341,7 +365,7 @@ class TestEastMoneyDataSource:
                 source.get_stock_data("600519")
             assert "无法获取" in str(exc_info.value)
 
-    @patch('autowealth.core.data_fetcher.get_settings')
+    @patch("autowealth.core.data_fetcher.get_settings")
     def test_get_stock_info_success(self, mock_get_settings):
         """验证获取A股信息成功"""
         mock_settings = MagicMock()
@@ -351,7 +375,7 @@ class TestEastMoneyDataSource:
         mock_ak = MagicMock()
         mock_ak.stock_individual_info_em.return_value = make_mock_akshare_info()
 
-        with patch.dict('sys.modules', {'akshare': mock_ak}):
+        with patch.dict("sys.modules", {"akshare": mock_ak}):
             source = EastMoneyDataSource()
             source.ak = mock_ak
 
@@ -362,7 +386,7 @@ class TestEastMoneyDataSource:
             assert result["sector"] == "白酒"
             assert "market_cap" in result
 
-    @patch('autowealth.core.data_fetcher.get_settings')
+    @patch("autowealth.core.data_fetcher.get_settings")
     def test_get_stock_info_empty_result(self, mock_get_settings):
         """验证空信息时返回错误字典"""
         mock_settings = MagicMock()
@@ -372,7 +396,7 @@ class TestEastMoneyDataSource:
         mock_ak = MagicMock()
         mock_ak.stock_individual_info_em.return_value = pd.DataFrame()
 
-        with patch.dict('sys.modules', {'akshare': mock_ak}):
+        with patch.dict("sys.modules", {"akshare": mock_ak}):
             source = EastMoneyDataSource()
             source.ak = mock_ak
 
@@ -381,7 +405,7 @@ class TestEastMoneyDataSource:
             assert "error" in result
             assert result["symbol"] == "600519"
 
-    @patch('autowealth.core.data_fetcher.get_settings')
+    @patch("autowealth.core.data_fetcher.get_settings")
     def test_parse_period(self, mock_get_settings):
         """验证周期解析"""
         mock_settings = MagicMock()
@@ -390,7 +414,7 @@ class TestEastMoneyDataSource:
 
         mock_ak = MagicMock()
 
-        with patch.dict('sys.modules', {'akshare': mock_ak}):
+        with patch.dict("sys.modules", {"akshare": mock_ak}):
             source = EastMoneyDataSource()
 
             assert source._parse_period("1d").days == 1
@@ -404,22 +428,23 @@ class TestEastMoneyDataSource:
 # BinanceDataSource 测试
 # ============================================================
 
+
 class TestBinanceDataSource:
     """测试 BinanceDataSource 类"""
 
-    @patch('autowealth.core.data_fetcher.get_settings')
+    @patch("autowealth.core.data_fetcher.get_settings")
     def test_init_import_error(self, mock_get_settings):
         """验证 requests 未安装时抛出 ImportError"""
         mock_settings = MagicMock()
         mock_settings.data_cache_dir = "/tmp/test_cache"
         mock_get_settings.return_value = mock_settings
 
-        with patch.dict('sys.modules', {'requests': None}):
+        with patch.dict("sys.modules", {"requests": None}):
             with pytest.raises(ImportError) as exc_info:
                 BinanceDataSource()
             assert "requests" in str(exc_info.value)
 
-    @patch('autowealth.core.data_fetcher.get_settings')
+    @patch("autowealth.core.data_fetcher.get_settings")
     def test_get_crypto_data_success(self, mock_get_settings):
         """验证获取加密货币数据成功"""
         mock_settings = MagicMock()
@@ -433,7 +458,7 @@ class TestBinanceDataSource:
         mock_requests = MagicMock()
         mock_requests.get.return_value = mock_response
 
-        with patch.dict('sys.modules', {'requests': mock_requests}):
+        with patch.dict("sys.modules", {"requests": mock_requests}):
             source = BinanceDataSource()
             source.requests = mock_requests
 
@@ -451,7 +476,7 @@ class TestBinanceDataSource:
             assert pd.api.types.is_numeric_dtype(result["Open"])
             assert pd.api.types.is_numeric_dtype(result["Close"])
 
-    @patch('autowealth.core.data_fetcher.get_settings')
+    @patch("autowealth.core.data_fetcher.get_settings")
     def test_get_crypto_data_symbol_uppercase(self, mock_get_settings):
         """验证 symbol 自动转大写"""
         mock_settings = MagicMock()
@@ -465,7 +490,7 @@ class TestBinanceDataSource:
         mock_requests = MagicMock()
         mock_requests.get.return_value = mock_response
 
-        with patch.dict('sys.modules', {'requests': mock_requests}):
+        with patch.dict("sys.modules", {"requests": mock_requests}):
             source = BinanceDataSource()
             source.requests = mock_requests
 
@@ -474,7 +499,7 @@ class TestBinanceDataSource:
             call_args = mock_requests.get.call_args
             assert call_args[1]["params"]["symbol"] == "BTCUSDT"
 
-    @patch('autowealth.core.data_fetcher.get_settings')
+    @patch("autowealth.core.data_fetcher.get_settings")
     def test_get_crypto_data_empty_result(self, mock_get_settings):
         """验证空数据时抛出 ValueError"""
         mock_settings = MagicMock()
@@ -488,7 +513,7 @@ class TestBinanceDataSource:
         mock_requests = MagicMock()
         mock_requests.get.return_value = mock_response
 
-        with patch.dict('sys.modules', {'requests': mock_requests}):
+        with patch.dict("sys.modules", {"requests": mock_requests}):
             source = BinanceDataSource()
             source.requests = mock_requests
 
@@ -496,7 +521,7 @@ class TestBinanceDataSource:
                 source.get_crypto_data("BTCUSDT")
             assert "无法获取" in str(exc_info.value)
 
-    @patch('autowealth.core.data_fetcher.get_settings')
+    @patch("autowealth.core.data_fetcher.get_settings")
     def test_get_crypto_info_success(self, mock_get_settings):
         """验证获取加密货币信息成功"""
         mock_settings = MagicMock()
@@ -510,7 +535,7 @@ class TestBinanceDataSource:
         mock_requests = MagicMock()
         mock_requests.get.return_value = mock_response
 
-        with patch.dict('sys.modules', {'requests': mock_requests}):
+        with patch.dict("sys.modules", {"requests": mock_requests}):
             source = BinanceDataSource()
             source.requests = mock_requests
 
@@ -522,7 +547,7 @@ class TestBinanceDataSource:
             assert "last_price" in result
             assert "price_change_percent" in result
 
-    @patch('autowealth.core.data_fetcher.get_settings')
+    @patch("autowealth.core.data_fetcher.get_settings")
     def test_get_crypto_info_error(self, mock_get_settings):
         """验证获取信息失败时返回错误字典"""
         mock_settings = MagicMock()
@@ -532,7 +557,7 @@ class TestBinanceDataSource:
         mock_requests = MagicMock()
         mock_requests.get.side_effect = Exception("Network error")
 
-        with patch.dict('sys.modules', {'requests': mock_requests}):
+        with patch.dict("sys.modules", {"requests": mock_requests}):
             source = BinanceDataSource()
             source.requests = mock_requests
 
@@ -546,10 +571,11 @@ class TestBinanceDataSource:
 # DataFetcher 整合测试
 # ============================================================
 
+
 class TestDataFetcherIntegration:
     """测试 DataFetcher 整合功能"""
 
-    @patch('autowealth.core.data_fetcher.get_settings')
+    @patch("autowealth.core.data_fetcher.get_settings")
     def test_get_crypto_data_routing(self, mock_get_settings):
         """验证加密货币自动路由到币安"""
         mock_settings = MagicMock()
@@ -563,7 +589,7 @@ class TestDataFetcherIntegration:
         mock_requests = MagicMock()
         mock_requests.get.return_value = mock_response
 
-        with patch.dict('sys.modules', {'requests': mock_requests}):
+        with patch.dict("sys.modules", {"requests": mock_requests}):
             fetcher = DataFetcher(source="yfinance")
             fetcher._binance = BinanceDataSource()
             fetcher._binance.requests = mock_requests
@@ -573,7 +599,7 @@ class TestDataFetcherIntegration:
             assert isinstance(result, pd.DataFrame)
             assert len(result) == 50
 
-    @patch('autowealth.core.data_fetcher.get_settings')
+    @patch("autowealth.core.data_fetcher.get_settings")
     def test_get_stock_info_crypto_routing(self, mock_get_settings):
         """验证加密货币信息自动路由到币安"""
         mock_settings = MagicMock()
@@ -587,7 +613,7 @@ class TestDataFetcherIntegration:
         mock_requests = MagicMock()
         mock_requests.get.return_value = mock_response
 
-        with patch.dict('sys.modules', {'requests': mock_requests}):
+        with patch.dict("sys.modules", {"requests": mock_requests}):
             fetcher = DataFetcher(source="yfinance")
             fetcher._binance = BinanceDataSource()
             fetcher._binance.requests = mock_requests
@@ -597,7 +623,7 @@ class TestDataFetcherIntegration:
             assert result["sector"] == "Cryptocurrency"
             assert "last_price" in result
 
-    @patch('autowealth.core.data_fetcher.get_settings')
+    @patch("autowealth.core.data_fetcher.get_settings")
     def test_get_stock_data_eastmoney_source(self, mock_get_settings):
         """验证 eastmoney 数据源调用 akshare"""
         mock_settings = MagicMock()
@@ -608,7 +634,7 @@ class TestDataFetcherIntegration:
         mock_data = make_mock_akshare_data(50)
         mock_ak.stock_zh_a_hist.return_value = mock_data
 
-        with patch.dict('sys.modules', {'akshare': mock_ak}):
+        with patch.dict("sys.modules", {"akshare": mock_ak}):
             fetcher = DataFetcher(source="eastmoney")
             fetcher._eastmoney = EastMoneyDataSource()
             fetcher._eastmoney.ak = mock_ak
@@ -618,7 +644,7 @@ class TestDataFetcherIntegration:
             assert isinstance(result, pd.DataFrame)
             mock_ak.stock_zh_a_hist.assert_called_once()
 
-    @patch('autowealth.core.data_fetcher.get_settings')
+    @patch("autowealth.core.data_fetcher.get_settings")
     def test_get_crypto_data_method(self, mock_get_settings):
         """验证 get_crypto_data 方法直接调用币安"""
         mock_settings = MagicMock()
@@ -632,7 +658,7 @@ class TestDataFetcherIntegration:
         mock_requests = MagicMock()
         mock_requests.get.return_value = mock_response
 
-        with patch.dict('sys.modules', {'requests': mock_requests}):
+        with patch.dict("sys.modules", {"requests": mock_requests}):
             fetcher = DataFetcher()
             fetcher._binance = BinanceDataSource()
             fetcher._binance.requests = mock_requests
@@ -651,10 +677,11 @@ class TestDataFetcherIntegration:
 # 边界情况测试
 # ============================================================
 
+
 class TestEdgeCases:
     """测试边界情况"""
 
-    @patch('autowealth.core.data_fetcher.get_settings')
+    @patch("autowealth.core.data_fetcher.get_settings")
     def test_multiple_stocks_with_mixed_types(self, mock_get_settings):
         """验证批量获取混合类型（股票+加密货币）"""
         mock_settings = MagicMock()
@@ -671,7 +698,7 @@ class TestEdgeCases:
         mock_requests = MagicMock()
         mock_requests.get.return_value = mock_response
 
-        with patch.dict('sys.modules', {'akshare': mock_ak, 'requests': mock_requests}):
+        with patch.dict("sys.modules", {"akshare": mock_ak, "requests": mock_requests}):
             fetcher = DataFetcher(source="eastmoney")
             fetcher._eastmoney = EastMoneyDataSource()
             fetcher._eastmoney.ak = mock_ak

@@ -59,4 +59,3 @@ def rank_candidates(
         )
 
     return RankingResult(selected=selected, rejected_symbols=rejected, warnings=warnings)
-

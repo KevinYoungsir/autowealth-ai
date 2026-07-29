@@ -1,6 +1,7 @@
 """
 AutoWealth AI 命令行工具
 """
+
 import argparse
 import json
 import logging
@@ -80,7 +81,11 @@ def print_analysis_result(result: dict, use_json: bool = False):
 
     # 综合决策
     decision = result["decision"]
-    signal_emoji = "🟢" if decision["signal_type"] == "buy" else "🔴" if decision["signal_type"] == "sell" else "🟡"
+    signal_emoji = (
+        "🟢"
+        if decision["signal_type"] == "buy"
+        else "🔴" if decision["signal_type"] == "sell" else "🟡"
+    )
     print(f"\n{signal_emoji} 综合建议: {decision['signal_type'].upper()}")
     print(f"🎯 置信度: {decision['confidence']}%")
 
@@ -92,8 +97,12 @@ def print_analysis_result(result: dict, use_json: bool = False):
     # 各智能体信号
     print("\n🤖 各智能体分析结果:")
     for agent_name, signal in result.get("individual_signals", {}).items():
-        emoji = "🟢" if signal.signal_type == "buy" else "🔴" if signal.signal_type == "sell" else "🟡"
-        print(f"  {emoji} {agent_name}: {signal.signal_type.upper()} (置信度: {signal.confidence}%)")
+        emoji = (
+            "🟢" if signal.signal_type == "buy" else "🔴" if signal.signal_type == "sell" else "🟡"
+        )
+        print(
+            f"  {emoji} {agent_name}: {signal.signal_type.upper()} (置信度: {signal.confidence}%)"
+        )
 
     # 详细理由
     print(f"\n💡 决策理由:\n{decision['reasoning']}")
@@ -199,6 +208,7 @@ def main():
         logger.error(f"运行出错: {e}")
         if args.verbose:
             import traceback
+
             traceback.print_exc()
         sys.exit(1)
 

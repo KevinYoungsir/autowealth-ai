@@ -1,6 +1,7 @@
 """
 AutoWealth AI 主引擎 - 整合所有模块的统一接口
 """
+
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -96,11 +97,13 @@ class AutoWealthEngine:
 
             # 4. 添加详细分析数据
             if include_technical:
-                result["technical_analysis"] = self.technical_analyzer.full_analysis(historical_data).iloc[-10:].to_dict()
+                result["technical_analysis"] = (
+                    self.technical_analyzer.full_analysis(historical_data).iloc[-10:].to_dict()
+                )
 
             if include_fundamental and stock_info.get("symbol"):
-                result["fundamental_analysis"] = self.fundamental_analyzer.full_fundamental_analysis(
-                    stock_info, historical_data
+                result["fundamental_analysis"] = (
+                    self.fundamental_analyzer.full_fundamental_analysis(stock_info, historical_data)
                 )
 
             result["stock_info"] = stock_info
@@ -166,7 +169,7 @@ class AutoWealthEngine:
                 "buy_count": len(buy_signals),
                 "sell_count": len(sell_signals),
                 "hold_count": len(hold_signals),
-            }
+            },
         }
 
     def get_market_overview(self) -> Dict[str, Any]:
@@ -230,15 +233,17 @@ class AutoWealthEngine:
                     total_value += holding_value
                     total_gain_loss += gain_loss
 
-                    analysis_results.append({
-                        "symbol": symbol,
-                        "quantity": quantity,
-                        "current_price": current_price,
-                        "holding_value": holding_value,
-                        "cost_basis": cost_basis,
-                        "gain_loss": gain_loss,
-                        "decision": result.get("decision", {}),
-                    })
+                    analysis_results.append(
+                        {
+                            "symbol": symbol,
+                            "quantity": quantity,
+                            "current_price": current_price,
+                            "holding_value": holding_value,
+                            "cost_basis": cost_basis,
+                            "gain_loss": gain_loss,
+                            "decision": result.get("decision", {}),
+                        }
+                    )
 
             except Exception as e:
                 self.logger.error(f"分析持仓 {symbol} 失败: {e}")
@@ -247,7 +252,9 @@ class AutoWealthEngine:
             "holdings": analysis_results,
             "total_value": total_value,
             "total_gain_loss": total_gain_loss,
-            "return_pct": (total_gain_loss / (total_value - total_gain_loss) * 100) if total_value > 0 else 0,
+            "return_pct": (
+                (total_gain_loss / (total_value - total_gain_loss) * 100) if total_value > 0 else 0
+            ),
         }
 
 

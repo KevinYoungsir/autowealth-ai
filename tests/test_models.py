@@ -3,6 +3,7 @@ AutoWealth AI - 数据模型测试
 
 测试所有 Pydantic 数据模型的创建、验证和序列化。
 """
+
 import sys
 from pathlib import Path
 
@@ -27,10 +28,10 @@ from autowealth.models import (
     TimeHorizon,
 )
 
-
 # ============================================================
 # SignalType / TimeHorizon / RiskLevel 枚举测试
 # ============================================================
+
 
 class TestEnums:
     """测试枚举类型"""
@@ -59,6 +60,7 @@ class TestEnums:
 # ============================================================
 # StockInfo 测试
 # ============================================================
+
 
 class TestStockInfo:
     """测试 StockInfo 模型"""
@@ -98,6 +100,7 @@ class TestStockInfo:
 # ============================================================
 # AgentSignal 测试
 # ============================================================
+
 
 class TestAgentSignal:
     """测试 AgentSignal 模型"""
@@ -144,6 +147,7 @@ class TestAgentSignal:
 # FinalDecision 测试
 # ============================================================
 
+
 class TestFinalDecision:
     """测试 FinalDecision 模型"""
 
@@ -172,6 +176,7 @@ class TestFinalDecision:
 # AnalysisResult 测试
 # ============================================================
 
+
 class TestAnalysisResult:
     """测试 AnalysisResult 模型"""
 
@@ -190,7 +195,9 @@ class TestAnalysisResult:
             success=True,
             decision=decision,
             individual_signals={
-                "Technical": AgentSignal(agent_name="Technical", signal_type=SignalType.BUY, confidence=85)
+                "Technical": AgentSignal(
+                    agent_name="Technical", signal_type=SignalType.BUY, confidence=85
+                )
             },
         )
         assert result.decision.confidence == 80
@@ -200,6 +207,7 @@ class TestAnalysisResult:
 # ============================================================
 # BatchResult 测试
 # ============================================================
+
 
 class TestBatchResult:
     """测试 BatchResult 模型"""
@@ -224,6 +232,7 @@ class TestBatchResult:
 # ============================================================
 # Holding / PortfolioHolding / PortfolioResult 测试
 # ============================================================
+
 
 class TestPortfolioModels:
     """测试投资组合相关模型"""
@@ -257,7 +266,14 @@ class TestPortfolioModels:
         """验证 PortfolioResult 创建"""
         pr = PortfolioResult(
             holdings=[
-                PortfolioHolding(symbol="AAPL", quantity=100, current_price=160.0, holding_value=16000.0, cost_basis=150.0, gain_loss=1000.0),
+                PortfolioHolding(
+                    symbol="AAPL",
+                    quantity=100,
+                    current_price=160.0,
+                    holding_value=16000.0,
+                    cost_basis=150.0,
+                    gain_loss=1000.0,
+                ),
             ],
             total_value=16000.0,
             total_gain_loss=1000.0,
@@ -269,6 +285,7 @@ class TestPortfolioModels:
 # ============================================================
 # MarketIndex / MarketOverview 测试
 # ============================================================
+
 
 class TestMarketModels:
     """测试市场相关模型"""
@@ -301,6 +318,7 @@ class TestMarketModels:
 # ============================================================
 # 模型序列化测试
 # ============================================================
+
 
 class TestModelSerialization:
     """测试模型序列化和反序列化"""
@@ -339,6 +357,7 @@ class TestModelSerialization:
 # ============================================================
 # 边界情况测试
 # ============================================================
+
 
 class TestModelEdgeCases:
     """测试模型边界情况"""

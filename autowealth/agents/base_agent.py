@@ -1,6 +1,7 @@
 """
 基础智能体类 - 所有投资智能体的基类
 """
+
 import logging
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
@@ -12,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 class AgentSignal(BaseModel):
     """智能体信号"""
+
     agent_name: str
     signal_type: str  # buy, sell, hold, watch
     confidence: float  # 0-100
@@ -52,7 +54,9 @@ class BaseAgent(ABC):
                 return False
         return True
 
-    def calculate_confidence(self, factors: List[float], weights: Optional[List[float]] = None) -> float:
+    def calculate_confidence(
+        self, factors: List[float], weights: Optional[List[float]] = None
+    ) -> float:
         """计算加权置信度"""
         if not factors:
             return 50.0

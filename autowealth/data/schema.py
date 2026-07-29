@@ -8,7 +8,6 @@ from typing import Mapping
 
 import pandas as pd
 
-
 MARKET_DATA_COLUMNS = [
     "date",
     "open",
@@ -97,4 +96,3 @@ def akshare_adjust(value: str) -> str:
     """
     normalized = normalize_adjust(value)
     return "" if normalized == "none" else normalized
-

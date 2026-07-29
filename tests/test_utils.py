@@ -3,6 +3,7 @@ AutoWealth AI - 工具函数测试
 
 测试所有工具函数的正确性和边界情况。
 """
+
 import sys
 from pathlib import Path
 
@@ -19,10 +20,10 @@ from autowealth.utils import (
     validate_symbol,
 )
 
-
 # ============================================================
 # format_number 测试
 # ============================================================
+
 
 class TestFormatNumber:
     """测试 format_number 函数"""
@@ -67,6 +68,7 @@ class TestFormatNumber:
 # format_price 测试
 # ============================================================
 
+
 class TestFormatPrice:
     """测试 format_price 函数"""
 
@@ -91,6 +93,7 @@ class TestFormatPrice:
 # format_pct 测试
 # ============================================================
 
+
 class TestFormatPct:
     """测试 format_pct 函数"""
 
@@ -114,6 +117,7 @@ class TestFormatPct:
 # ============================================================
 # safe_divide 测试
 # ============================================================
+
 
 class TestSafeDivide:
     """测试 safe_divide 函数"""
@@ -147,6 +151,7 @@ class TestSafeDivide:
 # validate_symbol 测试
 # ============================================================
 
+
 class TestValidateSymbol:
     """测试 validate_symbol 函数"""
 
@@ -174,6 +179,7 @@ class TestValidateSymbol:
 # timestamp_now 测试
 # ============================================================
 
+
 class TestTimestampNow:
     """测试 timestamp_now 函数"""
 
@@ -197,18 +203,21 @@ class TestTimestampNow:
 # setup_logging 测试
 # ============================================================
 
+
 class TestSetupLogging:
     """测试 setup_logging 函数"""
 
     def test_setup_logging_returns_logger(self):
         """验证返回 Logger 对象"""
         import logging
+
         logger = __import__("autowealth.utils", fromlist=["setup_logging"]).setup_logging()
         assert isinstance(logger, logging.Logger)
 
     def test_setup_logging_level(self):
         """验证日志级别设置 - 由于 basicConfig 只能配置一次，验证 logger 被创建"""
         import logging
+
         logger = __import__("autowealth.utils", fromlist=["setup_logging"]).setup_logging("DEBUG")
         # basicConfig 只能生效一次，验证 logger 对象存在即可
         assert logger is not None

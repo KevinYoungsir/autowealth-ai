@@ -1,6 +1,7 @@
 """
 情绪分析智能体 - 基于市场情绪生成交易信号
 """
+
 from typing import Any, Dict
 
 import pandas as pd
@@ -17,10 +18,7 @@ class SentimentAgent(BaseAgent):
     """
 
     def __init__(self):
-        super().__init__(
-            name="SentimentAnalyst",
-            description="基于市场情绪和技术动量生成交易信号"
-        )
+        super().__init__(name="SentimentAnalyst", description="基于市场情绪和技术动量生成交易信号")
 
     def analyze(self, symbol: str, data: Dict[str, Any]) -> AgentSignal:
         """
@@ -38,7 +36,7 @@ class SentimentAgent(BaseAgent):
                 agent_name=self.name,
                 signal_type="hold",
                 confidence=0,
-                reasoning="缺少历史数据，无法分析市场情绪"
+                reasoning="缺少历史数据，无法分析市场情绪",
             )
 
         df = data["historical_data"]
@@ -47,7 +45,7 @@ class SentimentAgent(BaseAgent):
                 agent_name=self.name,
                 signal_type="hold",
                 confidence=30,
-                reasoning="历史数据不足，无法判断市场情绪"
+                reasoning="历史数据不足，无法判断市场情绪",
             )
 
         # 计算情绪指标
@@ -98,7 +96,7 @@ class SentimentAgent(BaseAgent):
                 "momentum": round(momentum, 2),
                 "volume_trend": volume_trend,
                 "volatility_state": volatility_state,
-            }
+            },
         )
 
     def _calculate_sentiment_indicators(self, df: pd.DataFrame) -> Dict:
@@ -148,9 +146,7 @@ class SentimentAgent(BaseAgent):
         else:
             volatility_score = 50
 
-        overall_sentiment = (
-            momentum_score * 0.4 + volume_score * 0.3 + volatility_score * 0.3
-        )
+        overall_sentiment = momentum_score * 0.4 + volume_score * 0.3 + volatility_score * 0.3
 
         return {
             "momentum": momentum,

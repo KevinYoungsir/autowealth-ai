@@ -3,6 +3,7 @@ FastAPI 端点测试
 使用 TestClient 进行单元测试，无需启动真实服务器。
 部分测试使用 unittest.mock 来避免外部网络依赖（yfinance 速率限制）。
 """
+
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -40,13 +41,16 @@ def _mock_stock_data(n: int = 100, seed: int = 42) -> pd.DataFrame:
 
     prices = 100 + np.cumsum(np.random.randn(n) * 0.5)
     prices = np.abs(prices) + 1.0  # 确保价格始终为正
-    return pd.DataFrame({
-        "Open": prices * 0.99,
-        "High": prices * 1.02,
-        "Low": prices * 0.98,
-        "Close": prices,
-        "Volume": np.random.randint(1_000_000, 10_000_000, n),
-    }, index=_MOCK_DATES[:n])
+    return pd.DataFrame(
+        {
+            "Open": prices * 0.99,
+            "High": prices * 1.02,
+            "Low": prices * 0.98,
+            "Close": prices,
+            "Volume": np.random.randint(1_000_000, 10_000_000, n),
+        },
+        index=_MOCK_DATES[:n],
+    )
 
 
 def _mock_stock_info() -> dict:
@@ -73,6 +77,7 @@ def _mock_stock_info() -> dict:
 # ---------------------------------------------------------------------------
 # 测试类
 # ---------------------------------------------------------------------------
+
 
 class TestHealthEndpoint:
     """测试健康检查端点"""

@@ -111,4 +111,3 @@ def mock_portfolio_constraints() -> PortfolioConstraints:
         cash_weight_max=0.4,
         min_score=60,
     )
-

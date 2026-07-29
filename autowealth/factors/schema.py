@@ -122,5 +122,6 @@ def missing_warnings(raw_values: Mapping[str, Optional[float]]) -> List[str]:
     """
     Build warnings for missing factor inputs.
     """
-    return [f"missing {name}; score degraded" for name, value in raw_values.items() if value is None]
-
+    return [
+        f"missing {name}; score degraded" for name, value in raw_values.items() if value is None
+    ]

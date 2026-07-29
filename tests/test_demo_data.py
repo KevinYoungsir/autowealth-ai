@@ -160,8 +160,16 @@ class TestGeneratePortfolio:
     def test_portfolio_holding_fields(self, generator):
         """测试每个持仓包含必要字段"""
         portfolio = generator.generate_portfolio()
-        required_fields = {"symbol", "name", "quantity", "cost_basis", "current_price",
-                           "market_value", "gain_loss", "return_pct"}
+        required_fields = {
+            "symbol",
+            "name",
+            "quantity",
+            "cost_basis",
+            "current_price",
+            "market_value",
+            "gain_loss",
+            "return_pct",
+        }
         for holding in portfolio["holdings"]:
             assert required_fields.issubset(set(holding.keys()))
 

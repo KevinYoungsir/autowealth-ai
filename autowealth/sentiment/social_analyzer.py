@@ -147,14 +147,10 @@ class SocialSentimentAnalyzer:
         Returns:
             dict: 包含平台、子版块、关键词、总数、正面/负面/中性数量、情绪分数和关键词的字典。
         """
-        logger.info(
-            f"分析 Reddit 情绪: subreddit={subreddit}, keyword={keyword}, count={count}"
-        )
+        logger.info(f"分析 Reddit 情绪: subreddit={subreddit}, keyword={keyword}, count={count}")
 
         # Mock 模式：生成模拟 Reddit 数据
-        mock_posts = self._generate_mock_tweets(
-            keyword or subreddit, count, platform="reddit"
-        )
+        mock_posts = self._generate_mock_tweets(keyword or subreddit, count, platform="reddit")
 
         positive = 0
         negative = 0
@@ -232,16 +228,18 @@ class SocialSentimentAnalyzer:
             total_neutral += result.get("neutral", 0)
             total_posts += result.get("total", 0)
 
-            platform_details.append({
-                "platform": platform,
-                "symbol": result.get("symbol", ""),
-                "score": score,
-                "positive": result.get("positive", 0),
-                "negative": result.get("negative", 0),
-                "neutral": result.get("neutral", 0),
-                "total": result.get("total", 0),
-                "weight": weight,
-            })
+            platform_details.append(
+                {
+                    "platform": platform,
+                    "symbol": result.get("symbol", ""),
+                    "score": score,
+                    "positive": result.get("positive", 0),
+                    "negative": result.get("negative", 0),
+                    "neutral": result.get("neutral", 0),
+                    "total": result.get("total", 0),
+                    "weight": weight,
+                }
+            )
 
         if total_weight > 0:
             combined_score = weighted_score / total_weight
@@ -259,8 +257,7 @@ class SocialSentimentAnalyzer:
             keyword_counter[kw["word"]] += kw["count"]
 
         combined_keywords = [
-            {"word": word, "count": count}
-            for word, count in keyword_counter.most_common(10)
+            {"word": word, "count": count} for word, count in keyword_counter.most_common(10)
         ]
 
         # 判断综合情绪标签
@@ -398,10 +395,7 @@ class SocialSentimentAnalyzer:
                     if word_lower not in self._stop_words_en and len(word_lower) > 1:
                         word_counter[word_lower] += 1
 
-        return [
-            {"word": word, "count": count}
-            for word, count in word_counter.most_common(top_n)
-        ]
+        return [{"word": word, "count": count} for word, count in word_counter.most_common(top_n)]
 
     def _calculate_sentiment_score(self, positive, negative, neutral):
         """
@@ -512,10 +506,12 @@ class SocialSentimentAnalyzer:
         mock_posts = []
         for i in range(count):
             text = random.choice(templates)
-            mock_posts.append({
-                "text": text,
-                "author": f"mock_user_{i}",
-                "timestamp": f"2025-01-{(i % 28) + 1:02d}T{(i % 24):02d}:00:00Z",
-            })
+            mock_posts.append(
+                {
+                    "text": text,
+                    "author": f"mock_user_{i}",
+                    "timestamp": f"2025-01-{(i % 28) + 1:02d}T{(i % 24):02d}:00:00Z",
+                }
+            )
 
         return mock_posts

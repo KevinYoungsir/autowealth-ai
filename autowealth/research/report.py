@@ -6,7 +6,11 @@ from __future__ import annotations
 
 from typing import Dict
 
-from autowealth.research.schema import RESEARCH_ONLY_EXPLANATION, ResearchPipelineResult, ResearchSummary
+from autowealth.research.schema import (
+    RESEARCH_ONLY_EXPLANATION,
+    ResearchPipelineResult,
+    ResearchSummary,
+)
 
 
 def summarize_research_result(result: ResearchPipelineResult) -> ResearchSummary:
@@ -58,4 +62,3 @@ def _factor_distribution(factor_summary: Dict[str, object]) -> Dict[str, object]
     else:
         distribution["score_buckets"] = {"gte_80": 0, "60_to_80": 0, "lt_60": 0}
     return distribution
-
