@@ -3,11 +3,12 @@
 ## 1. 环境要求
 
 - Python 3.9 或更高版本。
-- Node.js 18.17 或更高版本。
+- Node.js 20.9.0 或更高版本；推荐本地使用 Node.js 20 LTS，CI 当前使用 Node.js 20。
 - npm。
 - Windows PowerShell 5.1 或 PowerShell 7。
 
 当前研究 API 和看板使用本地 mock 数据，不需要真实 DeepSeek Key，不连接券商或交易接口。
+本次依赖升级不修改 CI workflow 或 Vercel 配置；Vercel Preview 必须确认实际 Node.js 版本不低于 20.9.0。
 
 ## 2. 安装 Python 依赖
 
