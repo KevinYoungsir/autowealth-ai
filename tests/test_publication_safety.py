@@ -95,9 +95,14 @@ def test_release_workflow_has_minimal_permissions() -> None:
 def test_release_workflow_enforces_main_head_and_clean_dist() -> None:
     text = _read(WORKFLOW_ROOT / "release.yml")
 
-    assert 'git rev-parse "$TAG^{commit}"' in text
+    assert 'VERIFIED_TAG_REF="refs/release-tags/$TAG"' in text
+    assert "refs/tags/$TAG:$VERIFIED_TAG_REF" in text
+    assert 'git cat-file -t "$VERIFIED_TAG_REF"' in text
+    assert 'git rev-parse "$VERIFIED_TAG_REF^{commit}"' in text
     assert 'git rev-parse "refs/remotes/origin/main^{commit}"' in text
     assert '[[ "$TAG_COMMIT" != "$MAIN_COMMIT" ]]' in text
+    assert 'git cat-file -t "$TAG"' not in text
+    assert 'git rev-parse "$TAG^{commit}"' not in text
     assert "rm -rf dist" in text
     assert "mkdir -p dist" in text
     assert text.index("rm -rf dist") < text.index("python -m build --outdir dist")

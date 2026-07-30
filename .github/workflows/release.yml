@@ -40,13 +40,15 @@ jobs:
           python scripts/verify_release_metadata.py \
             --expected-version "$VERSION" \
             --tag "$TAG"
-          if [[ "$(git cat-file -t "$TAG")" != "tag" ]]; then
-            echo "Release tag must be an annotated tag." >&2
+          VERIFIED_TAG_REF="refs/release-tags/$TAG"
+          git fetch --no-tags origin \
+            "+refs/tags/$TAG:$VERIFIED_TAG_REF" \
+            "+refs/heads/main:refs/remotes/origin/main"
+          if [[ "$(git cat-file -t "$VERIFIED_TAG_REF")" != "tag" ]]; then
+            echo "Remote release tag must be an annotated tag." >&2
             exit 1
           fi
-          git fetch --no-tags origin \
-            +refs/heads/main:refs/remotes/origin/main
-          TAG_COMMIT="$(git rev-parse "$TAG^{commit}")"
+          TAG_COMMIT="$(git rev-parse "$VERIFIED_TAG_REF^{commit}")"
           MAIN_COMMIT="$(git rev-parse "refs/remotes/origin/main^{commit}")"
           if [[ "$TAG_COMMIT" != "$MAIN_COMMIT" ]]; then
             echo "Tag commit $TAG_COMMIT does not equal origin/main HEAD $MAIN_COMMIT." >&2
