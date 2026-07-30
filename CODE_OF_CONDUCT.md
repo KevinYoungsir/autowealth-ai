@@ -63,7 +63,7 @@ Examples of representing a project or community include using an official projec
 If you are subject to or witness harassment, or have any other concerns, please contact the project team at:
 
 - **Email**: `autowealth.security@gmail.com`
-- **GitHub Issues**: [提交报告](https://github.com/Jsoned/autowealth-ai/issues)
+- **GitHub Issues**: [提交报告](https://github.com/KevinYoungsir/autowealth-ai/issues)
 
 项目维护者将审查并调查所有投诉，并做出他们认为必要的回应。项目维护者有义务对事件报告者保密。
 

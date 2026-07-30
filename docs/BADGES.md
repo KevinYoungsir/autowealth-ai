@@ -35,7 +35,7 @@
 
 ```markdown
 <!-- GitHub Actions -->
-[![CI](https://github.com/yourusername/autowealth-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/yourusername/autowealth-ai/actions/workflows/ci.yml)
+[![CI](https://github.com/KevinYoungsir/autowealth-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/KevinYoungsir/autowealth-ai/actions/workflows/ci.yml)
 
 <!-- 构建状态 -->
 [![Build Status](https://img.shields.io/badge/Build-Passing-brightgreen.svg)]()
@@ -48,13 +48,13 @@
 
 ```markdown
 <!-- 最后提交 -->
-[![Last Commit](https://img.shields.io/github/last-commit/yourusername/autowealth-ai)](https://github.com/yourusername/autowealth-ai)
+[![Last Commit](https://img.shields.io/github/last-commit/KevinYoungsir/autowealth-ai)](https://github.com/KevinYoungsir/autowealth-ai)
 
 <!-- 问题数 -->
-[![Issues](https://img.shields.io/github/issues/yourusername/autowealth-ai)](https://github.com/yourusername/autowealth-ai/issues)
+[![Issues](https://img.shields.io/github/issues/KevinYoungsir/autowealth-ai)](https://github.com/KevinYoungsir/autowealth-ai/issues)
 
 <!-- Pull Requests -->
-[![PRs Welcome](https://img.shields.io/badge/PRs-Welcome-brightgreen.svg)](https://github.com/yourusername/autowealth-ai/pulls)
+[![PRs Welcome](https://img.shields.io/badge/PRs-Welcome-brightgreen.svg)](https://github.com/KevinYoungsir/autowealth-ai/pulls)
 ```
 
 ## 技术栈
@@ -72,13 +72,13 @@
 
 ```markdown
 <!-- Stars -->
-[![GitHub Stars](https://img.shields.io/github/stars/yourusername/autowealth-ai?style=social)](https://github.com/yourusername/autowealth-ai)
+[![GitHub Stars](https://img.shields.io/github/stars/KevinYoungsir/autowealth-ai?style=social)](https://github.com/KevinYoungsir/autowealth-ai)
 
 <!-- Forks -->
-[![GitHub Forks](https://img.shields.io/github/forks/yourusername/autowealth-ai?style=social)](https://github.com/yourusername/autowealth-ai/network/members)
+[![GitHub Forks](https://img.shields.io/github/forks/KevinYoungsir/autowealth-ai?style=social)](https://github.com/KevinYoungsir/autowealth-ai/network/members)
 
 <!-- 贡献者 -->
-[![Contributors](https://img.shields.io/github/contributors/yourusername/autowealth-ai)](https://github.com/yourusername/autowealth-ai/graphs/contributors)
+[![Contributors](https://img.shields.io/github/contributors/KevinYoungsir/autowealth-ai)](https://github.com/KevinYoungsir/autowealth-ai/graphs/contributors)
 ```
 
 ## 完整示例（可直接复制到 README）
@@ -88,17 +88,17 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
-[![CI](https://github.com/yourusername/autowealth-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/yourusername/autowealth-ai/actions/workflows/ci.yml)
+[![CI](https://github.com/KevinYoungsir/autowealth-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/KevinYoungsir/autowealth-ai/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/badge/Coverage-85%25-success.svg)]()
-[![PRs Welcome](https://img.shields.io/badge/PRs-Welcome-brightgreen.svg)](https://github.com/yourusername/autowealth-ai/pulls)
-[![GitHub Stars](https://img.shields.io/github/stars/yourusername/autowealth-ai?style=social)](https://github.com/yourusername/autowealth-ai)
+[![PRs Welcome](https://img.shields.io/badge/PRs-Welcome-brightgreen.svg)](https://github.com/KevinYoungsir/autowealth-ai/pulls)
+[![GitHub Stars](https://img.shields.io/github/stars/KevinYoungsir/autowealth-ai?style=social)](https://github.com/KevinYoungsir/autowealth-ai)
 
 > AI 驱动的智能投资分析平台
 ```
 
 ## 注意事项
 
-1. 将 `yourusername` 替换为实际的 GitHub 用户名或组织名
+1. 仓库徽章固定指向 `KevinYoungsir/autowealth-ai`
 2. 版本号、覆盖率等数值需要根据实际情况更新
 3. CI 徽章需要项目配置 GitHub Actions 后才会生效
 4. 社交类徽章（Stars、Forks）在项目发布后自动更新

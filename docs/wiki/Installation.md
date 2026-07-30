@@ -11,7 +11,7 @@
 ### 1. 克隆仓库
 
 ```bash
-git clone https://github.com/Jsoned/autowealth-ai.git
+git clone https://github.com/KevinYoungsir/autowealth-ai.git
 cd autowealth-ai
 ```
 

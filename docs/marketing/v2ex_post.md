@@ -8,7 +8,7 @@
 
 这就是 **AutoWealth AI** 的由来。
 
-GitHub: https://github.com/Jsoned/autowealth-ai
+GitHub: https://github.com/KevinYoungsir/autowealth-ai
 
 ## 它是什么
 
@@ -109,6 +109,6 @@ uvicorn autowealth.api.server:create_app --factory --reload
 
 如果觉得有意思，欢迎 Star、Fork、提 Issue。也欢迎 PR，特别是新的技术指标、数据源或者策略方面。
 
-GitHub: https://github.com/Jsoned/autowealth-ai
+GitHub: https://github.com/KevinYoungsir/autowealth-ai
 
 免责声明：本项目仅供教育和研究目的，不构成任何投资建议。

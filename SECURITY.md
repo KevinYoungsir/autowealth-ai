@@ -10,7 +10,7 @@
 
 | 版本 | 支持状态 |
 |------|---------|
-| [main 分支](https://github.com/Jsoned/autowealth-ai/tree/main) | 积极维护，接收安全更新 |
+| [main 分支](https://github.com/KevinYoungsir/autowealth-ai/tree/main) | 积极维护，接收安全更新 |
 | v0.4.x | 安全更新（仅关键修复） |
 | v0.3.x | 安全更新（仅关键修复） |
 | < v0.3.0 | 不再维护 |
@@ -46,7 +46,7 @@
 ### 联系方式 | Contact
 
 - **Email**: `autowealth.security@gmail.com`
-- **GitHub Security** (推荐): 使用 [GitHub Security Advisories](https://github.com/Jsoned/autowealth-ai/security/advisories/new) 提交报告
+- **GitHub Security** (推荐): 使用 [GitHub Security Advisories](https://github.com/KevinYoungsir/autowealth-ai/security/advisories/new) 提交报告
 
 ---
 
@@ -86,8 +86,8 @@ api_key = "sk-xxx"  # 不要硬编码在代码中
 
 Security updates will be notified through the following channels:
 
-- [GitHub Security Advisories](https://github.com/Jsoned/autowealth-ai/security/advisories)
-- [GitHub Releases](https://github.com/Jsoned/autowealth-ai/releases)
+- [GitHub Security Advisories](https://github.com/KevinYoungsir/autowealth-ai/security/advisories)
+- [GitHub Releases](https://github.com/KevinYoungsir/autowealth-ai/releases)
 
 建议 Watch 本仓库以获取最新的安全更新通知。
 

@@ -6,7 +6,7 @@
 
 ### 报告问题
 
-如果您发现了bug或有功能建议，请通过 [GitHub Issues](https://github.com/Jsoned/autowealth-ai/issues) 提交。
+如果您发现了bug或有功能建议，请通过 [GitHub Issues](https://github.com/KevinYoungsir/autowealth-ai/issues) 提交。
 
 提交问题时，请包含：
 - 问题的详细描述
@@ -19,7 +19,7 @@
 
 1. **Fork 仓库**
    ```bash
-   git clone https://github.com/Jsoned/autowealth-ai.git
+   git clone https://github.com/KevinYoungsir/autowealth-ai.git
    cd autowealth-ai
    ```
 
@@ -52,7 +52,7 @@
    git push origin feature/your-feature-name
    ```
 
-7. **创建 Pull Request**
+7. **创建 [Pull Request](https://github.com/KevinYoungsir/autowealth-ai/pulls)**
    - 描述您的更改
    - 关联相关 Issue
    - 等待审核
@@ -103,7 +103,7 @@ feat: 添加RSI指标分析功能
 
 ## 📞 联系我们
 
-- GitHub Issues: [提交问题](https://github.com/Jsoned/autowealth-ai/issues)
-- Discussions: [参与讨论](https://github.com/Jsoned/autowealth-ai/discussions)
+- GitHub Issues: [提交问题](https://github.com/KevinYoungsir/autowealth-ai/issues)
+- Discussions: [参与讨论](https://github.com/KevinYoungsir/autowealth-ai/discussions)
 
 再次感谢您的贡献！🙏
