@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
 import json
 import re
 import sys
+import tarfile
 import tomllib
+import zipfile
 from dataclasses import dataclass
 from datetime import date
+from email import policy
+from email.parser import BytesParser
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -17,6 +22,8 @@ SEMVER_TEXT = r"(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)"
 SEMVER_RE = re.compile(rf"^{SEMVER_TEXT}$")
 TAG_RE = re.compile(rf"^v(?P<version>{SEMVER_TEXT})$")
 PACKAGE_NAME = "autowealth-ai"
+CHECKSUM_FILENAME = "SHA256SUMS.txt"
+MAX_PACKAGE_METADATA_BYTES = 1024 * 1024
 
 
 class ReleaseMetadataError(ValueError):
@@ -131,36 +138,146 @@ def _artifact_identity(path: Path) -> tuple[str, str] | None:
     return None
 
 
+def _read_package_metadata(path: Path) -> tuple[str, str]:
+    try:
+        if path.name.endswith(".whl"):
+            with zipfile.ZipFile(path) as archive:
+                candidates = [
+                    info
+                    for info in archive.infolist()
+                    if not info.is_dir() and info.filename.endswith(".dist-info/METADATA")
+                ]
+                if len(candidates) != 1:
+                    raise ReleaseMetadataError(
+                        f"{path.name} must contain exactly one .dist-info/METADATA"
+                    )
+                info = candidates[0]
+                if info.file_size > MAX_PACKAGE_METADATA_BYTES:
+                    raise ReleaseMetadataError(f"{path.name} package metadata is too large")
+                payload = archive.read(info)
+        else:
+            with tarfile.open(path, mode="r:gz") as archive:
+                candidates = [
+                    member
+                    for member in archive.getmembers()
+                    if member.isfile()
+                    and member.name.count("/") == 1
+                    and member.name.endswith("/PKG-INFO")
+                ]
+                if len(candidates) != 1:
+                    raise ReleaseMetadataError(f"{path.name} must contain exactly one PKG-INFO")
+                member = candidates[0]
+                if member.size > MAX_PACKAGE_METADATA_BYTES:
+                    raise ReleaseMetadataError(f"{path.name} package metadata is too large")
+                extracted = archive.extractfile(member)
+                if extracted is None:
+                    raise ReleaseMetadataError(f"{path.name} PKG-INFO is unreadable")
+                payload = extracted.read(MAX_PACKAGE_METADATA_BYTES + 1)
+                if len(payload) > MAX_PACKAGE_METADATA_BYTES:
+                    raise ReleaseMetadataError(f"{path.name} package metadata is too large")
+    except (OSError, tarfile.TarError, zipfile.BadZipFile) as exc:
+        raise ReleaseMetadataError(f"unable to read package metadata from {path.name}") from exc
+
+    message = BytesParser(policy=policy.compat32).parsebytes(payload, headersonly=True)
+    names = message.get_all("Name", [])
+    versions = message.get_all("Version", [])
+    if len(names) != 1 or len(versions) != 1:
+        raise ReleaseMetadataError(
+            f"{path.name} metadata must contain exactly one Name and Version"
+        )
+    return str(names[0]), str(versions[0])
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _validate_checksums(checksum_path: Path, artifacts: Sequence[Path]) -> None:
+    try:
+        lines = checksum_path.read_text(encoding="ascii").splitlines()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ReleaseMetadataError(f"{CHECKSUM_FILENAME} is unreadable") from exc
+
+    expected_names = sorted(path.name for path in artifacts)
+    if len(lines) != len(expected_names):
+        raise ReleaseMetadataError(
+            f"{CHECKSUM_FILENAME} must contain exactly {len(expected_names)} entries"
+        )
+
+    for line, expected_name in zip(lines, expected_names):
+        match = re.fullmatch(r"(?P<digest>[0-9a-f]{64})  (?P<name>[^/\\]+)", line)
+        if match is None or match.group("name") != expected_name:
+            raise ReleaseMetadataError(
+                f"{CHECKSUM_FILENAME} must list package files in deterministic order"
+            )
+        artifact = checksum_path.parent / expected_name
+        if match.group("digest") != _sha256(artifact):
+            raise ReleaseMetadataError(f"{CHECKSUM_FILENAME} digest does not match {expected_name}")
+
+
 def _validate_dist(dist_dir: Path, version: str) -> tuple[str, ...]:
     if not dist_dir.is_dir():
         raise ReleaseMetadataError(f"dist directory does not exist: {dist_dir}")
-    wheel_count = 0
-    sdist_count = 0
-    artifacts: list[str] = []
+    wheel_paths: list[Path] = []
+    sdist_paths: list[Path] = []
+    checksum_path: Path | None = None
     errors: list[str] = []
+
     for path in sorted(dist_dir.iterdir(), key=lambda item: item.name):
         if not path.is_file():
+            errors.append(f"unexpected dist entry: {path.name}")
+            continue
+        if path.name == CHECKSUM_FILENAME:
+            checksum_path = path
             continue
         identity = _artifact_identity(path)
         if identity is None:
+            errors.append(f"unexpected dist file: {path.name}")
             continue
         distribution, artifact_version = identity
-        artifacts.append(path.name)
-        wheel_count += int(path.name.endswith(".whl"))
-        sdist_count += int(path.name.endswith(".tar.gz"))
+        if path.name.endswith(".whl"):
+            wheel_paths.append(path)
+        else:
+            sdist_paths.append(path)
         if _normalized_distribution_name(distribution) != PACKAGE_NAME:
             errors.append(f"unexpected distribution name in {path.name}")
         if artifact_version != version:
             errors.append(
                 f"artifact {path.name} has version {artifact_version}, expected {version}"
             )
-    if wheel_count == 0:
-        errors.append("dist directory must contain a wheel")
-    if sdist_count == 0:
-        errors.append("dist directory must contain an sdist")
+
+    if len(wheel_paths) != 1:
+        errors.append(f"dist directory must contain exactly one wheel; found {len(wheel_paths)}")
+    if len(sdist_paths) != 1:
+        errors.append(f"dist directory must contain exactly one sdist; found {len(sdist_paths)}")
+
+    artifacts = sorted([*wheel_paths, *sdist_paths], key=lambda item: item.name)
+    for path in artifacts:
+        try:
+            metadata_name, metadata_version = _read_package_metadata(path)
+        except ReleaseMetadataError as exc:
+            errors.append(str(exc))
+            continue
+        if _normalized_distribution_name(metadata_name) != PACKAGE_NAME:
+            errors.append(f"{path.name} metadata has unexpected Name {metadata_name!r}")
+        if metadata_version != version:
+            errors.append(
+                f"{path.name} metadata has version {metadata_version}, expected {version}"
+            )
+
+    if checksum_path is not None and len(artifacts) == 2:
+        try:
+            _validate_checksums(checksum_path, artifacts)
+        except ReleaseMetadataError as exc:
+            errors.append(str(exc))
+
     if errors:
         raise ReleaseMetadataError("; ".join(errors))
-    return tuple(artifacts)
+    return tuple(path.name for path in artifacts)
 
 
 def verify_release_metadata(

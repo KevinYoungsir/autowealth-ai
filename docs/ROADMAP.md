@@ -29,7 +29,7 @@ v0.1.0 ── v0.2.0 ── v0.3.0 ── v0.4.0 ── v1.0.0 ── v2.0.0 ─
 
 - [ ] 代码覆盖率提升至 80%+
 - [ ] 完善所有模块的类型注解（mypy 通过）
-- [ ] 发布 PyPI 包 `pip install autowealth-ai`
+- [ ] 在完成独立安全审查后评估 PyPI 发布
 - [ ] 完善中英文文档
 - [ ] Docker 镜像发布
 - [ ] CI/CD 流水线完善（自动测试、自动发布）
@@ -184,7 +184,7 @@ v0.1.0 ── v0.2.0 ── v0.3.0 ── v0.4.0 ── v1.0.0 ── v2.0.0 ─
 If you'd like to contribute to a feature, please:
 
 1. 在对应的 GitHub Issue 中留言表达兴趣
-2. 在 [Discussions](https://github.com/Jsoned/autowealth-ai/discussions) 中讨论实现方案
+2. 在 [Discussions](https://github.com/KevinYoungsir/autowealth-ai/discussions) 中讨论实现方案
 3. 提交 Pull Request
 
 标记为 `help wanted` 的 Issue 欢迎社区贡献。

@@ -133,7 +133,7 @@ uvicorn autowealth.api.server:create_app --factory --reload
 - Strategy ideas for the backtesting engine
 - Architecture improvements for the agent system
 
-GitHub: https://github.com/Jsoned/autowealth-ai
+GitHub: https://github.com/KevinYoungsir/autowealth-ai
 
 ---
 

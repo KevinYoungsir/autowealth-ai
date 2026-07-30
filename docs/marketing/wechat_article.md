@@ -105,7 +105,7 @@ AutoWealth AI 是一个基于**多智能体协作**的开源投资分析引擎�
 ### 安装
 
 ```bash
-git clone https://github.com/Jsoned/autowealth-ai.git
+git clone https://github.com/KevinYoungsir/autowealth-ai.git
 cd autowealth-ai
 pip install -e .
 ```
@@ -169,7 +169,7 @@ docker-compose up -d
 
 ## 项目信息
 
-- **GitHub**: https://github.com/Jsoned/autowealth-ai
+- **GitHub**: https://github.com/KevinYoungsir/autowealth-ai
 - **协议**: MIT（完全开源，自由使用）
 - **语言**: Python 3.9+
 - **测试**: 482 个用例全部通过

@@ -11,7 +11,7 @@ Thread below
 
 #OpenSource #AI #Python #QuantTrading
 
-GitHub: https://github.com/Jsoned/autowealth-ai
+GitHub: https://github.com/KevinYoungsir/autowealth-ai
 
 ---
 
@@ -124,7 +124,7 @@ AutoWealth AI is 100% open source (MIT license).
 For learning, research, and building your own analysis tools.
 
 Star us on GitHub:
-https://github.com/Jsoned/autowealth-ai
+https://github.com/KevinYoungsir/autowealth-ai
 
 Contributions welcome. Let's build something useful together.
 
@@ -143,7 +143,7 @@ Thread
 
 #Python #AI #Architecture
 
-GitHub: https://github.com/Jsoned/autowealth-ai
+GitHub: https://github.com/KevinYoungsir/autowealth-ai
 
 ---
 
@@ -221,7 +221,7 @@ Want to explore the code?
 
 Clean architecture, full type annotations, docstrings everywhere.
 
-GitHub: https://github.com/Jsoned/autowealth-ai
+GitHub: https://github.com/KevinYoungsir/autowealth-ai
 
 PRs welcome -- new indicators, data sources, strategies, whatever you'd add.
 

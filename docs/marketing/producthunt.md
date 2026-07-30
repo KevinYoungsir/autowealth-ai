@@ -66,7 +66,7 @@ Instead of relying on a single model or strategy, it simulates a professional in
 ### Quick Start
 
 ```bash
-git clone https://github.com/Jsoned/autowealth-ai.git
+git clone https://github.com/KevinYoungsir/autowealth-ai.git
 cd autowealth-ai
 pip install -e .
 
@@ -128,7 +128,7 @@ I'd love to hear your feedback, especially on:
 
 Thanks for checking it out!
 
-GitHub: https://github.com/Jsoned/autowealth-ai
+GitHub: https://github.com/KevinYoungsir/autowealth-ai
 
 ---
 

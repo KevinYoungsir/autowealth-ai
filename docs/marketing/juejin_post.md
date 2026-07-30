@@ -8,7 +8,7 @@
 
 带着这个想法，我开发了 **AutoWealth AI** -- 一个基于多智能体协作的开源投资分析引擎。本文将从技术架构、核心实现、关键代码三个层面，分享整个项目的设计思路。
 
-GitHub: https://github.com/Jsoned/autowealth-ai
+GitHub: https://github.com/KevinYoungsir/autowealth-ai
 
 ## 一、整体架构设计
 
@@ -319,7 +319,7 @@ CHINESE_NAME_TO_SYMBOL = {
 ## 六、快速上手
 
 ```bash
-git clone https://github.com/Jsoned/autowealth-ai.git
+git clone https://github.com/KevinYoungsir/autowealth-ai.git
 cd autowealth-ai
 pip install -e .
 
@@ -342,6 +342,6 @@ AutoWealth AI 的定位不是一个"赚钱工具"，而是一个**投资分析�
 
 项目完全开源，代码结构清晰，每个模块都有完整的类型注解和文档字符串。欢迎对量化投资、多智能体系统、Python 工程化感兴趣的同学来交流。
 
-GitHub: https://github.com/Jsoned/autowealth-ai
+GitHub: https://github.com/KevinYoungsir/autowealth-ai
 
 > 免责声明：本项目仅供教育和研究目的，不构成任何投资建议。

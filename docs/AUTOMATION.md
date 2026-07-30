@@ -18,10 +18,10 @@
 |-----------|---------|---------|-------------|
 | `ci.yml` | PR 或 push 到 `main` | 后端、前端和 Docker 离线门禁 | 无 |
 | `release.yml` | 人工推送严格 `vMAJOR.MINOR.PATCH` tag | 验证、测试、构建，最后创建 Release | 无（使用 GITHUB_TOKEN） |
-| `publish-twitter.yml` | 新 Release 发布 | 自动发 Twitter 推文 | TWITTER_API_KEY, TWITTER_API_SECRET, TWITTER_ACCESS_TOKEN, TWITTER_ACCESS_SECRET |
-| `publish-reddit.yml` | 新 Release 发布 | 自动发 Reddit 帖子 | REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET, REDDIT_USERNAME, REDDIT_PASSWORD |
-| `publish-devto.yml` | 新 Release 发布 | 自动交叉发布 Dev.to 文章 | DEVTO_API_KEY |
-| `community-notify.yml` | Star 里程碑 / 新 Release | Discord/Slack 社区通知 | DISCORD_WEBHOOK_URL, SLACK_WEBHOOK_URL（可选） |
+| `publish-twitter.yml` | 手动，需 `release_tag` + `PUBLISH` | 发布 Twitter 摘要 | TWITTER_ACCESS_TOKEN |
+| `publish-reddit.yml` | 手动，需 `release_tag` + `PUBLISH` | 发布 Reddit 帖子 | REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET, REDDIT_USERNAME, REDDIT_PASSWORD |
+| `publish-devto.yml` | 手动，需 `release_tag` + `PUBLISH` | 发布 Dev.to 文章 | DEVTO_API_KEY |
+| `community-notify.yml` | 手动，需 `release_tag` + `PUBLISH` | Discord/Slack Release 通知 | DISCORD_WEBHOOK_URL, SLACK_WEBHOOK_URL（至少一个） |
 | `weekly-report.yml` | 每周一 UTC 0:00 | 收集指标、生成周报、发送通知 | DISCORD_WEBHOOK_URL, SLACK_WEBHOOK_URL（可选） |
 
 ### 工作流依赖关系
@@ -36,14 +36,17 @@ main CI 全部通过
 人工确认后 push tag
         ↓
 release.yml：verify → backend/frontend/docker → package → GitHub Release
+        ↓
+可选：人工选择已公开的 release tag，并精确输入 PUBLISH
+        ↓
+单独手动运行 Twitter / Reddit / Dev.to / community workflow
 
 weekly-report.yml（独立定时任务）
-community-notify.yml（Star 里程碑独立触发）
 ```
 
 `release.yml` 不创建或移动 tag，也不直接调用外部宣传工作流。Twitter、Reddit、
-Dev.to 和社区发布安全策略由独立的 External Publication Safety PR 处理；该 PR
-完成并确认外部宣传默认关闭前，不得推送正式 release tag。
+Dev.to 和社区通知均为手动工作流，不监听 Release 发布事件、不选择 latest Release，
+且只接受已存在、已公开、非 prerelease 的精确 tag。
 
 ---
 
@@ -62,10 +65,7 @@ Dev.to 和社区发布安全策略由独立的 External Publication Safety PR �
 
 | Secret 名称 | 说明 | 获取方式 |
 |------------|------|---------|
-| `TWITTER_API_KEY` | Twitter API Key (Consumer Key) | [Twitter Developer Portal](https://developer.twitter.com/) |
-| `TWITTER_API_SECRET` | Twitter API Secret (Consumer Secret) | 同上 |
-| `TWITTER_ACCESS_TOKEN` | Twitter Access Token | 同上 |
-| `TWITTER_ACCESS_SECRET` | Twitter Access Token Secret | 同上 |
+| `TWITTER_ACCESS_TOKEN` | 具备发帖权限的 OAuth 2.0 用户 Access Token | [Twitter Developer Portal](https://developer.twitter.com/) |
 | `REDDIT_CLIENT_ID` | Reddit App Client ID | [Reddit Preferences > Apps](https://www.reddit.com/prefs/apps) |
 | `REDDIT_CLIENT_SECRET` | Reddit App Client Secret | 同上 |
 | `REDDIT_USERNAME` | Reddit 用户名 | 你的 Reddit 用户名 |
@@ -90,17 +90,11 @@ Dev.to 和社区发布安全策略由独立的 External Publication Safety PR �
 1. 访问 [Twitter Developer Portal](https://developer.twitter.com/)
 2. 创建一个 Developer Account（如果还没有）
 3. 创建一个新 App（Project > Apps > Create App）
-4. 在 App 设置中启用 **OAuth 1.0a**
-5. 生成以下凭据：
-   - **API Key** (Consumer Key) → `TWITTER_API_KEY`
-   - **API Key Secret** (Consumer Secret) → `TWITTER_API_SECRET`
-6. 创建 Access Token 和 Secret：
-   - 进入 App 的 **Keys and Tokens** 页面
-   - 在 "Authentication Tokens" 下点击 **Generate**
-   - **Access Token** → `TWITTER_ACCESS_TOKEN`
-   - **Access Token Secret** → `TWITTER_ACCESS_SECRET`
+4. 配置 OAuth 2.0 用户认证，并授予发帖所需的写权限。
+5. 生成用户 Access Token，保存为 `TWITTER_ACCESS_TOKEN`。
 
-> **重要**：确保 App 的权限设置为 **Read and Write**，否则无法发布推文。
+> **重要**：该 Token 必须具有用户上下文和发帖权限；应用级只读 Bearer Token
+> 无法用于发布推文。
 
 ### 2. Reddit API
 
@@ -160,19 +154,21 @@ v0.16.0 默认关闭 PyPI 发布。`release.yml` 不读取 `PYPI_API_TOKEN`，�
 也不响应 `main` push 自动发布。
 
 **执行流程**：
-1. 验证严格 tag、产品版本、精确 CHANGELOG heading 和 `origin/main` 祖先关系。
+1. 验证严格 tag、产品版本、精确 CHANGELOG heading，并要求 tag commit 等于
+   `origin/main` HEAD。
 2. 安装 `.[dev,api]`，执行 Black、compileall 和完整离线 pytest。
-3. 执行前端 `npm ci`、测试、typecheck 和 build。
+3. 执行前端 `npm ci`、production audit、测试、typecheck 和 build。
 4. 构建 `Dockerfile.api`，但不推送镜像。
-5. 构建并校验 wheel 与 sdist，拒绝版本不一致的制品。
+5. 清空 `dist`，构建并严格校验唯一 wheel 与 sdist，生成 `SHA256SUMS.txt`。
 6. 严格提取当前版本 CHANGELOG 段；不存在时失败，不回退旧版本。
-7. 仅在所有门禁通过后，用 `gh release create --verify-tag` 创建 GitHub Release。
+7. 创建或恢复 draft Release，仅上传三个预期资产；验证完成后才公开。
 
 完整人工发布顺序见 `docs/release-process.md`。v0.16.0 不上传 PyPI。
 
-### publish-twitter.yml - 自动发 Twitter
+### publish-twitter.yml - 手动发 Twitter
 
-**触发条件**：GitHub Release 正式发布时（排除 draft 和 prerelease）
+**触发条件**：手动运行，输入已公开 Release 的精确 `release_tag`，并精确输入
+`PUBLISH`。正文从 GitHub Release JSON 安全生成，不写入或执行 shell 环境文件。
 
 **推文模板**：
 ```
@@ -191,35 +187,36 @@ Open-source & free. Check it out 👇
 #Python #AI #AlgoTrading #OpenSource
 ```
 
-### publish-reddit.yml - 自动发 Reddit
+### publish-reddit.yml - 手动发 Reddit
 
-**触发条件**：GitHub Release 正式发布时
+**触发条件**：手动 `release_tag` + `PUBLISH`；仅接受已公开、非 prerelease 的
+GitHub Release。
 
 **目标 Subreddits**：
 - `r/Python` - 标题侧重 Python 开发者视角
 - `r/algotrading` - 标题侧重量化交易功能
 - `r/opensource` - 标题侧重开源项目介绍
 
-**帖子内容**：从 `docs/marketing/reddit_post.md` 读取模板，动态替换版本号和链接。
+**帖子内容**：通过 `jq` 将 Release body、Release URL 和权威仓库地址作为数据写入
+临时正文文件，不执行正文内容。
 
-### publish-devto.yml - 自动交叉发布 Dev.to
+### publish-devto.yml - 手动发布 Dev.to
 
-**触发条件**：GitHub Release 正式发布时
+**触发条件**：手动 `release_tag` + `PUBLISH`；不由 GitHub Release 自动触发。
 
-**文章内容**：参考 `docs/marketing/juejin_post.md` 的结构，生成英文版技术文章，包含项目架构、功能介绍、版本更新等。
+**文章内容**：使用 `jq` 从 Release JSON 构建 API payload。Release body 始终作为
+JSON 数据处理。
 
 ### community-notify.yml - 社区通知
 
-**触发条件**：
-- Star 数达到里程碑（100/500/1000/5000/10000）
-- 新 Release 发布
-- 手动触发（workflow_dispatch）
+**触发条件**：仅手动 `release_tag` + `PUBLISH`。Release 发布和 Star 事件均不会
+自动发送外部 webhook。
 
-**通知渠道**：Discord 和/或 Slack（至少配置一个）
+**通知渠道**：Discord 和/或 Slack（至少配置一个）。
 
 ### 人工创建正式 Tag
 
-`auto-tag.yml` 已删除。Release Prep 合并到 `main` 不会自动创建 tag，也不会自动
+仓库不存在自动 tag 工作流。Release Prep 合并到 `main` 不会自动创建 tag，也不会自动
 发布。发布负责人必须在所有 CI 和发布前检查通过后，于已验证的 `main` SHA 上执行：
 
 ```bash
@@ -285,7 +282,7 @@ git push origin v0.16.0
 **可能原因**：
 - tag 不符合严格 `vMAJOR.MINOR.PATCH` 格式；
 - tag 没有推送到 `origin`；
-- tag commit 不在 `origin/main` 历史中；
+- tag commit 不等于 workflow 验证时的 `origin/main` HEAD；
 - 产品版本、tag 或 CHANGELOG heading 不一致。
 
 **排查步骤**：
@@ -319,11 +316,12 @@ python scripts/verify_release_metadata.py --expected-version 0.16.0 --tag v0.16.
 
 **可能原因**：
 - Webhook URL 未配置
-- Star 数未精确达到里程碑值
+- 未提供已公开的精确 Release tag
+- confirmation 未精确输入 `PUBLISH`
 
 **解决方案**：
 - 检查 GitHub Secrets 中是否配置了 `DISCORD_WEBHOOK_URL` 或 `SLACK_WEBHOOK_URL`
-- 手动触发测试：Actions > Community Notify > Run workflow
+- 手动触发：Actions > Community Notify > Run workflow
 
 ### 调试技巧
 

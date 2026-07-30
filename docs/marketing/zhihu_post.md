@@ -8,7 +8,7 @@
 
 **AutoWealth AI** 是一个基于多智能体协作的智能投资分析引擎，用 Python 构建，完全开源（MIT 协议）。
 
-GitHub: https://github.com/Jsoned/autowealth-ai
+GitHub: https://github.com/KevinYoungsir/autowealth-ai
 
 ## 为什么推荐这个项目
 
@@ -102,7 +102,7 @@ python -m autowealth --batch AAPL GOOGL MSFT
 
 项目还在持续迭代中，欢迎大家 Star、Fork、提 Issue 和 PR。
 
-GitHub: https://github.com/Jsoned/autowealth-ai
+GitHub: https://github.com/KevinYoungsir/autowealth-ai
 
 ---
 

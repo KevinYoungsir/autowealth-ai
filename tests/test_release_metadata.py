@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import hashlib
+import io
 import json
 import socket
+import tarfile
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -55,7 +59,7 @@ def _write_fixture_repository(
     changelog_text = changelog or (
         "# Changelog\n\n"
         "## [未发布]\n\n"
-        "## [0.16.0] - 2026-07-28\n\n"
+        "## [0.16.0] - 2026-07-29\n\n"
         "### 新增\n"
         "- Current release.\n\n"
         "## [0.15.1] - 2026-07-17\n\n"
@@ -66,6 +70,47 @@ def _write_fixture_repository(
     )
     (root / "CHANGELOG.md").write_text(changelog_text, encoding="utf-8")
     return root
+
+
+def _metadata_bytes(version: str = VERSION) -> bytes:
+    return ("Metadata-Version: 2.4\n" "Name: autowealth-ai\n" f"Version: {version}\n" "\n").encode(
+        "utf-8"
+    )
+
+
+def _write_wheel(path: Path, *, metadata_version: str | None = None) -> None:
+    with zipfile.ZipFile(path, mode="w") as archive:
+        archive.writestr(
+            f"autowealth_ai-{metadata_version or VERSION}.dist-info/METADATA",
+            _metadata_bytes(metadata_version or VERSION),
+        )
+
+
+def _write_sdist(path: Path, *, metadata_version: str | None = None) -> None:
+    version = metadata_version or VERSION
+    payload = _metadata_bytes(version)
+    member = tarfile.TarInfo(name=f"autowealth_ai-{version}/PKG-INFO")
+    member.size = len(payload)
+    with tarfile.open(path, mode="w:gz") as archive:
+        archive.addfile(member, io.BytesIO(payload))
+
+
+def _write_artifact_pair(dist: Path, *, version: str = VERSION) -> tuple[Path, Path]:
+    wheel = dist / f"autowealth_ai-{version}-py3-none-any.whl"
+    sdist = dist / f"autowealth_ai-{version}.tar.gz"
+    _write_wheel(wheel, metadata_version=version)
+    _write_sdist(sdist, metadata_version=version)
+    return wheel, sdist
+
+
+def _write_checksums(dist: Path, artifacts: tuple[Path, Path]) -> Path:
+    checksum = dist / "SHA256SUMS.txt"
+    lines = [
+        f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}"
+        for path in sorted(artifacts, key=lambda item: item.name)
+    ]
+    checksum.write_text("\n".join(lines) + "\n", encoding="ascii")
+    return checksum
 
 
 def _verify(root: Path, **kwargs: object):
@@ -153,8 +198,8 @@ def test_exact_release_heading_is_required_and_accepted(tmp_path: Path) -> None:
 
     result = _verify(root)
 
-    assert result.changelog_heading == "## [0.16.0] - 2026-07-28"
-    assert result.release_date == "2026-07-28"
+    assert result.changelog_heading == "## [0.16.0] - 2026-07-29"
+    assert result.release_date == "2026-07-29"
 
 
 def test_older_heading_does_not_replace_missing_current_heading(tmp_path: Path) -> None:
@@ -203,7 +248,7 @@ def test_release_notes_extract_only_requested_section(tmp_path: Path) -> None:
 
     notes = extract_release_notes(root, VERSION)
 
-    assert notes.startswith("## [0.16.0] - 2026-07-28")
+    assert notes.startswith("## [0.16.0] - 2026-07-29")
     assert "Current release." in notes
     assert "## [未发布]" not in notes
     assert "[未发布]:" not in notes
@@ -225,8 +270,7 @@ def test_dist_with_old_wheel_and_sdist_versions_fails(tmp_path: Path) -> None:
     root = _write_fixture_repository(tmp_path / "repo")
     dist = tmp_path / "dist"
     dist.mkdir()
-    (dist / "autowealth_ai-0.1.0-py3-none-any.whl").touch()
-    (dist / "autowealth_ai-0.1.0.tar.gz").touch()
+    _write_artifact_pair(dist, version="0.1.0")
 
     with pytest.raises(ReleaseMetadataError, match="0.1.0"):
         _verify(root, dist_dir=dist)
@@ -238,8 +282,7 @@ def test_dist_with_current_wheel_and_sdist_versions_passes(tmp_path: Path) -> No
     dist.mkdir()
     wheel = "autowealth_ai-0.16.0-py3-none-any.whl"
     sdist = "autowealth_ai-0.16.0.tar.gz"
-    (dist / wheel).touch()
-    (dist / sdist).touch()
+    _write_artifact_pair(dist)
 
     result = _verify(root, dist_dir=dist)
 
@@ -250,9 +293,9 @@ def test_dist_with_only_sdist_fails_for_missing_wheel(tmp_path: Path) -> None:
     root = _write_fixture_repository(tmp_path / "repo")
     dist = tmp_path / "dist"
     dist.mkdir()
-    (dist / "autowealth_ai-0.16.0.tar.gz").touch()
+    _write_sdist(dist / "autowealth_ai-0.16.0.tar.gz")
 
-    with pytest.raises(ReleaseMetadataError, match="must contain a wheel"):
+    with pytest.raises(ReleaseMetadataError, match="exactly one wheel; found 0"):
         _verify(root, dist_dir=dist)
 
 
@@ -260,9 +303,96 @@ def test_dist_with_only_wheel_fails_for_missing_sdist(tmp_path: Path) -> None:
     root = _write_fixture_repository(tmp_path / "repo")
     dist = tmp_path / "dist"
     dist.mkdir()
-    (dist / "autowealth_ai-0.16.0-py3-none-any.whl").touch()
+    _write_wheel(dist / "autowealth_ai-0.16.0-py3-none-any.whl")
 
-    with pytest.raises(ReleaseMetadataError, match="must contain an sdist"):
+    with pytest.raises(ReleaseMetadataError, match="exactly one sdist; found 0"):
+        _verify(root, dist_dir=dist)
+
+
+def test_dist_with_two_wheels_fails(tmp_path: Path) -> None:
+    root = _write_fixture_repository(tmp_path / "repo")
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    _write_wheel(dist / "autowealth_ai-0.16.0-py3-none-any.whl")
+    _write_wheel(dist / "autowealth_ai-0.16.0-cp312-cp312-win_amd64.whl")
+    _write_sdist(dist / "autowealth_ai-0.16.0.tar.gz")
+
+    with pytest.raises(ReleaseMetadataError, match="exactly one wheel; found 2"):
+        _verify(root, dist_dir=dist)
+
+
+def test_dist_with_two_sdists_fails(tmp_path: Path) -> None:
+    root = _write_fixture_repository(tmp_path / "repo")
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    _write_wheel(dist / "autowealth_ai-0.16.0-py3-none-any.whl")
+    _write_sdist(dist / "autowealth_ai-0.16.0.tar.gz")
+    _write_sdist(dist / "autowealth-ai-0.16.0.tar.gz")
+
+    with pytest.raises(ReleaseMetadataError, match="exactly one sdist; found 2"):
+        _verify(root, dist_dir=dist)
+
+
+def test_dist_with_current_and_old_artifacts_fails(tmp_path: Path) -> None:
+    root = _write_fixture_repository(tmp_path / "repo")
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    _write_artifact_pair(dist)
+    _write_wheel(
+        dist / "autowealth_ai-0.1.0-py3-none-any.whl",
+        metadata_version="0.1.0",
+    )
+
+    with pytest.raises(ReleaseMetadataError, match="0.1.0"):
+        _verify(root, dist_dir=dist)
+
+
+def test_dist_with_unexpected_file_fails(tmp_path: Path) -> None:
+    root = _write_fixture_repository(tmp_path / "repo")
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    _write_artifact_pair(dist)
+    (dist / "build.log").write_text("unexpected", encoding="utf-8")
+
+    with pytest.raises(ReleaseMetadataError, match="unexpected dist file: build.log"):
+        _verify(root, dist_dir=dist)
+
+
+def test_dist_rejects_metadata_version_mismatch(tmp_path: Path) -> None:
+    root = _write_fixture_repository(tmp_path / "repo")
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    wheel = dist / "autowealth_ai-0.16.0-py3-none-any.whl"
+    _write_wheel(wheel, metadata_version="0.15.1")
+    _write_sdist(dist / "autowealth_ai-0.16.0.tar.gz")
+
+    with pytest.raises(ReleaseMetadataError, match="metadata has version 0.15.1"):
+        _verify(root, dist_dir=dist)
+
+
+def test_dist_accepts_valid_sha256sums(tmp_path: Path) -> None:
+    root = _write_fixture_repository(tmp_path / "repo")
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    artifacts = _write_artifact_pair(dist)
+    _write_checksums(dist, artifacts)
+
+    result = _verify(root, dist_dir=dist)
+
+    assert result.artifacts == tuple(path.name for path in artifacts)
+
+
+def test_dist_rejects_invalid_sha256sums(tmp_path: Path) -> None:
+    root = _write_fixture_repository(tmp_path / "repo")
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    artifacts = _write_artifact_pair(dist)
+    checksum = _write_checksums(dist, artifacts)
+    content = checksum.read_text(encoding="ascii")
+    replacement = "0" if content[0] != "0" else "1"
+    checksum.write_text(replacement + content[1:], encoding="ascii")
+
+    with pytest.raises(ReleaseMetadataError, match="digest does not match"):
         _verify(root, dist_dir=dist)
 
 
@@ -310,10 +440,10 @@ def test_cli_outputs_stable_machine_readable_summary(
     assert exit_code == 0
     assert output == {
         "artifacts": [],
-        "changelog_heading": "## [0.16.0] - 2026-07-28",
+        "changelog_heading": "## [0.16.0] - 2026-07-29",
         "dist_checked": False,
         "product_version": VERSION,
-        "release_date": "2026-07-28",
+        "release_date": "2026-07-29",
         "status": "ok",
         "tag": "v0.16.0",
     }

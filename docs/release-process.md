@@ -11,6 +11,7 @@
 - `pyproject.toml` 的 `project.version` 是产品版本权威来源。
 - tag 必须由人工在已验证的 `main` SHA 上创建。
 - 正式 tag 必须是 annotated tag，且严格符合 `vMAJOR.MINOR.PATCH`。
+- tag 指向的 commit 必须精确等于 Release Workflow 验证时的 `origin/main` HEAD。
 - 测试、前端、Docker、Python 包和 Release Notes 全部通过后才创建 Release。
 - 正式 tag 不得删除、移动、复用或强制覆盖。
 - v0.16.0 默认不发布 PyPI，也不自动执行外部宣传。
@@ -51,7 +52,7 @@ Release Prep PR 与 External Publication Safety PR 合并后，在 `main` 上确
 2. 本地 `main` 与准备发布的远程 SHA 一致。
 3. `main` CI 全部成功。
 4. 产品版本、CHANGELOG 和前后端版本一致。
-5. `## [0.16.0] - 2026-07-28` 精确存在。
+5. `## [0.16.0] - 2026-07-29` 精确存在。
 6. Python wheel、sdist、前端 build 和 Docker build 均可完成。
 7. 没有正在等待的发布阻断问题。
 
@@ -92,28 +93,30 @@ git push origin v0.16.0
 ```
 
 `main` push 和 CHANGELOG 变更不会自动创建 tag。`release.yml` 也不会创建 tag。
+从最终 `main` SHA 校验开始，到 Release Workflow 完成前，应冻结 `main` 合并。若
+workflow 开始验证时 `origin/main` 已发生变化，发布会安全失败；不得移动已经推送的
+tag，应重新评估版本并通过新的补丁版本发布。
 
 ## 5. Release Workflow
 
 正式 tag push 依次触发以下阶段：
 
-1. `verify`：严格校验 tag、产品版本、CHANGELOG 和 `origin/main` 祖先关系。
+1. `verify`：严格校验 tag、产品版本、CHANGELOG，并要求 tag commit 精确等于
+   `origin/main` HEAD。
 2. `backend`：Black、compileall、版本校验和完整离线 pytest。
-3. `frontend`：`npm ci`、测试、typecheck 和 build。
+3. `frontend`：`npm ci`、生产依赖高危审计、测试、typecheck 和 build。
 4. `docker`：构建 `Dockerfile.api`，不推送镜像。
-5. `package`：构建 wheel/sdist，执行 `twine check` 和制品版本校验。
-6. `release`：重新校验制品并严格提取当前版本说明，最后创建 GitHub Release。
+5. `package`：先清空 `dist`，构建唯一 wheel 和唯一 sdist，执行 `twine check`、
+   归档 metadata 校验，并生成和复核 `SHA256SUMS.txt`。
+6. `release`：重新校验制品和 checksum，严格提取当前版本说明，创建或恢复 draft
+   Release，仅上传 wheel、sdist 和 checksum；三个资产验证无误后才公开。
 
 任何阶段失败都会阻止后续 Release 创建。Release Notes 只来自精确的当前版本
 CHANGELOG 区域；缺少 heading 时直接失败，不使用 0.15.1 或其他版本替代。
 
-最终命令使用：
-
-```text
-gh release create <tag> --verify-tag
-```
-
-并上传已经校验的 wheel 和 sdist。创建 GitHub Release 是工作流最后一个写操作。
+Release Notes 来自既有验证脚本提取的精确版本区段。工作流不会直接创建公开
+Release：任何上传或校验失败都会保留 draft，公开 Release 不会出现半成品资产。
+对已有 draft 的重跑只覆盖三个预期资产；若同 tag 已经公开，工作流停止且不覆盖。
 
 ## 6. 发布失败
 
@@ -122,10 +125,12 @@ gh release create <tag> --verify-tag
 修复问题并重新执行发布前门禁。若本地 tag 指向错误，可在未推送且获得批准后删除
 本地 tag 并重新创建；不得影响任何远程正式 tag。
 
-### Tag 已推送但 Release 未创建
+### Tag 已推送但 Release 未公开
 
-保留 tag，不删除、不移动、不覆盖。修复代码后发布新的补丁版本，例如
-`v0.16.1`。不得直接重推 `v0.16.0`。
+保留 tag，不删除、不移动、不覆盖。若失败来自临时 runner 或资产上传问题，可在
+代码和 tag 不变的前提下重新运行 workflow，并继续已有 draft。若失败来自需要修改
+仓库代码的问题，应通过新 PR 和新补丁版本（例如 `v0.16.1`）修复，不得直接重推
+`v0.16.0`。
 
 ### Release 已创建但部署或功能异常
 
@@ -135,7 +140,8 @@ artifacts。修复通过新 PR 和新补丁版本发布。
 ## 7. 默认关闭项
 
 - PyPI：v0.16.0 不读取 Token，不执行 `twine upload`。
-- 外部宣传：默认关闭，必须由独立安全 PR 和人工审批处理。
+- 外部宣传：仅允许手动 `workflow_dispatch`，必须提供公开 Release tag 并精确输入
+  `PUBLISH`；创建 GitHub Release 不会自动发帖或发送 webhook。
 - 镜像发布：只验证 Docker build，不 push registry。
 - 生产部署：Release Workflow 不触发 Railway、Vercel 或其他部署。
 - 真实数据、DeepSeek 和交易：发布门禁不访问或调用这些能力。
@@ -145,6 +151,5 @@ artifacts。修复通过新 PR 和新补丁版本发布。
 发布准备不修改研究计算、provider 顺序、fallback、cache、warning、`run_status`、
 metrics、curves、API 响应或任何 artifact/schema/API contract version。
 
-GitHub Release 发布事件可能被仓库中已有的外部宣传工作流监听，因此正式 tag
-必须等待 External Publication Safety PR 完成。该依赖是 v0.16.0 发布前的人工
-阻断条件，不能通过核心 Release Workflow 静默绕过。
+外部宣传工作流不监听 GitHub Release 发布事件，也不自动选择 latest Release。
+每次外部发布均是独立人工授权操作，其失败不修改 tag、GitHub Release 或制品。

@@ -7,8 +7,8 @@
 
 [![Python](https://img.shields.io/badge/Python-3.8%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![GitHub Stars](https://img.shields.io/github/stars/Jsoned/autowealth-ai)](https://github.com/Jsoned/autowealth-ai/stargazers)
-[![GitHub Issues](https://img.shields.io/github/issues/Jsoned/autowealth-ai)](https://github.com/Jsoned/autowealth-ai/issues)
+[![GitHub Stars](https://img.shields.io/github/stars/KevinYoungsir/autowealth-ai)](https://github.com/KevinYoungsir/autowealth-ai/stargazers)
+[![GitHub Issues](https://img.shields.io/github/issues/KevinYoungsir/autowealth-ai)](https://github.com/KevinYoungsir/autowealth-ai/issues)
 [![Docker](https://img.shields.io/badge/Docker-Supported-2496ED?logo=docker)](https://www.docker.com/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-API%20Service-009688?logo=fastapi)](https://fastapi.tiangolo.com/)
 
@@ -107,7 +107,7 @@ AutoWealth AI 是一款基于**多智能体技术**的智能投资分析引擎�
 
 ```bash
 # 克隆项目
-git clone https://github.com/Jsoned/autowealth-ai.git
+git clone https://github.com/KevinYoungsir/autowealth-ai.git
 cd autowealth-ai
 
 # 创建虚拟环境
@@ -349,6 +349,6 @@ flake8 autowealth/
 
 **如果这个项目对您有帮助，请给我们一个 ⭐️**
 
-[⭐ Star 本项目](https://github.com/Jsoned/autowealth-ai) · [🐛 提交 Issue](https://github.com/Jsoned/autowealth-ai/issues) · [🤝 参与贡献](CONTRIBUTING.md)
+[⭐ Star 本项目](https://github.com/KevinYoungsir/autowealth-ai) · [🐛 提交 Issue](https://github.com/KevinYoungsir/autowealth-ai/issues) · [🤝 参与贡献](CONTRIBUTING.md)
 
 </div>
