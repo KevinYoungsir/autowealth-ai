@@ -152,6 +152,7 @@ class LocalEODFileRepository:
         generation_directory = self._generation_directory(dataset, safe_generation_id)
         if generation_directory.is_symlink():
             raise EODUnsafePathError("generation path must not be a symbolic link")
+        self._assert_within_root(generation_directory)
         if generation_directory.exists():
             raise EODGenerationExistsError("generation already exists")
 
@@ -305,9 +306,9 @@ class LocalEODFileRepository:
         generation_directory = self._generation_directory(dataset, generation_id)
         if generation_directory.is_symlink():
             raise EODUnsafePathError("generation path must not be a symbolic link")
+        self._assert_within_root(generation_directory)
         if not generation_directory.is_dir():
             raise EODNoCurrentGenerationError(missing_message)
-        self._assert_within_root(generation_directory)
 
         manifest_path = generation_directory / _MANIFEST_FILE
         if expected_manifest_sha256 is not None:
@@ -336,6 +337,7 @@ class LocalEODFileRepository:
         generation_directory = self._generation_directory(dataset, pointer.generation_id)
         if generation_directory.is_symlink():
             raise EODUnsafePathError("generation path must not be a symbolic link")
+        self._assert_within_root(generation_directory)
         if not generation_directory.is_dir():
             raise EODNoCurrentGenerationError("current pointer references a missing generation")
         manifest_path = generation_directory / _MANIFEST_FILE
@@ -356,6 +358,7 @@ class LocalEODFileRepository:
         current_path = self._current_path(dataset)
         if current_path.is_symlink():
             raise EODUnsafePathError("current pointer must not be a symbolic link")
+        self._assert_within_root(current_path)
         if not current_path.exists():
             return None
         self._assert_regular_file(current_path, "current pointer")
@@ -520,9 +523,13 @@ class LocalEODFileRepository:
             raise EODRepositoryError("staging file write failed") from exc
 
     def _publish_staging(self, staging_path: Path, generation_path: Path) -> None:
+        if staging_path.is_symlink():
+            raise EODUnsafePathError("staging directory must not be a symbolic link")
+        if generation_path.is_symlink():
+            raise EODUnsafePathError("generation path must not be a symbolic link")
         self._assert_within_root(staging_path)
         self._assert_within_root(generation_path)
-        if generation_path.exists() or generation_path.is_symlink():
+        if generation_path.exists():
             raise EODGenerationExistsError("generation already exists")
         try:
             os.rename(staging_path, generation_path)
@@ -530,10 +537,12 @@ class LocalEODFileRepository:
             raise EODRepositoryError("generation publication rename failed") from exc
 
     def _replace_current_pointer(self, temporary_path: Path, current_path: Path) -> None:
-        self._assert_within_root(temporary_path)
-        self._assert_within_root(current_path)
+        if temporary_path.is_symlink():
+            raise EODUnsafePathError("current pointer staging file must not be a symbolic link")
         if current_path.is_symlink():
             raise EODUnsafePathError("current pointer must not be a symbolic link")
+        self._assert_within_root(temporary_path)
+        self._assert_within_root(current_path)
         if current_path.exists() and not current_path.is_file():
             raise EODIntegrityError("current pointer must be a regular file")
         try:
@@ -584,6 +593,8 @@ class LocalEODFileRepository:
 
     def _generations_directory(self, dataset: EODDatasetKey) -> Path:
         candidate = self._dataset_directory(dataset) / _GENERATIONS_DIRECTORY
+        if candidate.is_symlink():
+            raise EODUnsafePathError("generations path must not be a symbolic link")
         self._assert_within_root(candidate)
         return candidate
 
@@ -594,13 +605,10 @@ class LocalEODFileRepository:
     ) -> Path:
         safe_generation_id = validate_generation_id(generation_id)
         candidate = self._generations_directory(dataset) / safe_generation_id
-        self._assert_within_root(candidate)
         return candidate
 
     def _current_path(self, dataset: EODDatasetKey) -> Path:
-        candidate = self._dataset_directory(dataset) / _CURRENT_FILE
-        self._assert_within_root(candidate)
-        return candidate
+        return self._dataset_directory(dataset) / _CURRENT_FILE
 
     def _ensure_dataset_directory(self, dataset: EODDatasetKey) -> Path:
         dataset_directory = self._dataset_directory(dataset)
@@ -609,9 +617,9 @@ class LocalEODFileRepository:
 
     def _ensure_child_directory(self, parent: Path, child_name: str) -> Path:
         candidate = parent / child_name
-        self._assert_within_root(candidate)
         if candidate.is_symlink():
             raise EODUnsafePathError("repository directory must not be a symbolic link")
+        self._assert_within_root(candidate)
         try:
             candidate.mkdir(exist_ok=True)
         except OSError as exc:
@@ -673,9 +681,9 @@ class LocalEODFileRepository:
         raise EODRepositoryError("current pointer staging allocation failed")
 
     def _remove_staging_directory(self, staging_directory: Path) -> None:
-        self._assert_within_root(staging_directory)
         if staging_directory.is_symlink():
             raise EODUnsafePathError("staging directory must not be a symbolic link")
+        self._assert_within_root(staging_directory)
         try:
             shutil.rmtree(staging_directory)
         except OSError as exc:

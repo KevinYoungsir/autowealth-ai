@@ -1,5 +1,7 @@
 """Pure contracts for AutoWealth China A-share EOD market data."""
 
+from importlib import import_module
+
 from .calendar import (
     MARKET_TIMEZONE,
     TradingCalendar,
@@ -7,17 +9,6 @@ from .calendar import (
     validate_trading_days,
 )
 from .normalization import normalize_canonical_symbol, normalize_eod_bars
-from .repositories import (
-    EOD_PARQUET_COLUMNS,
-    EOD_PARQUET_SCHEMA,
-    EODFileRepository,
-    EODGenerationExistsError,
-    EODIntegrityError,
-    EODNoCurrentGenerationError,
-    EODRepositoryError,
-    EODUnsafePathError,
-    LocalEODFileRepository,
-)
 from .schemas import (
     EOD_SCHEMA_VERSION,
     AdjustmentType,
@@ -46,6 +37,32 @@ from .versioning import (
     calculate_eod_content_sha256,
     calculate_file_sha256,
 )
+
+_REPOSITORY_EXPORTS = frozenset(
+    {
+        "EOD_PARQUET_COLUMNS",
+        "EOD_PARQUET_SCHEMA",
+        "EODFileRepository",
+        "EODGenerationExistsError",
+        "EODIntegrityError",
+        "EODNoCurrentGenerationError",
+        "EODRepositoryError",
+        "EODUnsafePathError",
+        "LocalEODFileRepository",
+    }
+)
+
+
+def __getattr__(name: str) -> object:
+    """Load repository exports only when a caller explicitly requests one."""
+
+    if name not in _REPOSITORY_EXPORTS:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    repository_module = import_module(".repositories", __name__)
+    value = getattr(repository_module, name)
+    globals()[name] = value
+    return value
+
 
 __all__ = [
     "EOD_MANIFEST_SCHEMA_VERSION",

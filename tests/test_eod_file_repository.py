@@ -236,13 +236,20 @@ def simulate_symlink(
 
     path_type = type(unsafe_path)
     original_is_symlink = path_type.is_symlink
+    original_resolve = path_type.resolve
 
     def is_symlink(candidate: Path) -> bool:
         if candidate == unsafe_path:
             return True
         return original_is_symlink(candidate)
 
+    def resolve(candidate: Path, strict: bool = False) -> Path:
+        if candidate == unsafe_path:
+            raise AssertionError("direct symlink target was resolved before rejection")
+        return original_resolve(candidate, strict=strict)
+
     monkeypatch.setattr(path_type, "is_symlink", is_symlink)
+    monkeypatch.setattr(path_type, "resolve", resolve)
 
 
 def manifest_for(
@@ -1396,6 +1403,63 @@ def test_market_data_public_exports_are_stable_and_do_not_expose_internals() -> 
         "_create_staging_directory",
         "_replace_current_pointer",
     }.isdisjoint(exports)
+
+
+def test_market_data_package_root_import_defers_repository_and_pyarrow() -> None:
+    repository_root = Path(__file__).resolve().parents[1]
+    script = """
+import sys
+
+import autowealth
+
+before = set(sys.modules)
+import autowealth.market_data as market_data
+
+assert "autowealth.market_data.repositories" not in sys.modules
+assert "pyarrow.fs" not in sys.modules
+assert "pyarrow.parquet" not in sys.modules
+assert "pyarrow" not in set(sys.modules) - before
+assert "LocalEODFileRepository" in market_data.__all__
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=repository_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_market_data_lazy_repository_export_loads_once_and_rejects_unknown_names() -> None:
+    repository_root = Path(__file__).resolve().parents[1]
+    script = """
+import sys
+
+import autowealth.market_data as market_data
+
+assert "autowealth.market_data.repositories" not in sys.modules
+first = market_data.LocalEODFileRepository
+assert "autowealth.market_data.repositories" in sys.modules
+assert "pyarrow.parquet" in sys.modules
+from autowealth.market_data import LocalEODFileRepository
+assert first is LocalEODFileRepository
+assert first is market_data.LocalEODFileRepository
+try:
+    market_data.UnknownRepositoryExport
+except AttributeError as exc:
+    assert "UnknownRepositoryExport" in str(exc)
+else:
+    raise AssertionError("unknown package attribute did not raise AttributeError")
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=repository_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
 
 
 def test_repository_source_does_not_read_system_time_or_generate_business_id() -> None:
