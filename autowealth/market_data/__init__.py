@@ -1,6 +1,7 @@
 """Pure contracts for AutoWealth China A-share EOD market data."""
 
 from importlib import import_module
+from types import MappingProxyType
 
 from .calendar import (
     MARKET_TIMEZONE,
@@ -73,14 +74,26 @@ _REPOSITORY_EXPORTS = frozenset(
     }
 )
 
+_LAZY_EXPORT_MODULES = MappingProxyType(
+    {
+        **{name: ".repositories" for name in _REPOSITORY_EXPORTS},
+        "AKShareEODEquityProvider": ".akshare_adapters",
+        "AKShareEODIndexProvider": ".akshare_adapters",
+        "akshare_equity_symbol": ".akshare_adapters",
+        "akshare_index_symbol": ".akshare_adapters",
+        "convert_eod_dataframe_to_bars": ".dataframe_conversion",
+    }
+)
+
 
 def __getattr__(name: str) -> object:
-    """Load repository exports only when a caller explicitly requests one."""
+    """Load optional public exports only when a caller explicitly requests one."""
 
-    if name not in _REPOSITORY_EXPORTS:
+    module_name = _LAZY_EXPORT_MODULES.get(name)
+    if module_name is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    repository_module = import_module(".repositories", __name__)
-    value = getattr(repository_module, name)
+    target_module = import_module(module_name, __name__)
+    value = getattr(target_module, name)
     globals()[name] = value
     return value
 
@@ -93,6 +106,8 @@ __all__ = [
     "EOD_POINTER_SCHEMA_VERSION",
     "EOD_SCHEMA_VERSION",
     "MARKET_TIMEZONE",
+    "AKShareEODEquityProvider",
+    "AKShareEODIndexProvider",
     "AdjustmentType",
     "AssetType",
     "BarFrequency",
@@ -135,10 +150,13 @@ __all__ = [
     "calculate_bytes_sha256",
     "calculate_eod_content_sha256",
     "calculate_file_sha256",
+    "convert_eod_dataframe_to_bars",
     "default_eod_revision_policy",
     "eod_bar_identity",
     "normalize_canonical_symbol",
     "normalize_eod_bars",
+    "akshare_equity_symbol",
+    "akshare_index_symbol",
     "plan_eod_request_window",
     "validate_eod_batch",
     "validate_eod_provider_request",
