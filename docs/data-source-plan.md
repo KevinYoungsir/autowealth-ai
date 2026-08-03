@@ -377,3 +377,26 @@ schema 与 provider protocol。记录只接受六位 canonical symbol；endpoint
 所有当前 snapshot 配伪造日期形成的历史序列。未来 provider 必须提供来源、版本、
 PIT 证据和真实历史序列 acceptance tests；本阶段不声称已经解决真实历史估值数据
 可得性。详细字段与 reason codes 见 `docs/macro-valuation-contract.md`。
+
+## 16. v0.17.0 EOD Provider Contract 与请求窗口规划
+
+新的领域级 EOD Provider contract 位于 `autowealth/market_data/`，以
+`EODDatasetKey` 作为包含市场、交易所、资产类型、canonical symbol、频率和复权
+口径的完整数据集身份。Provider request、result 和 capability 均为不可变、可确定性
+序列化的纯模型；一个 capability 只表示一个精确支持组合，空响应不会被视为成功。
+Provider 结果必须经过统一 EOD batch 校验，才能交给后续 coordinator 判断。
+
+Provider 和请求窗口 planner 在 import 与执行纯规划时不访问网络、文件、环境变量
+或系统时钟。测试使用完全离线的 fake Provider 和 fake TradingCalendar。现有
+`autowealth/data/` Provider、Pandas schema、fallback chain 和 `ParquetCache` 保持
+兼容，本 PR 尚未把它们接入新 contract。
+
+不复权数据默认使用 `append_only` 规划。前复权和后复权历史可能因后续公司行动被
+供应商重新计算，因此 `qfq`、`hfq` 默认返回 `full_refresh_required`；该状态只表示
+局部增量安全性无法得到证明，不代表系统每天自动重新抓取 15 年历史。只有 Provider
+具有可验证的有界修订保证时，调用者才可显式选择 `overlap_window`。
+
+Provider 不生成 repository `data_version`、generation ID 或 manifest checksum，也不
+调用 repository publish。完整数据的 `data_version` 继续由 repository 基于规范化内容
+checksum 生成。当前 PR 不包含真实 AKShare 或东方财富 adapter、真实 fallback、
+retry、coordinator、generation 合并、worker、scheduler、API 或部署接线。
