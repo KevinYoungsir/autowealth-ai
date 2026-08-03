@@ -400,3 +400,29 @@ Provider 不生成 repository `data_version`、generation ID 或 manifest checks
 调用 repository publish。完整数据的 `data_version` 继续由 repository 基于规范化内容
 checksum 生成。当前 PR 不包含真实 AKShare 或东方财富 adapter、真实 fallback、
 retry、coordinator、generation 合并、worker、scheduler、API 或部署接线。
+
+## 17. v0.17.0 AKShare EOD Adapter
+
+`autowealth/market_data/` 新增面向领域级 EOD contract 的 AKShare 股票和指数
+Adapter。股票 Adapter 使用 `stock_zh_a_hist`，指数 Adapter 在本阶段只使用
+`index_zh_a_hist`；`stock_zh_index_daily` fallback 留给后续 Provider Chain。
+Adapter 只接受包含市场、交易所、资产类型、canonical symbol、频率和复权口径的
+`EODDatasetKey`，不会接受名称、裸代码或 endpoint 专用代码。
+
+两个 Adapter 都支持注入 endpoint callable，以便使用固定 DataFrame 和 fake
+TradingCalendar 完成完全离线的单元测试。未注入 endpoint 时，AKShare 只在首次
+`fetch` 中延迟导入；模块导入和 Adapter 构造均不访问网络。返回的 DataFrame 会被
+严格转换为不可变 `EODBar` tuple，再交给既有 Provider Result Validator。空响应保留
+为 `empty` 而非成功；非空但缺少预期交易日的响应保留为 `partial_success` 和对应
+覆盖不足 warning。
+
+不复权股票和指数 capability 使用 `append_only`。`qfq`、`hfq` 股票 capability
+使用 `full_refresh_required`，因为公司行动可能使历史复权值发生修订。Adapter 不
+调用 repository publish，不生成 generation 或 `data_version`，也未接入旧真实研究
+流水线。现有 `autowealth/data/` Provider、缓存和 fallback chain 保持兼容，尚未迁移。
+
+本阶段对 `volume` 和 `amount` 只按确定性 Decimal 规则保留源数值，不进行乘除、
+缩放或单位猜测。`stock_zh_a_hist` 与 `index_zh_a_hist` 的单位语义尚未通过固定
+AKShare 版本 fixture 或显式 integration 验证，因此当前 Adapter 不声称已完成跨
+endpoint 单位统一。retry、fallback、Provider attempts、coordinator、worker、API、
+部署和真实网络 integration 均不属于本阶段。
