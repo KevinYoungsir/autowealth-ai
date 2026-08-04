@@ -6,8 +6,14 @@ from datetime import date
 from importlib import import_module
 from typing import Callable, Optional, Tuple
 
+import pandas as pd
+
 from .calendar import TradingCalendar, validate_trading_days
-from .dataframe_conversion import convert_eod_dataframe_to_bars
+from .dataframe_conversion import (
+    _parse_trade_date,
+    _resolve_columns,
+    convert_eod_dataframe_to_bars,
+)
 from .providers import (
     EODProviderCapability,
     EODProviderError,
@@ -25,6 +31,7 @@ from .schemas import (
     BarFrequency,
     EODBar,
     EODDatasetKey,
+    EODDateRange,
     Market,
     Venue,
 )
@@ -154,6 +161,14 @@ def akshare_index_symbol(dataset: EODDatasetKey) -> str:
         raise _unsupported("AKShare index data does not support the requested symbol.") from exc
 
 
+def akshare_index_daily_symbol(dataset: EODDatasetKey) -> str:
+    """Return the exchange-prefixed symbol for AKShare index daily history."""
+
+    symbol = akshare_index_symbol(dataset)
+    prefix = "sh" if dataset.venue is Venue.SSE else "sz"
+    return f"{prefix}{symbol}"
+
+
 def _expected_trading_days(
     calendar: TradingCalendar,
     request: EODProviderRequest,
@@ -189,6 +204,7 @@ class AKShareEODEquityProvider:
 
     provider_name = "akshare_eod_equity"
     provider_version = "1"
+    endpoint_name = "stock_zh_a_hist"
 
     def __init__(
         self,
@@ -269,6 +285,7 @@ class AKShareEODIndexProvider:
 
     provider_name = "akshare_eod_index"
     provider_version = "1"
+    endpoint_name = "index_zh_a_hist"
 
     def __init__(
         self,
@@ -343,9 +360,116 @@ class AKShareEODIndexProvider:
         return endpoint
 
 
+class AKShareEODIndexDailyProvider:
+    """Independent fallback adapter for full-history AKShare index daily data."""
+
+    provider_name = "akshare_eod_index_daily"
+    provider_version = "1"
+    endpoint_name = "stock_zh_index_daily"
+
+    def __init__(
+        self,
+        calendar: TradingCalendar,
+        endpoint: Optional[_Endpoint] = None,
+    ) -> None:
+        if not isinstance(calendar, TradingCalendar):
+            raise TypeError("calendar must implement TradingCalendar")
+        if endpoint is not None and not callable(endpoint):
+            raise TypeError("endpoint must be callable or None")
+        self._calendar = calendar
+        self._endpoint_callable = endpoint
+
+    @property
+    def capabilities(self) -> Tuple[EODProviderCapability, ...]:
+        """Return the two immutable unadjusted index capabilities."""
+
+        return _INDEX_CAPABILITIES
+
+    def fetch(self, request: EODProviderRequest) -> EODProviderResult:
+        """Fetch full index history and strictly filter the requested range locally."""
+
+        if type(request) is not EODProviderRequest:
+            raise TypeError("request must be an exact EODProviderRequest")
+        validate_eod_provider_request(request, self.capabilities)
+        expected_dates = _expected_trading_days(self._calendar, request)
+        symbol = akshare_index_daily_symbol(request.dataset)
+        endpoint = self._resolve_endpoint()
+        try:
+            frame = endpoint(symbol=symbol)
+        except Exception as exc:
+            raise EODProviderError(
+                EODProviderErrorCode.PROVIDER_UNAVAILABLE,
+                "The AKShare index daily endpoint is unavailable for this request.",
+            ) from exc
+        filtered = _filter_index_daily_frame(frame, request.requested_range)
+        bars = convert_eod_dataframe_to_bars(
+            filtered,
+            request.dataset,
+            request.requested_range,
+        )
+        result = EODProviderResult(
+            request=request,
+            provider_name=self.provider_name,
+            provider_version=self.provider_version,
+            status=_result_status(bars, expected_dates),
+            bars=bars,
+        )
+        return validate_eod_provider_result(result, self._calendar)
+
+    def _resolve_endpoint(self) -> _Endpoint:
+        if self._endpoint_callable is not None:
+            return self._endpoint_callable
+        try:
+            ak = import_module("akshare")
+            endpoint = getattr(ak, "stock_zh_index_daily", None)
+        except Exception as exc:
+            raise EODProviderError(
+                EODProviderErrorCode.PROVIDER_UNAVAILABLE,
+                "The AKShare index daily endpoint is unavailable.",
+            ) from exc
+        if not callable(endpoint):
+            raise EODProviderError(
+                EODProviderErrorCode.PROVIDER_UNAVAILABLE,
+                "The AKShare index daily endpoint is unavailable.",
+            )
+        self._endpoint_callable = endpoint
+        return endpoint
+
+
+def _filter_index_daily_frame(
+    frame: object,
+    requested_range: EODDateRange,
+) -> pd.DataFrame:
+    if type(frame) is not pd.DataFrame:
+        raise EODProviderError(
+            EODProviderErrorCode.MALFORMED_PROVIDER_PAYLOAD,
+            "The provider payload must be an exact pandas DataFrame.",
+        )
+    isolated = frame.copy(deep=True)
+    if isolated.empty:
+        return pd.DataFrame()
+
+    columns = _resolve_columns(isolated)
+    date_column = columns["date"]
+    if date_column is None:  # pragma: no cover - _resolve_columns requires a date.
+        raise EODProviderError(
+            EODProviderErrorCode.MALFORMED_PROVIDER_PAYLOAD,
+            "The provider payload is missing a required EOD column.",
+        )
+    unrestricted_range = EODDateRange(date.min, date.max)
+    parsed_dates = tuple(
+        _parse_trade_date(isolated.iloc[row_number][date_column], unrestricted_range)
+        for row_number in range(len(isolated.index))
+    )
+    mask = [requested_range.contains(trade_date) for trade_date in parsed_dates]
+    return isolated.loc[mask].copy(deep=True).reset_index(drop=True)
+
+
 __all__ = [
     "AKShareEODEquityProvider",
+    "AKShareEODIndexDailyProvider",
     "AKShareEODIndexProvider",
     "akshare_equity_symbol",
+    "akshare_index_daily_symbol",
     "akshare_index_symbol",
 ]

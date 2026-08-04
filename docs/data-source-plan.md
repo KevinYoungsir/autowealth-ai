@@ -405,7 +405,8 @@ retry、coordinator、generation 合并、worker、scheduler、API 或部署接�
 
 `autowealth/market_data/` 新增面向领域级 EOD contract 的 AKShare 股票和指数
 Adapter。股票 Adapter 使用 `stock_zh_a_hist`，指数 Adapter 在本阶段只使用
-`index_zh_a_hist`；`stock_zh_index_daily` fallback 留给后续 Provider Chain。
+`index_zh_a_hist`；后续 PR5 增加的 `stock_zh_index_daily` fallback 保持为独立
+Adapter，不隐藏在 primary Adapter 内。
 Adapter 只接受包含市场、交易所、资产类型、canonical symbol、频率和复权口径的
 `EODDatasetKey`，不会接受名称、裸代码或 endpoint 专用代码。
 
@@ -426,3 +427,31 @@ TradingCalendar 完成完全离线的单元测试。未注入 endpoint 时，AKS
 AKShare 版本 fixture 或显式 integration 验证，因此当前 Adapter 不声称已完成跨
 endpoint 单位统一。retry、fallback、Provider attempts、coordinator、worker、API、
 部署和真实网络 integration 均不属于本阶段。
+
+## 18. v0.17.0 EOD Provider Chain 与指数 fallback
+
+领域级 `EODProviderChain` 是独立 orchestrator，不实现 `EODProvider` Protocol，也不
+伪装成单一数据源。它按声明顺序检查 Provider capability，并对每个 Provider 最多
+调用一次：完整 `success` 立即停止；`partial_success` 会保留为候选并继续 fallback；
+`empty` 会保留 `empty_response` 证据并继续；明确不支持请求的 Provider 不调用
+endpoint。没有完整结果时，Chain 按 row count、起止边界和 Provider 顺序确定性选择
+最佳 partial。partial 只表示仍有研究价值的已验证数据，不表示 coordinator 可以发布。
+
+每次尝试使用不可变 `EODProviderAttempt` 记录稳定 Provider/endpoint 身份、结果或错误
+状态、行数、有效区间、warning code 和是否被选中。attempt 不复制 bars，不记录系统
+时间、UUID、原始 payload、异常 repr、traceback、绝对路径或凭据。所有 Provider 都未
+返回完整或 partial 数据时，Chain 使用有限优先级聚合 unsupported、malformed、
+permanent、temporary 和 unavailable，不采用最后一次错误作为隐式结论。本 PR 不执行
+retry、sleep 或 backoff。
+
+指数 fallback 是独立 `AKShareEODIndexDailyProvider`，只支持冻结的六个 canonical
+指数、日频和不复权口径。`stock_zh_index_daily` 只接收带 `sh`/`sz` 前缀的 symbol，
+返回的完整历史 DataFrame 会在副本上严格解析全部日期，再按请求闭区间本地过滤。
+无法解析的日期使整个 payload 失败；合法区间外行可以过滤，区间内 OHLCV、重复日期
+和 schema 继续由现有 converter 与 Provider Result Validator 关闭式校验。primary
+`index_zh_a_hist` Adapter 内没有隐藏 fallback。
+
+本 PR 不访问 repository，不读取或写入 `current.json`，不生成 generation、
+`generation_id` 或 `data_version`，也不接入旧研究流水线。request planner、历史数据
+合并/upsert、完整批次验证、partial 发布判定、原子 generation 发布、noop/幂等和发布
+失败恢复均留给后续 coordinator PR6。
