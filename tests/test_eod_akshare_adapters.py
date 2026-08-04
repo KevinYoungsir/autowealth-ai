@@ -17,8 +17,10 @@ import autowealth.market_data as market_data
 import autowealth.market_data.akshare_adapters as adapter_module
 from autowealth.market_data.akshare_adapters import (
     AKShareEODEquityProvider,
+    AKShareEODIndexDailyProvider,
     AKShareEODIndexProvider,
     akshare_equity_symbol,
+    akshare_index_daily_symbol,
     akshare_index_symbol,
 )
 from autowealth.market_data.dataframe_conversion import convert_eod_dataframe_to_bars
@@ -749,10 +751,17 @@ def test_provider_request_capabilities_reject_wrong_asset_and_adjustment() -> No
 
 
 def test_index_adapter_has_no_fallback_endpoint_or_chain_dependency() -> None:
-    source = inspect.getsource(adapter_module)
+    source = inspect.getsource(AKShareEODIndexProvider)
     assert "stock_zh_index_daily" not in source
     assert "IndexProviderChain" not in source
     assert "default_index_providers" not in source
+    assert AKShareEODIndexProvider.endpoint_name == "index_zh_a_hist"
+
+
+def test_adapters_expose_stable_endpoint_names() -> None:
+    assert AKShareEODEquityProvider.endpoint_name == "stock_zh_a_hist"
+    assert AKShareEODIndexProvider.endpoint_name == "index_zh_a_hist"
+    assert AKShareEODIndexDailyProvider.endpoint_name == "stock_zh_index_daily"
 
 
 def test_package_root_import_defers_new_modules_repository_pyarrow_and_akshare() -> None:
@@ -762,11 +771,14 @@ import autowealth
 before = set(sys.modules)
 import autowealth.market_data as market_data
 assert "autowealth.market_data.akshare_adapters" not in sys.modules
+assert "autowealth.market_data.provider_chain" not in sys.modules
 assert "autowealth.market_data.dataframe_conversion" not in sys.modules
 assert "autowealth.market_data.repositories" not in sys.modules
 assert "pyarrow.parquet" not in sys.modules
 assert "akshare" not in set(sys.modules) - before
 assert "AKShareEODEquityProvider" in market_data.__all__
+assert "AKShareEODIndexDailyProvider" in market_data.__all__
+assert "EODProviderChain" in market_data.__all__
 assert "convert_eod_dataframe_to_bars" in market_data.__all__
 """)
     assert completed.returncode == 0, completed.stderr
@@ -866,8 +878,14 @@ def test_adapter_source_has_no_clock_environment_repository_or_business_ids() ->
 def test_public_exports_are_unique_and_only_include_approved_adapter_names() -> None:
     expected = {
         "AKShareEODEquityProvider",
+        "AKShareEODIndexDailyProvider",
         "AKShareEODIndexProvider",
+        "EODProviderAttempt",
+        "EODProviderChain",
+        "EODProviderChainError",
+        "EODProviderChainResult",
         "akshare_equity_symbol",
+        "akshare_index_daily_symbol",
         "akshare_index_symbol",
         "convert_eod_dataframe_to_bars",
     }
@@ -875,7 +893,6 @@ def test_public_exports_are_unique_and_only_include_approved_adapter_names() -> 
     assert len(market_data.__all__) == len(set(market_data.__all__))
     assert {
         "ColumnMapping",
-        "EODProviderChain",
         "EODUpdateCoordinator",
         "stock_zh_index_daily",
     }.isdisjoint(market_data.__all__)
@@ -896,7 +913,8 @@ def test_converter_and_adapter_public_errors_do_not_echo_raw_values(tmp_path: Pa
 
 def test_default_endpoint_attribute_is_resolved_only_during_fetch() -> None:
     source = inspect.getsource(adapter_module)
-    assert source.count('import_module("akshare")') == 2
+    assert source.count('import_module("akshare")') == 3
     assert 'getattr(ak, "stock_zh_a_hist", None)' in source
     assert 'getattr(ak, "index_zh_a_hist", None)' in source
-    assert source.count("frame = endpoint(") == 2
+    assert 'getattr(ak, "stock_zh_index_daily", None)' in source
+    assert source.count("frame = endpoint(") == 3

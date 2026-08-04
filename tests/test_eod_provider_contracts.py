@@ -1114,10 +1114,14 @@ def test_offline_fake_provider_satisfies_protocol(
     assert provider.capabilities[0].matches(equity_none)
 
 
-def test_market_data_exports_are_unique_and_exclude_future_runtime_components() -> None:
+def test_market_data_exports_are_unique_and_exclude_unimplemented_runtime_components() -> None:
     required = {
         "EODProvider",
+        "EODProviderAttempt",
         "EODProviderCapability",
+        "EODProviderChain",
+        "EODProviderChainError",
+        "EODProviderChainResult",
         "EODProviderError",
         "EODProviderErrorCode",
         "EODProviderRequest",
@@ -1138,7 +1142,6 @@ def test_market_data_exports_are_unique_and_exclude_future_runtime_components() 
     assert len(market_data.__all__) == len(set(market_data.__all__))
     forbidden = {
         "AKShareEODProvider",
-        "EODProviderChain",
         "EODUpdateCoordinator",
         "EODRetryExecutor",
     }
