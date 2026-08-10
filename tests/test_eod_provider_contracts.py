@@ -1116,6 +1116,11 @@ def test_offline_fake_provider_satisfies_protocol(
 
 def test_market_data_exports_are_unique_and_exclude_unimplemented_runtime_components() -> None:
     required = {
+        "EODIncrementalCoordinator",
+        "EODIncrementalCoordinatorError",
+        "EODIncrementalCoordinatorErrorCode",
+        "EODIncrementalUpdateResult",
+        "EODIncrementalUpdateStatus",
         "EODProvider",
         "EODProviderAttempt",
         "EODProviderCapability",
@@ -1180,6 +1185,7 @@ socket.socket.connect = blocked
 import autowealth.market_data as market_data
 
 assert dict(os.environ) == before
+assert "autowealth.market_data.coordinator" not in sys.modules
 assert "autowealth.market_data.repositories" not in sys.modules
 assert "pyarrow.parquet" not in sys.modules
 new_roots = {name.split(".", 1)[0] for name in set(sys.modules) - before_modules}

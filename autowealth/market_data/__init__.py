@@ -77,6 +77,16 @@ _REPOSITORY_EXPORTS = frozenset(
 _LAZY_EXPORT_MODULES = MappingProxyType(
     {
         **{name: ".repositories" for name in _REPOSITORY_EXPORTS},
+        **{
+            name: ".coordinator"
+            for name in (
+                "EODIncrementalCoordinator",
+                "EODIncrementalCoordinatorError",
+                "EODIncrementalCoordinatorErrorCode",
+                "EODIncrementalUpdateResult",
+                "EODIncrementalUpdateStatus",
+            )
+        },
         "AKShareEODEquityProvider": ".akshare_adapters",
         "AKShareEODIndexDailyProvider": ".akshare_adapters",
         "AKShareEODIndexProvider": ".akshare_adapters",
@@ -126,6 +136,11 @@ __all__ = [
     "EODGenerationExistsError",
     "EODGenerationManifest",
     "EODIntegrityError",
+    "EODIncrementalCoordinator",
+    "EODIncrementalCoordinatorError",
+    "EODIncrementalCoordinatorErrorCode",
+    "EODIncrementalUpdateResult",
+    "EODIncrementalUpdateStatus",
     "EODNoCurrentGenerationError",
     "EODProvider",
     "EODProviderAttempt",

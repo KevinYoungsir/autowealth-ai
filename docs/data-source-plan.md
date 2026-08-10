@@ -455,3 +455,30 @@ retry、sleep 或 backoff。
 `generation_id` 或 `data_version`，也不接入旧研究流水线。request planner、历史数据
 合并/upsert、完整批次验证、partial 发布判定、原子 generation 发布、noop/幂等和发布
 失败恢复均留给后续 coordinator PR6。
+
+## 19. v0.17.0 Incremental EOD Coordinator
+
+`EODIncrementalCoordinator` 编排单个数据集的一次同步更新。每次调用只读取一次 current
+generation，由纯 Planner 决定请求窗口，并在需要抓取时最多调用一次既有 Provider Chain。
+Chain 的完整 `success` 才能进入合并和发布；`partial_success` 会关闭式失败并保留 attempts，
+不会发布，也不会用 current 中的旧值补齐缺失交易日。
+
+初次导入直接使用完整 Provider bars。`append_only` 增量保留既有历史，并拒绝任何新旧日期
+重叠，即使两条 bar 内容相同也不会静默去重。`overlap_refresh` 会完整删除请求区间内的旧
+bars，再按 whole-bar replacement 插入 Provider 返回值；不逐字段合并，新的 `amount=None`
+也会替换旧值。候选 generation 先对完整历史执行结构校验，再对 effective range 切片执行
+coverage 校验。重复记录和缺失交易日都会阻止发布，即使底层 Validator 将部分情况表示为
+warning。完整校验通过后才计算逻辑内容摘要；内容与 current 完全相同时返回防御性 no-op，
+不创建 generation 或更新 pointer。
+
+Coordinator 不读取系统时钟、不生成 UUID。只有确实需要发布时，调用方才必须提供合法的
+`generation_id` 和 timezone-aware `created_at`，后者统一为 UTC。既有 Repository 继续负责
+staging、Parquet/manifest 校验、generation rename 和 `current.json` 原子激活；Coordinator
+不直接写这些文件，也不会在 publish 失败后重试、删除 inactive orphan 或再次发布。pointer
+激活失败时，上一版 current 仍由 Repository 保持有效。
+
+该编排仍以 single-writer 为前提，不提供锁、compare-and-swap、多进程或分布式一致性。
+并发 writer 可能在 `load_current` 与 `publish` 之间造成 lost update，调用方必须避免并发。
+`full_refresh_required` 只返回明确状态，不自动下载或重建完整历史。PR6 尚未接入旧研究
+pipeline、worker、scheduler、API 或 CLI；retry、锁、批处理、生产工厂和 orphan 清理留给
+后续独立 PR。
