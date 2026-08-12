@@ -14,7 +14,7 @@
 - tag 指向的 commit 必须精确等于 Release Workflow 验证时的 `origin/main` HEAD。
 - 测试、前端、Docker、Python 包和 Release Notes 全部通过后才创建 Release。
 - 正式 tag 不得删除、移动、复用或强制覆盖。
-- v0.16.0 默认不发布 PyPI，也不自动执行外部宣传。
+- v0.17.0 默认不发布 PyPI，也不自动执行外部宣传。
 
 `scripts/verify_release_metadata.py` 要求 Python 3.11 或更高版本，因为它使用
 Python 标准库中的 `tomllib`。本地发布检查、CI 和 Release runner 都必须使用
@@ -30,7 +30,7 @@ Release Prep PR 只处理产品版本、CHANGELOG、发布校验器、核心 CI/
 合并前至少确认：
 
 ```powershell
-python scripts/verify_release_metadata.py --expected-version 0.16.0
+python scripts/verify_release_metadata.py --expected-version 0.17.0
 python -m pytest tests/test_release_metadata.py -q -p no:cacheprovider
 python -m compileall -q autowealth tests scripts
 git diff --check
@@ -52,14 +52,14 @@ Release Prep PR 与 External Publication Safety PR 合并后，在 `main` 上确
 2. 本地 `main` 与准备发布的远程 SHA 一致。
 3. `main` CI 全部成功。
 4. 产品版本、CHANGELOG 和前后端版本一致。
-5. `## [0.16.0] - 2026-07-29` 精确存在。
+5. `## [0.17.0] - 2026-08-10` 精确存在。
 6. Python wheel、sdist、前端 build 和 Docker build 均可完成。
 7. 没有正在等待的发布阻断问题。
 
 产品版本检查：
 
 ```powershell
-python scripts/verify_release_metadata.py --expected-version 0.16.0
+python scripts/verify_release_metadata.py --expected-version 0.17.0
 ```
 
 校验失败必须修复并重新走 PR/CI，不得跳过，也不得回退到旧 CHANGELOG 段。
@@ -73,15 +73,15 @@ git branch --show-current
 git status --short
 git rev-parse HEAD
 git remote get-url origin
-git tag -a v0.16.0 -m "AutoWealth v0.16.0"
-git show v0.16.0
+git tag -a v0.17.0 -m "AutoWealth v0.17.0"
+git show v0.17.0
 ```
 
 创建本地 tag 后先暂停并再次确认：
 
 - tag 指向预期 `main` SHA；
 - tag 内容是 annotated tag；
-- tag 和产品版本均为 `0.16.0`；
+- tag 和产品版本均为 `0.17.0`；
 - CHANGELOG heading 和日期正确；
 - 没有同名远程正式 tag；
 - 已获得 push tag 的明确授权。
@@ -89,7 +89,7 @@ git show v0.16.0
 确认后才执行：
 
 ```powershell
-git push origin v0.16.0
+git push origin v0.17.0
 ```
 
 `main` push 和 CHANGELOG 变更不会自动创建 tag。`release.yml` 也不会创建 tag。
@@ -129,8 +129,8 @@ Release：任何上传或校验失败都会保留 draft，公开 Release 不会�
 
 保留 tag，不删除、不移动、不覆盖。若失败来自临时 runner 或资产上传问题，可在
 代码和 tag 不变的前提下重新运行 workflow，并继续已有 draft。若失败来自需要修改
-仓库代码的问题，应通过新 PR 和新补丁版本（例如 `v0.16.1`）修复，不得直接重推
-`v0.16.0`。
+仓库代码的问题，应通过新 PR 和新补丁版本（例如 `v0.17.1`）修复，不得直接重推
+`v0.17.0`。
 
 ### Release 已创建但部署或功能异常
 
@@ -139,7 +139,7 @@ artifacts。修复通过新 PR 和新补丁版本发布。
 
 ## 7. 默认关闭项
 
-- PyPI：v0.16.0 不读取 Token，不执行 `twine upload`。
+- PyPI：v0.17.0 不读取 Token，不执行 `twine upload`。
 - 外部宣传：仅允许手动 `workflow_dispatch`，必须提供公开 Release tag 并精确输入
   `PUBLISH`；创建 GitHub Release 不会自动发帖或发送 webhook。
 - 镜像发布：只验证 Docker build，不 push registry。

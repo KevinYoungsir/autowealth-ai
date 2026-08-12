@@ -78,7 +78,7 @@ Dev.to 和社区通知均为手动工作流，不监听 Release 发布事件、�
 |------------|------|---------|
 | `DISCORD_WEBHOOK_URL` | Discord 频道 Webhook URL | Discord 频道设置 > 整合 > Webhook |
 | `SLACK_WEBHOOK_URL` | Slack 频道 Webhook URL | Slack App 设置 > Incoming Webhooks |
-> **注意**：v0.16.0 的核心 Release Workflow 不读取 PyPI Token，也不上传 PyPI。
+> **注意**：v0.17.0 的核心 Release Workflow 不读取 PyPI Token，也不上传 PyPI。
 > 外部宣传与通知工作流的 Secret 和失败策略必须在独立安全 PR 中审查。
 
 ---
@@ -140,7 +140,7 @@ Dev.to 和社区通知均为手动工作流，不监听 Release 发布事件、�
 
 ### 6. PyPI 发布状态
 
-v0.16.0 默认关闭 PyPI 发布。`release.yml` 不读取 `PYPI_API_TOKEN`，也不执行
+v0.17.0 默认关闭 PyPI 发布。`release.yml` 不读取 `PYPI_API_TOKEN`，也不执行
 `twine upload`。未来启用前必须通过独立安全审查，明确凭据、审批、回滚和包名
 所有权。
 
@@ -163,7 +163,7 @@ v0.16.0 默认关闭 PyPI 发布。`release.yml` 不读取 `PYPI_API_TOKEN`，�
 6. 严格提取当前版本 CHANGELOG 段；不存在时失败，不回退旧版本。
 7. 创建或恢复 draft Release，仅上传三个预期资产；验证完成后才公开。
 
-完整人工发布顺序见 `docs/release-process.md`。v0.16.0 不上传 PyPI。
+完整人工发布顺序见 `docs/release-process.md`。v0.17.0 不上传 PyPI。
 
 ### publish-twitter.yml - 手动发 Twitter
 
@@ -220,13 +220,13 @@ JSON 数据处理。
 发布。发布负责人必须在所有 CI 和发布前检查通过后，于已验证的 `main` SHA 上执行：
 
 ```bash
-git tag -a v0.16.0 -m "AutoWealth v0.16.0"
-git show v0.16.0
+git tag -a v0.17.0 -m "AutoWealth v0.17.0"
+git show v0.17.0
 git status --short
-git push origin v0.16.0
+git push origin v0.17.0
 ```
 
-`git push origin v0.16.0` 是显式发布操作，必须另行获得授权。正式 tag 不得删除、
+`git push origin v0.17.0` 是显式发布操作，必须另行获得授权。正式 tag 不得删除、
 移动、复用或强制覆盖；失败后修复代码并发布新的补丁版本。
 
 ### weekly-report.yml - 每周自动报告
@@ -287,9 +287,9 @@ git push origin v0.16.0
 
 **排查步骤**：
 ```bash
-git show v0.16.0
-git branch -r --contains v0.16.0
-python scripts/verify_release_metadata.py --expected-version 0.16.0 --tag v0.16.0
+git show v0.17.0
+git branch -r --contains v0.17.0
+python scripts/verify_release_metadata.py --expected-version 0.17.0 --tag v0.17.0
 ```
 
 不要通过删除、移动或重推同名正式 tag 处理失败。
