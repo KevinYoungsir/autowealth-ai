@@ -35,7 +35,7 @@ jobs:
       - name: Compile Python sources
         run: python -m compileall -q autowealth tests scripts
       - name: Verify release metadata
-        run: python scripts/verify_release_metadata.py --expected-version 0.16.0
+        run: python scripts/verify_release_metadata.py --expected-version 0.17.0
       - name: Test release metadata validation
         run: |
           python -m pytest tests/test_release_metadata.py \

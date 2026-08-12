@@ -35,7 +35,17 @@ AutoWealth AI 是一款基于**多智能体技术**的智能投资分析引擎�
 - `autowealth/research/`：编排组合构建、回测和结构化研究摘要。
 - `autowealth/agents/`：mock 优先的 DeepSeek 研究摘要、风险复核和反方观点。
 - `autowealth/api/research_server.py`：独立 FastAPI 研究聚合接口。
+- `autowealth/market_data/`：v0.17.0 领域级增量 EOD 数据基础设施。
 - `frontend/`：Next.js、TypeScript 和 Tailwind CSS 研究看板。
+
+### v0.17.0 增量 EOD 基础设施
+
+v0.17.0 在 `autowealth.market_data` 下提供 library-level capability，包括显式 dataset
+identity、确定性 request planning、AKShare adapters、provider fallback chain、不可变
+generations、原子 `current` pointer 和 incremental coordinator。
+
+该能力尚未接入自动每日抓取或生产调度。既有真实研究流水线在 v0.17.0 中没有迁移到
+这套 EOD stack，其行为和数据路径保持不变。
 
 本地启动入口：
 

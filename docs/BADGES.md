@@ -12,7 +12,7 @@
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 
 <!-- 版本 -->
-![Version](https://img.shields.io/badge/Version-0.16.0-green.svg)
+![Version](https://img.shields.io/badge/Version-0.17.0-green.svg)
 ```
 
 ## 代码质量

@@ -7,6 +7,41 @@
 
 ## [未发布]
 
+## [0.17.0] - 2026-08-10
+
+### 新增
+- 新增领域级 EOD dataset/provider contract、显式数据集身份和确定性请求规划。
+- 新增不可变、版本化的本地 EOD repository，以 generation manifest、内容校验和
+  原子 `current` 指针发布有效代次。
+- 新增 AKShare A 股 EOD adapter、指数主 adapter、独立指数日线 fallback adapter，
+  以及保留逐次尝试证据的确定性 `EODProviderChain`。
+- 新增 `EODIncrementalCoordinator`，支持 append-only 增量、overlap refresh 和显式
+  `full_refresh_required` 结果。
+
+### 变更
+- 只有完整成功且通过校验的候选数据才可发布；partial result 保持 fail-closed。
+- 发布前依次执行完整候选集与有效区间校验，重复或缺失交易日会阻止 publication，
+  不做静默去重、修复或市场数据填造。
+- 内容 checksum 未变化时返回确定性 no-op；repository 负责原子 publication，
+  Coordinator 不隐式读取系统时钟或生成 UUID。
+- 既有 legacy research pipeline 的行为和数据路径保持不变，尚未迁移到新 EOD stack。
+
+### 安全
+- 不新增真实交易能力，也不接入 DeepSeek 决策。
+- 不引入隐藏 retry/backoff、rate limiting 或自动数据修复。
+- 公开 diagnostics 不暴露凭据、本机路径或 traceback，Provider 失败保持可审计且不伪造数据。
+- `qfq`/`hfq` 调整口径在没有明确安全的有界修订策略时返回
+  `full_refresh_required`，不会与未复权数据静默混用。
+
+### 已知限制
+- 本版本仅提供 library-level incremental EOD infrastructure，不是自动化生产 ingestion。
+- `TradingCalendar` 由调用方提供；本版本没有 production composition root 或具体日历实现。
+- Coordinator 每次只更新一个 dataset，并采用 single-writer 假设；不提供并发锁或 CAS。
+- 不包含 retry/backoff、rate limiting、batch updater、API、CLI、worker、scheduler、
+  monitoring 或 orphan cleanup。
+- 不迁移 legacy research pipeline；不提供 full-refresh executor。
+- `qfq`/`hfq` 默认要求 full refresh，除非调用方提供经过验证的有界修订策略。
+
 ## [0.16.0] - 2026-07-29
 
 ### 新增
@@ -113,5 +148,6 @@
 - `Fixed` 修复
 - `Security` 安全
 
-[未发布]: https://github.com/KevinYoungsir/autowealth-ai/compare/v0.16.0...HEAD
+[未发布]: https://github.com/KevinYoungsir/autowealth-ai/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/KevinYoungsir/autowealth-ai/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/KevinYoungsir/autowealth-ai/compare/v0.15.1...v0.16.0
