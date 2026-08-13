@@ -135,6 +135,39 @@ def test_release_workflow_validates_checksums_before_publishing_draft() -> None:
     assert checksum_index < draft_index < upload_index < validate_index < publish_index
 
 
+def test_release_workflow_discovers_drafts_from_paginated_release_list() -> None:
+    text = _read(WORKFLOW_ROOT / "release.yml")
+
+    assert "list_matching_releases()" in text
+    assert "--paginate" in text
+    assert "--slurp" in text
+    assert "repos/$GITHUB_REPOSITORY/releases?per_page=100" in text
+    assert "[.[][] | select(.tag_name == $tag)]" in text
+    assert text.count("list_matching_releases") == 3
+    assert "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" not in text
+
+
+def test_release_workflow_handles_matching_release_counts_fail_closed() -> None:
+    text = _read(WORKFLOW_ROOT / "release.yml")
+
+    assert '[[ "$MATCH_COUNT" -gt 1 ]]' in text
+    assert '[[ "$MATCH_COUNT" -eq 0 ]]' in text
+    assert '[[ "$MATCH_COUNT" -ne 1 ]]' in text
+    assert "Multiple Releases exist for $TAG; refusing to choose one." in text
+    assert text.index('gh release create "$TAG"') < text.rindex("list_matching_releases")
+    assert ".tag_name == $tag and .draft == true and .prerelease == false" in text
+    assert "A non-draft or inconsistent Release already exists for $TAG." in text
+
+
+def test_release_workflow_retains_a_validated_positive_release_id() -> None:
+    text = _read(WORKFLOW_ROOT / "release.yml")
+
+    assert 'and (.id | type == "number" and . > 0 and floor == .)' in text
+    assert 'RELEASE_ID="$(jq -r \'.id\' "$RELEASE_JSON")"' in text
+    assert '[[ ! "$RELEASE_ID" =~ ^[1-9][0-9]*$ ]]' in text
+    assert "Release ID must be a positive integer." in text
+
+
 def test_tracked_public_text_has_no_stale_repository_or_package_claims() -> None:
     forbidden = (
         "Jsoned" + "/autowealth-ai",
