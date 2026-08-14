@@ -18,7 +18,7 @@ from scripts.verify_release_metadata import (
 )
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-VERSION = "0.17.0"
+VERSION = "0.17.1"
 
 
 def _write_fixture_repository(
@@ -59,14 +59,14 @@ def _write_fixture_repository(
     changelog_text = changelog or (
         "# Changelog\n\n"
         "## [未发布]\n\n"
-        "## [0.17.0] - 2026-08-10\n\n"
+        "## [0.17.1] - 2026-08-13\n\n"
         "### 新增\n"
         "- Current release.\n\n"
-        "## [0.16.0] - 2026-07-29\n\n"
+        "## [0.17.0] - 2026-08-10\n\n"
         "- Previous release.\n\n"
-        "[未发布]: https://example.test/compare/v0.17.0...HEAD\n"
+        "[未发布]: https://example.test/compare/v0.17.1...HEAD\n"
+        "[0.17.1]: https://example.test/compare/v0.17.0...v0.17.1\n"
         "[0.17.0]: https://example.test/compare/v0.16.0...v0.17.0\n"
-        "[0.16.0]: https://example.test/releases/v0.16.0\n"
     )
     (root / "CHANGELOG.md").write_text(changelog_text, encoding="utf-8")
     return root
@@ -156,8 +156,8 @@ def test_pyproject_version_is_authoritative(
     error = json.loads(captured.err)
     assert exit_code != 0
     assert error["code"] == "release_metadata_invalid"
-    assert "autowealth.__version__ is '0.17.0', expected '0.15.1'" in error["errors"][0]
-    assert "frontend/package.json version is '0.17.0', expected '0.15.1'" in error["errors"][0]
+    assert "autowealth.__version__ is '0.17.1', expected '0.15.1'" in error["errors"][0]
+    assert "frontend/package.json version is '0.17.1', expected '0.15.1'" in error["errors"][0]
     fixture_after = {
         path.relative_to(root): path.read_bytes() for path in root.rglob("*") if path.is_file()
     }
@@ -198,42 +198,42 @@ def test_exact_release_heading_is_required_and_accepted(tmp_path: Path) -> None:
 
     result = _verify(root)
 
-    assert result.changelog_heading == "## [0.17.0] - 2026-08-10"
-    assert result.release_date == "2026-08-10"
+    assert result.changelog_heading == "## [0.17.1] - 2026-08-13"
+    assert result.release_date == "2026-08-13"
 
 
 def test_older_heading_does_not_replace_missing_current_heading(tmp_path: Path) -> None:
     root = _write_fixture_repository(
         tmp_path,
-        changelog="# Changelog\n\n## [0.16.0] - 2026-07-29\n\n- Previous release.\n",
+        changelog="# Changelog\n\n## [0.17.0] - 2026-08-10\n\n- Previous release.\n",
     )
 
-    with pytest.raises(ReleaseMetadataError, match=r"\[0\.17\.0\]"):
+    with pytest.raises(ReleaseMetadataError, match=r"\[0\.17\.1\]"):
         _verify(root)
 
 
 def test_matching_strict_tag_passes(tmp_path: Path) -> None:
     root = _write_fixture_repository(tmp_path)
 
-    result = _verify(root, tag="v0.17.0")
+    result = _verify(root, tag="v0.17.1")
 
-    assert result.tag == "v0.17.0"
+    assert result.tag == "v0.17.1"
 
 
 def test_mismatched_tag_fails(tmp_path: Path) -> None:
     root = _write_fixture_repository(tmp_path)
 
     with pytest.raises(ReleaseMetadataError, match="does not match product version"):
-        _verify(root, tag="v0.16.0")
+        _verify(root, tag="v0.17.0")
 
 
 @pytest.mark.parametrize(
     "tag",
     [
-        "0.17.0",
+        "0.17.1",
         "v0.17",
-        "release-v0.17.0",
-        "v0.17.0-beta",
+        "release-v0.17.1",
+        "v0.17.1-beta",
     ],
 )
 def test_non_strict_semver_tags_fail(tmp_path: Path, tag: str) -> None:
@@ -248,7 +248,7 @@ def test_release_notes_extract_only_requested_section(tmp_path: Path) -> None:
 
     notes = extract_release_notes(root, VERSION)
 
-    assert notes.startswith("## [0.17.0] - 2026-08-10")
+    assert notes.startswith("## [0.17.1] - 2026-08-13")
     assert "Current release." in notes
     assert "## [未发布]" not in notes
     assert "[未发布]:" not in notes
@@ -259,11 +259,11 @@ def test_release_notes_exclude_previous_release(tmp_path: Path) -> None:
 
     notes = extract_release_notes(root, VERSION)
 
-    assert "## [0.16.0]" not in notes
+    assert "## [0.17.0]" not in notes
     assert "Previous release." not in notes
+    assert "[0.17.1]:" not in notes
     assert "[0.17.0]:" not in notes
-    assert "[0.16.0]:" not in notes
-    assert "compare/v0.17.0...HEAD" not in notes
+    assert "compare/v0.17.1...HEAD" not in notes
 
 
 def test_dist_with_old_wheel_and_sdist_versions_fails(tmp_path: Path) -> None:
@@ -280,8 +280,8 @@ def test_dist_with_current_wheel_and_sdist_versions_passes(tmp_path: Path) -> No
     root = _write_fixture_repository(tmp_path / "repo")
     dist = tmp_path / "dist"
     dist.mkdir()
-    wheel = "autowealth_ai-0.17.0-py3-none-any.whl"
-    sdist = "autowealth_ai-0.17.0.tar.gz"
+    wheel = "autowealth_ai-0.17.1-py3-none-any.whl"
+    sdist = "autowealth_ai-0.17.1.tar.gz"
     _write_artifact_pair(dist)
 
     result = _verify(root, dist_dir=dist)
@@ -293,7 +293,7 @@ def test_dist_with_only_sdist_fails_for_missing_wheel(tmp_path: Path) -> None:
     root = _write_fixture_repository(tmp_path / "repo")
     dist = tmp_path / "dist"
     dist.mkdir()
-    _write_sdist(dist / "autowealth_ai-0.17.0.tar.gz")
+    _write_sdist(dist / "autowealth_ai-0.17.1.tar.gz")
 
     with pytest.raises(ReleaseMetadataError, match="exactly one wheel; found 0"):
         _verify(root, dist_dir=dist)
@@ -303,7 +303,7 @@ def test_dist_with_only_wheel_fails_for_missing_sdist(tmp_path: Path) -> None:
     root = _write_fixture_repository(tmp_path / "repo")
     dist = tmp_path / "dist"
     dist.mkdir()
-    _write_wheel(dist / "autowealth_ai-0.17.0-py3-none-any.whl")
+    _write_wheel(dist / "autowealth_ai-0.17.1-py3-none-any.whl")
 
     with pytest.raises(ReleaseMetadataError, match="exactly one sdist; found 0"):
         _verify(root, dist_dir=dist)
@@ -313,9 +313,9 @@ def test_dist_with_two_wheels_fails(tmp_path: Path) -> None:
     root = _write_fixture_repository(tmp_path / "repo")
     dist = tmp_path / "dist"
     dist.mkdir()
-    _write_wheel(dist / "autowealth_ai-0.17.0-py3-none-any.whl")
-    _write_wheel(dist / "autowealth_ai-0.17.0-cp312-cp312-win_amd64.whl")
-    _write_sdist(dist / "autowealth_ai-0.17.0.tar.gz")
+    _write_wheel(dist / "autowealth_ai-0.17.1-py3-none-any.whl")
+    _write_wheel(dist / "autowealth_ai-0.17.1-cp312-cp312-win_amd64.whl")
+    _write_sdist(dist / "autowealth_ai-0.17.1.tar.gz")
 
     with pytest.raises(ReleaseMetadataError, match="exactly one wheel; found 2"):
         _verify(root, dist_dir=dist)
@@ -325,9 +325,9 @@ def test_dist_with_two_sdists_fails(tmp_path: Path) -> None:
     root = _write_fixture_repository(tmp_path / "repo")
     dist = tmp_path / "dist"
     dist.mkdir()
-    _write_wheel(dist / "autowealth_ai-0.17.0-py3-none-any.whl")
-    _write_sdist(dist / "autowealth_ai-0.17.0.tar.gz")
-    _write_sdist(dist / "autowealth-ai-0.17.0.tar.gz")
+    _write_wheel(dist / "autowealth_ai-0.17.1-py3-none-any.whl")
+    _write_sdist(dist / "autowealth_ai-0.17.1.tar.gz")
+    _write_sdist(dist / "autowealth-ai-0.17.1.tar.gz")
 
     with pytest.raises(ReleaseMetadataError, match="exactly one sdist; found 2"):
         _verify(root, dist_dir=dist)
@@ -362,11 +362,11 @@ def test_dist_rejects_metadata_version_mismatch(tmp_path: Path) -> None:
     root = _write_fixture_repository(tmp_path / "repo")
     dist = tmp_path / "dist"
     dist.mkdir()
-    wheel = dist / "autowealth_ai-0.17.0-py3-none-any.whl"
-    _write_wheel(wheel, metadata_version="0.16.0")
-    _write_sdist(dist / "autowealth_ai-0.17.0.tar.gz")
+    wheel = dist / "autowealth_ai-0.17.1-py3-none-any.whl"
+    _write_wheel(wheel, metadata_version="0.17.0")
+    _write_sdist(dist / "autowealth_ai-0.17.1.tar.gz")
 
-    with pytest.raises(ReleaseMetadataError, match="metadata has version 0.16.0"):
+    with pytest.raises(ReleaseMetadataError, match="metadata has version 0.17.0"):
         _verify(root, dist_dir=dist)
 
 
@@ -411,7 +411,7 @@ def test_verification_does_not_use_network_or_write_repository(
     monkeypatch.setattr(socket, "create_connection", reject_network)
     monkeypatch.setattr(socket, "socket", reject_network)
 
-    _verify(root, expected_version=VERSION, tag="v0.17.0")
+    _verify(root, expected_version=VERSION, tag="v0.17.1")
 
     after = {
         path.relative_to(root): path.read_bytes() for path in root.rglob("*") if path.is_file()
@@ -432,7 +432,7 @@ def test_cli_outputs_stable_machine_readable_summary(
             "--expected-version",
             VERSION,
             "--tag",
-            "v0.17.0",
+            "v0.17.1",
         ]
     )
 
@@ -440,12 +440,12 @@ def test_cli_outputs_stable_machine_readable_summary(
     assert exit_code == 0
     assert output == {
         "artifacts": [],
-        "changelog_heading": "## [0.17.0] - 2026-08-10",
+        "changelog_heading": "## [0.17.1] - 2026-08-13",
         "dist_checked": False,
         "product_version": VERSION,
-        "release_date": "2026-08-10",
+        "release_date": "2026-08-13",
         "status": "ok",
-        "tag": "v0.17.0",
+        "tag": "v0.17.1",
     }
 
 
