@@ -7,6 +7,25 @@
 
 ## [未发布]
 
+## [0.17.1] - 2026-08-13
+
+### 修复
+- 修复 GitHub Release draft discovery：不再使用只适用于已公开 Release 的 tag
+  endpoint 查找 draft。
+- 改为通过 authenticated paginated List releases 精确匹配 tag。
+- draft 创建后重新发现并验证唯一匹配 Release，避免成功创建 draft 后立即返回 404。
+- 多个同 tag 匹配时 fail-closed，不选择任意 Release。
+
+### 安全
+- 继续要求 remote annotated tag commit 精确等于 `origin/main`。
+- 已公开 Release 不覆盖；只接受 `draft=true`、`prerelease=false` 的唯一匹配项。
+- 保持制品、checksum、exact-three-assets 和 publish-after-validation 门禁。
+- 不修改或重新发布失败的 v0.17.0 tag / Draft Release。
+
+### 兼容性
+- 本 patch 不修改 v0.17.0 引入的 EOD library capability。
+- 不修改 research pipeline、provider behavior、schema/API contract 或生产部署行为。
+
 ## [0.17.0] - 2026-08-10
 
 ### 新增
@@ -148,6 +167,7 @@
 - `Fixed` 修复
 - `Security` 安全
 
-[未发布]: https://github.com/KevinYoungsir/autowealth-ai/compare/v0.17.0...HEAD
+[未发布]: https://github.com/KevinYoungsir/autowealth-ai/compare/v0.17.1...HEAD
+[0.17.1]: https://github.com/KevinYoungsir/autowealth-ai/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/KevinYoungsir/autowealth-ai/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/KevinYoungsir/autowealth-ai/compare/v0.15.1...v0.16.0

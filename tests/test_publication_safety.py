@@ -211,5 +211,5 @@ def test_public_governance_documents_do_not_expose_local_or_secret_values() -> N
 def test_release_process_uses_authoritative_release_date() -> None:
     text = _read(REPOSITORY_ROOT / "docs" / "release-process.md")
 
-    assert "## [0.17.0] - 2026-08-10" in text
+    assert "## [0.17.1] - 2026-08-13" in text
     assert "2026-07-28" not in text
