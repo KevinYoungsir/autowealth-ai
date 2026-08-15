@@ -13,6 +13,10 @@ import pytest
 import yaml
 
 import autowealth.market_data as market_data
+from autowealth.market_data.batch import (
+    EODBatchCoordinator,
+    InProcessEODDatasetLockManager,
+)
 from autowealth.market_data.calendar import MARKET_TIMEZONE, TradingCalendar
 from autowealth.market_data.composition import (
     AKSHARE_INDEX_DAILY_PROVIDER,
@@ -21,6 +25,7 @@ from autowealth.market_data.composition import (
     EODCompositionErrorCode,
     EODProductionConfig,
     EOD_PRODUCTION_CONFIG_SCHEMA_VERSION,
+    build_eod_batch_coordinator,
     build_eod_runtime,
     load_eod_production_config,
 )
@@ -394,6 +399,40 @@ def test_composition_is_deterministic_with_fake_providers(
     assert not config.repository_root.exists()
 
 
+def test_composition_builds_explicit_batch_without_execution(
+    tmp_path: Path,
+    index_dataset: EODDatasetKey,
+) -> None:
+    _write_calendar(tmp_path)
+    config = load_eod_production_config(_write_config(tmp_path))
+    created = []
+
+    def factory(provider_name: str):
+        def create(calendar: TradingCalendar) -> FakeProvider:
+            provider = FakeProvider(provider_name, index_dataset)
+            created.append(provider)
+            return provider
+
+        return create
+
+    runtime = build_eod_runtime(
+        config,
+        provider_factories={
+            AKSHARE_INDEX_PROVIDER: factory(AKSHARE_INDEX_PROVIDER),
+            AKSHARE_INDEX_DAILY_PROVIDER: factory(AKSHARE_INDEX_DAILY_PROVIDER),
+        },
+    )
+    lock_manager = InProcessEODDatasetLockManager()
+
+    batch = build_eod_batch_coordinator((runtime,), lock_manager=lock_manager)
+
+    assert isinstance(batch, EODBatchCoordinator)
+    assert [provider.fetch_calls for provider in created] == [0, 0]
+    assert not config.repository_root.exists()
+    with pytest.raises(ValueError, match="duplicate"):
+        build_eod_batch_coordinator((runtime, runtime), lock_manager=lock_manager)
+
+
 def test_repository_configuration_is_validated_before_provider_construction(
     tmp_path: Path,
     index_dataset: EODDatasetKey,
@@ -511,6 +550,7 @@ def test_root_exports_remain_lazy_and_new_modules_parse_as_python_39() -> None:
         "EODProductionConfig",
         "EODRuntimeStack",
         "VersionedLocalTradingCalendar",
+        "build_eod_batch_coordinator",
         "build_eod_runtime",
         "load_eod_production_config",
     }
@@ -520,7 +560,9 @@ def test_root_exports_remain_lazy_and_new_modules_parse_as_python_39() -> None:
     for relative_path in (
         "autowealth/market_data/local_calendar.py",
         "autowealth/market_data/composition.py",
+        "autowealth/market_data/batch.py",
         "autowealth/market_data/__init__.py",
+        "tests/test_eod_batch_coordinator.py",
         "tests/test_eod_production_composition.py",
     ):
         source = (ROOT / relative_path).read_text(encoding="utf-8")

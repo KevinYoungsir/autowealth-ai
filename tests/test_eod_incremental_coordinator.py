@@ -48,6 +48,7 @@ from autowealth.market_data.schemas import (
     EODBar,
     EODDatasetKey,
     EODDateRange,
+    EODUpdateRequest,
     Market,
     Venue,
 )
@@ -525,6 +526,159 @@ def test_full_refresh_required_is_normal_non_retryable_result() -> None:
     assert result.retryable is False
     assert chain.fetch_count == 0
     assert repository.publish_count == 0
+
+
+def test_execute_rejects_non_exact_request_before_repository_access() -> None:
+    dataset, requested_range, repository, chain, calendar = initial_setup()
+    coordinator = EODIncrementalCoordinator(repository, chain, calendar)
+    with pytest.raises(TypeError, match="request"):
+        coordinator.execute(object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="dry_run"):
+        coordinator.update(dataset, requested_range, dry_run=1)  # type: ignore[arg-type]
+    assert repository.load_count == 0
+
+
+def test_initial_import_dry_run_stops_before_fetch_and_publication() -> None:
+    dataset, requested_range, repository, chain, calendar = initial_setup()
+    result = EODIncrementalCoordinator(repository, chain, calendar).execute(
+        EODUpdateRequest(dataset, requested_range, dry_run=True)
+    )
+    assert result.status is EODIncrementalUpdateStatus.INITIAL_IMPORT_PLANNED
+    assert result.plan.status is EODRequestPlanStatus.INITIAL_IMPORT
+    assert result.plan.provider_request is not None
+    assert result.plan.provider_request.requested_range == requested_range
+    assert result.dry_run is True
+    assert result.planned is True
+    assert result.published is False
+    assert result.attempts == ()
+    assert repository.load_count == 1
+    assert repository.publish_count == 0
+    assert chain.fetch_count == 0
+
+
+def test_incremental_and_overlap_dry_runs_return_exact_plans_without_fetch() -> None:
+    dataset = make_dataset()
+    current = make_stored(dataset, (DAY_1, DAY_2))
+    requested_range = EODDateRange(DAY_1, DAY_4)
+
+    append_repository = FakeRepository(current)
+    append_chain = FakeChain(object())
+    append_result = EODIncrementalCoordinator(
+        append_repository,
+        append_chain,
+        StaticCalendar(),
+    ).execute(EODUpdateRequest(dataset, requested_range, dry_run=True))
+    assert append_result.status is EODIncrementalUpdateStatus.INCREMENTAL_PLANNED
+    assert append_result.plan.status is EODRequestPlanStatus.INCREMENTAL
+    assert append_result.plan.provider_request is not None
+    assert append_result.plan.provider_request.requested_range == EODDateRange(DAY_3, DAY_4)
+
+    overlap_repository = FakeRepository(current)
+    overlap_chain = FakeChain(object())
+    overlap_result = EODIncrementalCoordinator(
+        overlap_repository,
+        overlap_chain,
+        StaticCalendar(),
+    ).execute(
+        EODUpdateRequest(dataset, requested_range, dry_run=True),
+        revision_policy=EODRevisionPolicy(
+            EODRevisionStrategy.OVERLAP_WINDOW,
+            overlap_trading_days=2,
+        ),
+    )
+    assert overlap_result.status is EODIncrementalUpdateStatus.OVERLAP_REFRESH_PLANNED
+    assert overlap_result.plan.status is EODRequestPlanStatus.OVERLAP_REFRESH
+    assert overlap_result.plan.provider_request is not None
+    assert overlap_result.plan.provider_request.requested_range == requested_range
+
+    assert append_chain.fetch_count == overlap_chain.fetch_count == 0
+    assert append_repository.publish_count == overlap_repository.publish_count == 0
+
+
+def test_dry_run_plan_matches_real_execution_from_the_same_repository_state() -> None:
+    dataset = make_dataset()
+    current = make_stored(dataset, (DAY_1, DAY_2))
+    requested_range = EODDateRange(DAY_1, DAY_4)
+    provider_range = EODDateRange(DAY_3, DAY_4)
+    provider_request = EODProviderRequest(dataset, provider_range)
+    dry_repository = FakeRepository(current)
+    real_repository = FakeRepository(current)
+    dry_chain = FakeChain(AssertionError("dry-run fetched"))
+    real_chain = FakeChain(make_chain_result(provider_request, (DAY_3, DAY_4)))
+
+    dry_result = EODIncrementalCoordinator(
+        dry_repository,
+        dry_chain,
+        StaticCalendar(),
+    ).execute(EODUpdateRequest(dataset, requested_range, dry_run=True))
+    real_result = EODIncrementalCoordinator(
+        real_repository,
+        real_chain,
+        StaticCalendar(),
+    ).execute(
+        EODUpdateRequest(dataset, requested_range, dry_run=False),
+        generation_id="generation-2",
+        created_at=UTC_TIME,
+    )
+
+    assert dry_result.plan == real_result.plan
+    assert dry_result.plan.provider_request is not None
+    assert dry_result.plan.provider_request.requested_range == provider_range
+    assert dry_result.dataset == real_result.dataset == dataset
+    assert dry_result.requested_range == real_result.requested_range == requested_range
+    assert dry_chain.fetch_count == 0
+    assert dry_repository.publish_count == 0
+    assert real_chain.fetch_count == 1
+    assert real_repository.publish_count == 1
+
+
+def test_dry_run_preserves_no_fetch_terminal_statuses() -> None:
+    dataset = make_dataset()
+    current = make_stored(dataset, (DAY_1, DAY_2))
+    already_repository = FakeRepository(current)
+    already_chain = FakeChain(object())
+    already = EODIncrementalCoordinator(
+        already_repository,
+        already_chain,
+        StaticCalendar(),
+    ).execute(EODUpdateRequest(dataset, EODDateRange(DAY_1, DAY_2), dry_run=True))
+    assert already.status is EODIncrementalUpdateStatus.ALREADY_CURRENT
+    assert already.dry_run is True
+
+    adjusted = make_dataset(adjustment=AdjustmentType.QFQ)
+    adjusted_current = make_stored(adjusted, (DAY_1, DAY_2))
+    refresh_repository = FakeRepository(adjusted_current)
+    refresh_chain = FakeChain(object())
+    refresh = EODIncrementalCoordinator(
+        refresh_repository,
+        refresh_chain,
+        StaticCalendar(),
+    ).execute(
+        EODUpdateRequest(
+            adjusted,
+            EODDateRange(DAY_1, DAY_4),
+            dry_run=True,
+        )
+    )
+    assert refresh.status is EODIncrementalUpdateStatus.FULL_REFRESH_REQUIRED
+    assert refresh.dry_run is True
+    assert refresh.requires_full_refresh is True
+    assert already_chain.fetch_count == refresh_chain.fetch_count == 0
+    assert already_repository.publish_count == refresh_repository.publish_count == 0
+
+
+def test_execute_non_dry_run_preserves_existing_publication_behavior() -> None:
+    dataset, requested_range, repository, chain, calendar = initial_setup()
+    result = EODIncrementalCoordinator(repository, chain, calendar).execute(
+        EODUpdateRequest(dataset, requested_range, dry_run=False),
+        generation_id="generation-2",
+        created_at=UTC_TIME,
+    )
+    assert result.status is EODIncrementalUpdateStatus.INITIAL_IMPORT_PUBLISHED
+    assert result.dry_run is False
+    assert result.planned is False
+    assert chain.fetch_count == 1
+    assert repository.publish_count == 1
 
 
 def test_noop_accepts_valid_unused_publication_context() -> None:

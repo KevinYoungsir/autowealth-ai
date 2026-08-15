@@ -29,7 +29,7 @@ from .provider_chain import (
     EODProviderChainResult,
 )
 from .providers import EODProviderErrorCode, EODProviderResultStatus
-from .schemas import EODBar, EODDatasetKey, EODDateRange
+from .schemas import EODBar, EODDatasetKey, EODDateRange, EODUpdateRequest
 from .validation import EODValidationReport, validate_eod_batch
 from .versioning import (
     EODGenerationManifest,
@@ -67,6 +67,20 @@ _UNCHANGED_STATUSES = frozenset(
         "already_current",
         "no_trading_days",
         "unchanged_content",
+    }
+)
+_PLANNED_STATUSES = frozenset(
+    {
+        "initial_import_planned",
+        "incremental_planned",
+        "overlap_refresh_planned",
+    }
+)
+_DRY_RUN_STATUSES = _PLANNED_STATUSES | frozenset(
+    {
+        "already_current",
+        "no_trading_days",
+        "full_refresh_required",
     }
 )
 _SAFE_ERROR_FALLBACK = "The incremental EOD update failed safely."
@@ -129,6 +143,9 @@ class EODIncrementalUpdateStatus(str, Enum):
     NO_TRADING_DAYS = "no_trading_days"
     FULL_REFRESH_REQUIRED = "full_refresh_required"
     UNCHANGED_CONTENT = "unchanged_content"
+    INITIAL_IMPORT_PLANNED = "initial_import_planned"
+    INCREMENTAL_PLANNED = "incremental_planned"
+    OVERLAP_REFRESH_PLANNED = "overlap_refresh_planned"
 
 
 @dataclass(frozen=True)
@@ -145,6 +162,7 @@ class EODIncrementalUpdateResult:
     row_count: int
     added_row_count: int
     replaced_row_count: int
+    dry_run: bool = False
 
     def __post_init__(self) -> None:
         if type(self.dataset) is not EODDatasetKey:
@@ -171,6 +189,8 @@ class EODIncrementalUpdateResult:
             self.replaced_row_count,
             "replaced_row_count",
         )
+        if type(self.dry_run) is not bool:
+            raise ValueError("dry_run must be a strict boolean")
 
         is_published = status.value in _PUBLISHED_STATUSES
         if is_published != (self.published_manifest is not None):
@@ -179,6 +199,10 @@ class EODIncrementalUpdateResult:
             self.previous_manifest is not None
         ):
             raise ValueError("initial import cannot contain a previous manifest")
+        if status.value in _PLANNED_STATUSES and not self.dry_run:
+            raise ValueError("planned result statuses require dry_run")
+        if self.dry_run and status.value not in _DRY_RUN_STATUSES:
+            raise ValueError("dry_run result status is incompatible with dry_run")
         if self.published_manifest is not None:
             if self.published_manifest.dataset != self.dataset:
                 raise ValueError("published manifest dataset must match the result dataset")
@@ -204,6 +228,10 @@ class EODIncrementalUpdateResult:
         return self.status is EODIncrementalUpdateStatus.FULL_REFRESH_REQUIRED
 
     @property
+    def planned(self) -> bool:
+        return self.dry_run
+
+    @property
     def retryable(self) -> bool:
         return False
 
@@ -223,6 +251,8 @@ class EODIncrementalUpdateResult:
             "row_count": self.row_count,
             "added_row_count": self.added_row_count,
             "replaced_row_count": self.replaced_row_count,
+            "dry_run": self.dry_run,
+            "planned": self.planned,
             "published": self.published,
             "unchanged": self.unchanged,
             "requires_full_refresh": self.requires_full_refresh,
@@ -357,6 +387,27 @@ class EODIncrementalCoordinator:
         self._provider_chain = provider_chain
         self._calendar = calendar
 
+    def execute(
+        self,
+        request: EODUpdateRequest,
+        *,
+        revision_policy: Optional[EODRevisionPolicy] = None,
+        generation_id: Optional[str] = None,
+        created_at: Optional[datetime] = None,
+    ) -> EODIncrementalUpdateResult:
+        """Execute one serializable update request without changing legacy defaults."""
+
+        if type(request) is not EODUpdateRequest:
+            raise TypeError("request must be an exact EODUpdateRequest")
+        return self.update(
+            request.dataset,
+            request.requested_range,
+            revision_policy=revision_policy,
+            generation_id=generation_id,
+            created_at=created_at,
+            dry_run=request.dry_run,
+        )
+
     def update(
         self,
         dataset: EODDatasetKey,
@@ -365,6 +416,7 @@ class EODIncrementalCoordinator:
         revision_policy: Optional[EODRevisionPolicy] = None,
         generation_id: Optional[str] = None,
         created_at: Optional[datetime] = None,
+        dry_run: bool = False,
     ) -> EODIncrementalUpdateResult:
         if type(dataset) is not EODDatasetKey:
             raise TypeError("dataset must be an exact EODDatasetKey")
@@ -372,6 +424,8 @@ class EODIncrementalCoordinator:
             raise TypeError("requested_range must be an exact EODDateRange")
         if revision_policy is not None and type(revision_policy) is not EODRevisionPolicy:
             raise TypeError("revision_policy must be an exact EODRevisionPolicy or None")
+        if type(dry_run) is not bool:
+            raise ValueError("dry_run must be a strict boolean")
 
         validated_generation_id = self._validate_explicit_generation_id(
             generation_id,
@@ -405,9 +459,24 @@ class EODIncrementalCoordinator:
                 row_count=0 if current is None else len(current.bars),
                 added_row_count=0,
                 replaced_row_count=0,
+                dry_run=dry_run,
             )
 
         self._validate_plan_current_state(plan, current, dataset, requested_range)
+        if dry_run:
+            return EODIncrementalUpdateResult(
+                dataset=dataset,
+                requested_range=requested_range,
+                status=self._planned_status(plan.status),
+                plan=plan,
+                previous_manifest=current_manifest,
+                published_manifest=None,
+                attempts=(),
+                row_count=0 if current is None else len(current.bars),
+                added_row_count=0,
+                replaced_row_count=0,
+                dry_run=True,
+            )
         chain_result = self._fetch(plan, dataset, requested_range)
         attempts = chain_result.attempts
         fetched_bars = chain_result.selected_result.bars
@@ -1069,3 +1138,19 @@ class EODIncrementalCoordinator:
             return mapping[status]
         except KeyError as exc:  # pragma: no cover - guarded before publication.
             raise RuntimeError("unsupported published plan status") from exc
+
+    @staticmethod
+    def _planned_status(status: EODRequestPlanStatus) -> EODIncrementalUpdateStatus:
+        mapping = {
+            EODRequestPlanStatus.INITIAL_IMPORT: (
+                EODIncrementalUpdateStatus.INITIAL_IMPORT_PLANNED
+            ),
+            EODRequestPlanStatus.INCREMENTAL: EODIncrementalUpdateStatus.INCREMENTAL_PLANNED,
+            EODRequestPlanStatus.OVERLAP_REFRESH: (
+                EODIncrementalUpdateStatus.OVERLAP_REFRESH_PLANNED
+            ),
+        }
+        try:
+            return mapping[status]
+        except KeyError as exc:  # pragma: no cover - guarded before dry-run return.
+            raise RuntimeError("unsupported planned status") from exc

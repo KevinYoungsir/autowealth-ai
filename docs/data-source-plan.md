@@ -477,10 +477,11 @@ staging、Parquet/manifest 校验、generation rename 和 `current.json` 原子�
 不直接写这些文件，也不会在 publish 失败后重试、删除 inactive orphan 或再次发布。pointer
 激活失败时，上一版 current 仍由 Repository 保持有效。
 
-该编排仍以 single-writer 为前提，不提供锁、compare-and-swap、多进程或分布式一致性。
-并发 writer 可能在 `load_current` 与 `publish` 之间造成 lost update，调用方必须避免并发。
-`full_refresh_required` 只返回明确状态，不自动下载或重建完整历史。PR6 尚未接入旧研究
-pipeline、worker、scheduler、API 或 CLI；retry、锁、批处理、生产工厂和 orphan 清理留给
+单数据集 coordinator 自身仍以 single-writer 为前提，不内置锁、compare-and-swap、
+多进程或分布式一致性。上层 `EODBatchCoordinator` 可在执行前注入 dataset lock，并提供
+单进程实现；绕过该上层或在多个进程/实例中使用进程内锁仍可能在 `load_current` 与
+`publish` 之间造成 lost update。`full_refresh_required` 只返回明确状态，不自动下载或
+重建完整历史。旧研究 pipeline、worker、scheduler、API、CLI、retry 和 orphan 清理仍留给
 后续独立 PR。
 
 ## 20. Production Trading Calendar 与 Composition Root
@@ -496,6 +497,37 @@ TradingCalendar、`EODDatasetKey`、`LocalEODFileRepository`、AKShare primary/f
 不会调用 fetch、update 或 publish；AKShare 仍只在显式 fetch 时延迟导入。
 
 配置样例为 `configs/eod_production.example.yaml`。生产 `repository_root` 必须位于持久
-volume 或 durable filesystem，不能依赖容器临时磁盘。当前仍不包含 batch、retry、锁、
-API、CLI、worker、scheduler、monitoring、full-refresh executor 或自动每日 ingestion。
-完整约束见 `docs/market-data-production-composition.md`。
+volume 或 durable filesystem，不能依赖容器临时磁盘。完整约束见
+`docs/market-data-production-composition.md`。
+
+## 21. EOD Batch Coordination 与并发契约
+
+`EODBatchCoordinator` 接收显式 dataset request 列表，并按完整 `EODDatasetKey.identity`
+确定性排序。重复 dataset identity 在任何读取、抓取或发布前关闭式拒绝；所有执行保持
+同步串行，每个 dataset 继续复用既有 `EODIncrementalCoordinator`，不会形成第二套合并、
+校验或 publication 逻辑。
+
+默认 `stop_on_failure` 在首个普通失败后将后续 dataset 标为 `skipped`；调用方也可显式
+选择 `continue_on_failure`。批次结果分别记录 success、failed、skipped 和
+`full_refresh_required` 数量。后者不会被计为普通成功，也不会触发完整历史重建。
+batch 不是跨 dataset 原子事务；每个 repository publication 仍是 dataset-local transaction，
+后续失败不会回滚此前已经成功发布的独立 generation。
+
+四类 dataset outcome 互斥，满足 `requested = success + failed + skipped + full_refresh`；
+`attempted = requested - skipped`。全部 dataset 都要求 full refresh 时，batch 使用独立
+`full_refresh_required` 全局状态；与普通成功混合时为 `partial_success`。dry-run 的全局状态
+保持 `dry_run`，但每个 dataset 的 `full_refresh_required` outcome 和计数仍会保留。
+
+`dry_run=true` 会读取 current generation、运行交易日历与请求窗口规划，并返回
+initial/incremental/overlap/full-refresh 计划；它在 Provider fetch 前返回，不获取写锁，
+不生成 generation，不写 pointer，也不调用 repository publication。
+dry-run 是观察性计划，不保证之后真实执行时 repository state 仍与规划时一致。
+
+真实运行以完整 canonical dataset identity 的稳定 SHA-256 摘要构造 lock key。锁覆盖
+current 读取、规划、Provider chain、合并、校验和原子发布全流程，异常路径通过
+`finally` 释放。内置 `InProcessEODDatasetLockManager` 只解决单进程并发，不能作为多进程、
+多容器或多主机生产锁；多实例部署必须注入满足同一非阻塞 acquire/release 协议的共享锁。
+
+本阶段没有 retry/backoff、rate limiting、worker、scheduler、API、CLI、full-refresh
+executor、orphan cleanup 或自动每日 ingestion。旧 research pipeline、旧 cache 和历史
+artifacts 均未迁移或修改。

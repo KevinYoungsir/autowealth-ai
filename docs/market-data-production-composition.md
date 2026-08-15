@@ -4,7 +4,8 @@
 
 AutoWealth 的生产 EOD runtime 使用部署方显式提供的版本化本地交易日历 artifact。
 `autowealth.market_data.composition` 只负责读取配置、验证依赖并构造单数据集 runtime；
-它不执行抓取、更新或发布。
+它也可以把调用方显式提供的多个 runtime 组装为 batch coordinator，但构造本身不执行
+抓取、更新或发布。
 
 ## Context
 
@@ -74,19 +75,39 @@ YAML configuration
 延迟导入；构造 runtime 不会访问网络、创建 generation、写 `current.json` 或调用
 Coordinator `update`。
 
+多个 runtime 可通过 `build_eod_batch_coordinator` 显式组装：
+
+```text
+explicit EODRuntimeStack values
+  -> reject duplicate dataset identities
+  -> EODBatchCoordinator
+  -> canonical dataset ordering
+  -> serial EODIncrementalCoordinator execution
+```
+
+batch 默认在首个失败后停止，也支持显式 continue-on-failure。dry-run 只执行 current
+读取和规划，在 Provider fetch 前结束；它不获取写锁，也不发布 generation。真实运行的
+锁从完整 canonical dataset identity 生成稳定 SHA-256 key，并覆盖读取、规划、抓取、
+校验和发布全流程。batch 不是跨 dataset 原子事务，后续 dataset 失败不会回滚此前已经
+成功发布的独立 generation。dry-run 不持写锁，因此其计划不保证后续执行时仍对应相同
+repository state。
+
 ## Operational responsibility
 
 - 部署方负责日历来源授权、版本标识、更新频率、完整性验证和回滚。
 - 日历更新必须先生成新 artifact、离线验证，再原子替换部署引用；应用不会修改源文件。
 - `repository_root` 必须位于 persistent volume 或 durable filesystem。Vercel/容器临时
   文件系统不满足要求。
-- 单 writer 约束继续有效；当前 composition 不提供锁、CAS 或并发写保护。
+- 内置 `InProcessEODDatasetLockManager` 提供单进程、非阻塞的同 dataset 单写保护；它不
+  协调多个进程、容器或主机。多实例生产部署必须注入实现同一协议的共享锁管理器。
+- batch 严格串行执行，不实现并行 Provider 请求、重试、退避或限流。
 
 ## Trade-offs and known limitations
 
 本设计避免伪造交易日期，也保留可审计版本，但需要独立运维流程提供真实日历。当前
-仍不包含 batch updater、retry/backoff、rate limiting、full-refresh executor、orphan
-cleanup、API、CLI、worker、scheduler、monitoring 或自动每日 ingestion。旧 research
-pipeline 尚未迁移到新 EOD stack。
+batch 仅编排调用方显式给出的 dataset，不发现股票池，也不执行调度。当前仍不包含
+retry/backoff、rate limiting、full-refresh executor、orphan cleanup、API、CLI、worker、
+scheduler、monitoring 或自动每日 ingestion。旧 research pipeline 尚未迁移到新 EOD
+stack。
 
 本模块不包含真实交易能力，不调用 DeepSeek，也不改变既有研究结果或历史 artifacts。

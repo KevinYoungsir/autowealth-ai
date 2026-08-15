@@ -53,8 +53,16 @@ generations、原子 `current` pointer 和 incremental coordinator。
 `configs/eod_production.example.yaml`，完整 contract 见
 `docs/market-data-production-composition.md`。
 
+显式 batch coordinator 可将多个已构造 runtime 按 canonical dataset identity 排序后串行
+执行。默认策略在首个失败后停止，也可显式继续；每个 dataset 的成功、失败、跳过和
+`full_refresh_required` 都独立保留。dry-run 会读取 current 并生成请求计划，但不会调用
+Provider、获取写锁或发布 generation。非 dry-run 使用稳定 dataset lock key；内置锁只在
+单个 Python 进程内有效，不是多实例分布式锁。batch 不是跨 dataset 原子事务，后续失败
+不会回滚此前已成功发布的独立 generation。
+
 生产 `repository_root` 必须位于持久化 volume 或其他 durable filesystem。当前仍没有
-batch updater、worker、scheduler、EOD API/CLI 或自动每日 ingestion。
+retry/backoff、rate limiting、worker、scheduler、EOD API/CLI、full-refresh executor 或
+自动每日 ingestion。
 
 本地启动入口：
 
