@@ -92,6 +92,17 @@ RESEARCH_RUNS_DIRECTORY=/data/research_runs
 
 研究 API app 与旧的 `autowealth.api.server` 相互独立。本次 CORS 配置只作用于研究 API，不改变旧接口行为。
 
+### EOD generation storage
+
+`autowealth.market_data.composition` 可从显式配置构造单数据集 EOD runtime，但不会自动
+运行 ingestion。生产 `repository_root` 必须挂载到 persistent volume 或其他 durable
+filesystem；容器临时文件系统、Vercel Function 文件系统和未挂载 Volume 的 Railway
+容器都不能作为有效 EOD generation storage。
+
+生产交易日历同样由部署流程以版本化只读 JSON artifact 提供。应用不会联网下载或修改
+日历，也不会猜测节假日。部署前应离线验证日历来源、版本和覆盖区间。当前没有 EOD
+worker、scheduler、batch updater 或 HTTP/CLI 执行入口。
+
 ## 7. DNS 记录建议
 
 - `dashboard.outlook.xin`：配置 `CNAME` 指向前端部署平台提供的目标；若平台要求固定 IP，则按平台说明使用 `A`/`AAAA` 记录。

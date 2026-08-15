@@ -78,6 +78,28 @@ _LAZY_EXPORT_MODULES = MappingProxyType(
     {
         **{name: ".repositories" for name in _REPOSITORY_EXPORTS},
         **{
+            name: ".local_calendar"
+            for name in (
+                "EOD_CALENDAR_SCHEMA_VERSION",
+                "LocalTradingCalendarError",
+                "LocalTradingCalendarErrorCode",
+                "LocalTradingCalendarIdentity",
+                "VersionedLocalTradingCalendar",
+            )
+        },
+        **{
+            name: ".composition"
+            for name in (
+                "EODCompositionError",
+                "EODCompositionErrorCode",
+                "EODProductionConfig",
+                "EODRuntimeStack",
+                "EOD_PRODUCTION_CONFIG_SCHEMA_VERSION",
+                "build_eod_runtime",
+                "load_eod_production_config",
+            )
+        },
+        **{
             name: ".coordinator"
             for name in (
                 "EODIncrementalCoordinator",
@@ -116,6 +138,7 @@ def __getattr__(name: str) -> object:
 
 __all__ = [
     "EOD_MANIFEST_SCHEMA_VERSION",
+    "EOD_CALENDAR_SCHEMA_VERSION",
     "EOD_PARQUET_COLUMNS",
     "EOD_PARQUET_FILE",
     "EOD_PARQUET_SCHEMA",
@@ -130,6 +153,8 @@ __all__ = [
     "BarFrequency",
     "EODBar",
     "EODCurrentPointer",
+    "EODCompositionError",
+    "EODCompositionErrorCode",
     "EODDatasetKey",
     "EODDateRange",
     "EODFileRepository",
@@ -153,6 +178,7 @@ __all__ = [
     "EODProviderRequest",
     "EODProviderResult",
     "EODProviderResultStatus",
+    "EODProductionConfig",
     "EODRepositoryError",
     "EODRequestPlan",
     "EODRequestPlanningError",
@@ -160,6 +186,7 @@ __all__ = [
     "EODRequestPlanStatus",
     "EODRevisionPolicy",
     "EODRevisionStrategy",
+    "EODRuntimeStack",
     "EODStoredGeneration",
     "EODStructuredWarning",
     "EODUpdateRequest",
@@ -167,12 +194,18 @@ __all__ = [
     "EODUpdateStatus",
     "EODValidationReport",
     "EODWarningSeverity",
+    "EOD_PRODUCTION_CONFIG_SCHEMA_VERSION",
     "EODUnsafePathError",
     "LocalEODFileRepository",
+    "LocalTradingCalendarError",
+    "LocalTradingCalendarErrorCode",
+    "LocalTradingCalendarIdentity",
     "Market",
     "TradingCalendar",
     "TradingCalendarContractError",
     "Venue",
+    "VersionedLocalTradingCalendar",
+    "build_eod_runtime",
     "calculate_bytes_sha256",
     "calculate_eod_content_sha256",
     "calculate_file_sha256",
@@ -181,6 +214,7 @@ __all__ = [
     "eod_bar_identity",
     "normalize_canonical_symbol",
     "normalize_eod_bars",
+    "load_eod_production_config",
     "akshare_equity_symbol",
     "akshare_index_daily_symbol",
     "akshare_index_symbol",

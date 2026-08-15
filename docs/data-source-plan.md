@@ -482,3 +482,20 @@ staging、Parquet/manifest 校验、generation rename 和 `current.json` 原子�
 `full_refresh_required` 只返回明确状态，不自动下载或重建完整历史。PR6 尚未接入旧研究
 pipeline、worker、scheduler、API 或 CLI；retry、锁、批处理、生产工厂和 orphan 清理留给
 后续独立 PR。
+
+## 20. Production Trading Calendar 与 Composition Root
+
+生产 EOD stack 使用部署方显式提供的版本化本地 JSON 日历，不自动联网下载，也不会
+用工作日规则猜测中国交易所历史交易日。日历声明 schema、identity、version、
+`Asia/Shanghai` 时区和覆盖区间，并逐日显式记录 `trade_date` 与 `is_trading_day`。
+文件缺失、不可读、日期非法、重复、乱序、覆盖不连续或查询越界都会关闭式失败。
+
+`autowealth.market_data.composition` 从严格 YAML 配置构造单数据集 runtime，依次装配
+TradingCalendar、`EODDatasetKey`、`LocalEODFileRepository`、AKShare primary/fallback、
+`EODProviderChain` 和 `EODIncrementalCoordinator`。composition 只负责验证和构造，
+不会调用 fetch、update 或 publish；AKShare 仍只在显式 fetch 时延迟导入。
+
+配置样例为 `configs/eod_production.example.yaml`。生产 `repository_root` 必须位于持久
+volume 或 durable filesystem，不能依赖容器临时磁盘。当前仍不包含 batch、retry、锁、
+API、CLI、worker、scheduler、monitoring、full-refresh executor 或自动每日 ingestion。
+完整约束见 `docs/market-data-production-composition.md`。
