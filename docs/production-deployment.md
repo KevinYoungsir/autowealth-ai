@@ -67,6 +67,18 @@ RESEARCH_API_TRUSTED_HOSTS=api.outlook.xin
 artifacts。只有在核对 Railway 最新安全文档和权限影响后，才评估平台提供的
 `RAILWAY_RUN_UID` 兼容方案，不能在仓库中默认降低容器权限。
 
+### EOD generation 与交易日历
+
+研究 artifacts 和 EOD generations 是两类独立数据。启用 EOD composition 时，
+`repository_root` 必须指向 Railway Volume 或等价 durable filesystem 下的独立目录，
+不能放在容器临时层，也不能使用 Vercel Function 文件系统。Volume 权限、备份和恢复
+必须在运行任何 EOD update 前完成验证。
+
+`calendar_source` 必须指向部署方维护的版本化只读 JSON artifact。部署方负责核验来源、
+版本和覆盖区间，并在替换前运行离线校验；应用不会联网下载、补齐或修改日历。当前
+composition 只构造单数据集 runtime，不包含 batch、worker、scheduler、自动 ingestion
+或 production deployment 操作。
+
 ### artifacts 导入
 
 1. 在本地确认 `data/research_runs/<run_id>/run_manifest.json` 可解析。

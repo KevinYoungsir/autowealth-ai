@@ -47,6 +47,15 @@ generations、原子 `current` pointer 和 incremental coordinator。
 该能力尚未接入自动每日抓取或生产调度。既有真实研究流水线在 v0.17.0 中没有迁移到
 这套 EOD stack，其行为和数据路径保持不变。
 
+生产 composition 现在可以从显式 YAML 配置构造单数据集 EOD runtime。交易日历来自
+部署方维护的版本化只读 JSON artifact；系统不会联网下载、猜测节假日或把工作日自动
+视为交易日。构造过程不会执行 Provider fetch、更新或 publication。配置样例见
+`configs/eod_production.example.yaml`，完整 contract 见
+`docs/market-data-production-composition.md`。
+
+生产 `repository_root` 必须位于持久化 volume 或其他 durable filesystem。当前仍没有
+batch updater、worker、scheduler、EOD API/CLI 或自动每日 ingestion。
+
 本地启动入口：
 
 ```powershell

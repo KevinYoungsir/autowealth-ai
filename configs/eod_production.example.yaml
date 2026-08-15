@@ -1,0 +1,23 @@
+# Production EOD composition example. This file only describes construction;
+# loading it does not fetch data or run an update. The referenced calendar JSON
+# must be supplied and versioned by the deployment operator.
+config_schema_version: 1
+repository_root: data/eod_generations
+calendar_source: data/calendars/cn_a_share_calendar.json
+
+dataset:
+  market: CN
+  venue: SSE
+  asset_type: index
+  canonical_symbol: 000300.SH
+  frequency: 1d
+  adjustment_type: none
+
+# Declared order is authoritative. Each provider is constructed lazily and is
+# contacted only when a caller explicitly invokes the coordinator.
+provider_order:
+  - akshare_eod_index
+  - akshare_eod_index_daily
+
+# In production, repository_root must resolve to a persistent volume or other
+# durable filesystem. Container-ephemeral storage is not a valid data store.

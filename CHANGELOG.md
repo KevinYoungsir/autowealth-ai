@@ -7,6 +7,22 @@
 
 ## [未发布]
 
+### 新增
+- 新增严格校验的版本化本地 A 股交易日历 artifact contract，以及只负责验证和构造
+  单数据集 EOD runtime 的 production composition root。
+- 新增 production EOD YAML 配置样例；日历来源与 generation repository 路径必须由
+  部署方显式提供。
+
+### 安全
+- 日历和 composition 在 import 时不联网、不读取凭据、不写 repository，也不会自动执行
+  Provider fetch、增量更新或 generation publication。
+- 生产 EOD generation 必须存放在持久化 volume 或 durable filesystem；容器临时文件系统
+  不得作为有效生产存储。
+
+### 已知限制
+- 本阶段仍不包含 batch updater、retry/backoff、锁、API、CLI、worker、scheduler、
+  monitoring、full-refresh executor 或自动每日 ingestion。
+
 ## [0.17.1] - 2026-08-13
 
 ### 修复
