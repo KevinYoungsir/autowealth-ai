@@ -669,6 +669,86 @@ def test_endpoint_exception_maps_to_unavailable_and_preserves_cause(provider_typ
     assert len(endpoint.calls) == 1
 
 
+@pytest.mark.parametrize(
+    "provider_type",
+    [AKShareEODEquityProvider, AKShareEODIndexProvider, AKShareEODIndexDailyProvider],
+)
+@pytest.mark.parametrize("endpoint_error", [TimeoutError("timeout"), ConnectionError("offline")])
+def test_temporary_endpoint_exception_maps_to_retryable_failure(
+    provider_type: type,
+    endpoint_error: Exception,
+) -> None:
+    dataset = (
+        make_dataset()
+        if provider_type is AKShareEODEquityProvider
+        else make_dataset(symbol="000300.SH", asset_type=AssetType.INDEX)
+    )
+    provider = provider_type(
+        StaticTradingCalendar((DAY_1, DAY_2)),
+        endpoint=RecordingEndpoint(endpoint_error),
+    )
+
+    with pytest.raises(EODProviderError) as captured:
+        provider.fetch(make_request(dataset))
+
+    assert captured.value.code is EODProviderErrorCode.TEMPORARY_PROVIDER_FAILURE
+    assert captured.value.retryable is True
+    assert captured.value.__cause__ is endpoint_error
+
+
+def test_requests_connection_error_type_maps_without_importing_requests() -> None:
+    requests_connection_error = type(
+        "ConnectionError",
+        (Exception,),
+        {"__module__": "requests.exceptions"},
+    )("offline")
+    provider = AKShareEODEquityProvider(
+        StaticTradingCalendar((DAY_1, DAY_2)),
+        endpoint=RecordingEndpoint(requests_connection_error),
+    )
+
+    with pytest.raises(EODProviderError) as captured:
+        provider.fetch(make_request())
+
+    assert captured.value.code is EODProviderErrorCode.TEMPORARY_PROVIDER_FAILURE
+    assert captured.value.__cause__ is requests_connection_error
+
+
+def test_unknown_requests_exception_type_remains_non_retryable() -> None:
+    invalid_url = type(
+        "InvalidURL",
+        (Exception,),
+        {"__module__": "requests.exceptions"},
+    )("invalid")
+    provider = AKShareEODEquityProvider(
+        StaticTradingCalendar((DAY_1, DAY_2)),
+        endpoint=RecordingEndpoint(invalid_url),
+    )
+
+    with pytest.raises(EODProviderError) as captured:
+        provider.fetch(make_request())
+
+    assert captured.value.code is EODProviderErrorCode.PROVIDER_UNAVAILABLE
+    assert captured.value.retryable is False
+
+
+def test_endpoint_preserves_explicit_provider_error_classification() -> None:
+    endpoint_error = EODProviderError(
+        EODProviderErrorCode.PERMANENT_PROVIDER_FAILURE,
+        "The endpoint rejected the request permanently.",
+    )
+    provider = AKShareEODEquityProvider(
+        StaticTradingCalendar((DAY_1, DAY_2)),
+        endpoint=RecordingEndpoint(endpoint_error),
+    )
+
+    with pytest.raises(EODProviderError) as captured:
+        provider.fetch(make_request())
+
+    assert captured.value is endpoint_error
+    assert captured.value.retryable is False
+
+
 def test_endpoint_base_exception_is_not_caught() -> None:
     provider = AKShareEODEquityProvider(
         StaticTradingCalendar((DAY_1, DAY_2)),

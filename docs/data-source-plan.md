@@ -431,8 +431,9 @@ endpoint 单位统一。retry、fallback、Provider attempts、coordinator、wor
 ## 18. v0.17.0 EOD Provider Chain 与指数 fallback
 
 领域级 `EODProviderChain` 是独立 orchestrator，不实现 `EODProvider` Protocol，也不
-伪装成单一数据源。它按声明顺序检查 Provider capability，并对每个 Provider 最多
-调用一次：完整 `success` 立即停止；`partial_success` 会保留为候选并继续 fallback；
+伪装成单一数据源。它按声明顺序检查 Provider capability。默认仍对每个 Provider 最多
+调用一次；显式配置后，仅 `temporary_provider_failure` 可在同一 Provider 内进行有界
+重试，耗尽后才进入下一 fallback。完整 `success` 立即停止；`partial_success` 会保留为候选并继续 fallback；
 `empty` 会保留 `empty_response` 证据并继续；明确不支持请求的 Provider 不调用
 endpoint。没有完整结果时，Chain 按 row count、起止边界和 Provider 顺序确定性选择
 最佳 partial。partial 只表示仍有研究价值的已验证数据，不表示 coordinator 可以发布。
@@ -441,8 +442,15 @@ endpoint。没有完整结果时，Chain 按 row count、起止边界和 Provide
 状态、行数、有效区间、warning code 和是否被选中。attempt 不复制 bars，不记录系统
 时间、UUID、原始 payload、异常 repr、traceback、绝对路径或凭据。所有 Provider 都未
 返回完整或 partial 数据时，Chain 使用有限优先级聚合 unsupported、malformed、
-permanent、temporary 和 unavailable，不采用最后一次错误作为隐式结论。本 PR 不执行
-retry、sleep 或 backoff。
+permanent、temporary 和 unavailable，不采用最后一次错误作为隐式结论。每个 attempt
+继续代表 provider chain position；增量 invocation 诊断记录调用序号、重试序号、退避、
+限流等待和最终状态，不把 retry 伪装成新的 fallback position。
+
+重试 policy 的 `max_attempts` 包含首次调用且限制为 1 至 5；退避确定性、无 jitter，并由
+可注入 sleeper 执行。单 runtime 的进程内最小间隔 limiter 使用 monotonic clock，按
+`(provider_name, endpoint_name)` 共享；每次首次、重试和 fallback 调用都先 acquire。
+默认 `max_attempts=1`、间隔为 0，不改变旧调用次数或引入等待。AKShare adapter 本身不
+包含隐藏 retry，只将明确的 timeout/connection 临时失败映射为既有 retryable error code。
 
 指数 fallback 是独立 `AKShareEODIndexDailyProvider`，只支持冻结的六个 canonical
 指数、日频和不复权口径。`stock_zh_index_daily` 只接收带 `sh`/`sz` 前缀的 symbol，
@@ -460,6 +468,8 @@ retry、sleep 或 backoff。
 
 `EODIncrementalCoordinator` 编排单个数据集的一次同步更新。每次调用只读取一次 current
 generation，由纯 Planner 决定请求窗口，并在需要抓取时最多调用一次既有 Provider Chain。
+Chain 内部可按显式 policy 对单个 Provider 执行有限次调用，但 Coordinator 不再外包一层
+retry，最大调用量仍受 Provider 数量乘单 Provider `max_attempts` 的固定上界约束。
 Chain 的完整 `success` 才能进入合并和发布；`partial_success` 会关闭式失败并保留 attempts，
 不会发布，也不会用 current 中的旧值补齐缺失交易日。
 
@@ -481,7 +491,7 @@ staging、Parquet/manifest 校验、generation rename 和 `current.json` 原子�
 多进程或分布式一致性。上层 `EODBatchCoordinator` 可在执行前注入 dataset lock，并提供
 单进程实现；绕过该上层或在多个进程/实例中使用进程内锁仍可能在 `load_current` 与
 `publish` 之间造成 lost update。`full_refresh_required` 只返回明确状态，不自动下载或
-重建完整历史。旧研究 pipeline、worker、scheduler、API、CLI、retry 和 orphan 清理仍留给
+重建完整历史。旧研究 pipeline、worker、scheduler、API、CLI 和 orphan 清理仍留给
 后续独立 PR。
 
 ## 20. Production Trading Calendar 与 Composition Root
@@ -528,6 +538,13 @@ current 读取、规划、Provider chain、合并、校验和原子发布全流�
 `finally` 释放。内置 `InProcessEODDatasetLockManager` 只解决单进程并发，不能作为多进程、
 多容器或多主机生产锁；多实例部署必须注入满足同一非阻塞 acquire/release 协议的共享锁。
 
-本阶段没有 retry/backoff、rate limiting、worker、scheduler、API、CLI、full-refresh
-executor、orphan cleanup 或自动每日 ingestion。旧 research pipeline、旧 cache 和历史
-artifacts 均未迁移或修改。
+Provider retry/backoff 和 rate limiting 只位于统一调用边界：只有临时失败可重试，退避
+确定且有界，限流只在单个 runtime/ProviderChain 内生效。batch 继续串行，真实执行时 dataset 写锁在
+Provider 重试和等待期间保持持有；dry-run 不调用 Provider、limiter 或 sleeper。本阶段仍
+没有分布式限流、随机 jitter、worker、scheduler、API、CLI、full-refresh executor、
+orphan cleanup 或自动每日 ingestion。旧 research pipeline、旧 cache 和历史 artifacts
+均未迁移或修改。
+
+production config 因新增严格的 `retry_policy`、`rate_limit_policy` section 升级为 schema
+version 2。旧 schema version 1 五字段配置继续加载，并固定映射为 `max_attempts=1`、最小
+间隔 0；v1 不接受 v2 字段，避免旧 parser 与新配置对同一版本产生不同解释。

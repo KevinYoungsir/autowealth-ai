@@ -38,6 +38,25 @@ from .schemas import (
 
 _Endpoint = Callable[..., object]
 
+_REQUESTS_EXCEPTIONS_MODULE = ".".join(("requests", "exceptions"))
+_URLLIB3_EXCEPTIONS_MODULE = ".".join(("urllib3", "exceptions"))
+_TEMPORARY_ENDPOINT_EXCEPTION_TYPES = frozenset(
+    {
+        (_REQUESTS_EXCEPTIONS_MODULE, "ConnectionError"),
+        (_REQUESTS_EXCEPTIONS_MODULE, "ConnectTimeout"),
+        (_REQUESTS_EXCEPTIONS_MODULE, "ProxyError"),
+        (_REQUESTS_EXCEPTIONS_MODULE, "ReadTimeout"),
+        (_REQUESTS_EXCEPTIONS_MODULE, "Timeout"),
+        (_URLLIB3_EXCEPTIONS_MODULE, "ConnectTimeoutError"),
+        (_URLLIB3_EXCEPTIONS_MODULE, "MaxRetryError"),
+        (_URLLIB3_EXCEPTIONS_MODULE, "NewConnectionError"),
+        (_URLLIB3_EXCEPTIONS_MODULE, "ProtocolError"),
+        (_URLLIB3_EXCEPTIONS_MODULE, "ProxyError"),
+        (_URLLIB3_EXCEPTIONS_MODULE, "ReadTimeoutError"),
+        (_URLLIB3_EXCEPTIONS_MODULE, "TimeoutError"),
+    }
+)
+
 _EQUITY_CAPABILITIES = (
     EODProviderCapability(
         Market.CN,
@@ -199,6 +218,15 @@ def _result_status(
     )
 
 
+def _is_temporary_endpoint_failure(exc: Exception) -> bool:
+    if isinstance(exc, (TimeoutError, ConnectionError)):
+        return True
+    return any(
+        (error_type.__module__, error_type.__name__) in _TEMPORARY_ENDPOINT_EXCEPTION_TYPES
+        for error_type in type(exc).__mro__
+    )
+
+
 class AKShareEODEquityProvider:
     """Single-endpoint AKShare adapter for canonical A-share equity EOD bars."""
 
@@ -241,7 +269,19 @@ class AKShareEODEquityProvider:
                 end_date=request.requested_range.end_date.strftime("%Y%m%d"),
                 adjust=_EQUITY_ADJUSTMENTS[request.dataset.adjustment_type],
             )
+        except EODProviderError:
+            raise
+        except (TimeoutError, ConnectionError) as exc:
+            raise EODProviderError(
+                EODProviderErrorCode.TEMPORARY_PROVIDER_FAILURE,
+                "The AKShare equity endpoint failed temporarily for this request.",
+            ) from exc
         except Exception as exc:
+            if _is_temporary_endpoint_failure(exc):
+                raise EODProviderError(
+                    EODProviderErrorCode.TEMPORARY_PROVIDER_FAILURE,
+                    "The AKShare equity endpoint failed temporarily for this request.",
+                ) from exc
             raise EODProviderError(
                 EODProviderErrorCode.PROVIDER_UNAVAILABLE,
                 "The AKShare equity endpoint is unavailable for this request.",
@@ -321,7 +361,19 @@ class AKShareEODIndexProvider:
                 start_date=request.requested_range.start_date.strftime("%Y%m%d"),
                 end_date=request.requested_range.end_date.strftime("%Y%m%d"),
             )
+        except EODProviderError:
+            raise
+        except (TimeoutError, ConnectionError) as exc:
+            raise EODProviderError(
+                EODProviderErrorCode.TEMPORARY_PROVIDER_FAILURE,
+                "The AKShare index endpoint failed temporarily for this request.",
+            ) from exc
         except Exception as exc:
+            if _is_temporary_endpoint_failure(exc):
+                raise EODProviderError(
+                    EODProviderErrorCode.TEMPORARY_PROVIDER_FAILURE,
+                    "The AKShare index endpoint failed temporarily for this request.",
+                ) from exc
             raise EODProviderError(
                 EODProviderErrorCode.PROVIDER_UNAVAILABLE,
                 "The AKShare index endpoint is unavailable for this request.",
@@ -396,7 +448,19 @@ class AKShareEODIndexDailyProvider:
         endpoint = self._resolve_endpoint()
         try:
             frame = endpoint(symbol=symbol)
+        except EODProviderError:
+            raise
+        except (TimeoutError, ConnectionError) as exc:
+            raise EODProviderError(
+                EODProviderErrorCode.TEMPORARY_PROVIDER_FAILURE,
+                "The AKShare index daily endpoint failed temporarily for this request.",
+            ) from exc
         except Exception as exc:
+            if _is_temporary_endpoint_failure(exc):
+                raise EODProviderError(
+                    EODProviderErrorCode.TEMPORARY_PROVIDER_FAILURE,
+                    "The AKShare index daily endpoint failed temporarily for this request.",
+                ) from exc
             raise EODProviderError(
                 EODProviderErrorCode.PROVIDER_UNAVAILABLE,
                 "The AKShare index daily endpoint is unavailable for this request.",

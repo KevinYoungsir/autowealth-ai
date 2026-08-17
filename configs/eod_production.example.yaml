@@ -1,7 +1,7 @@
 # Production EOD composition example. This file only describes construction;
 # loading it does not fetch data or run an update. The referenced calendar JSON
 # must be supplied and versioned by the deployment operator.
-config_schema_version: 1
+config_schema_version: 2
 repository_root: data/eod_generations
 calendar_source: data/calendars/cn_a_share_calendar.json
 
@@ -18,6 +18,19 @@ dataset:
 provider_order:
   - akshare_eod_index
   - akshare_eod_index_daily
+
+# Retry is disabled by default because max_attempts includes the initial call.
+# Only temporary_provider_failure is eligible for these deterministic retries.
+retry_policy:
+  max_attempts: 1
+  initial_backoff_seconds: 1.0
+  backoff_multiplier: 2.0
+  max_backoff_seconds: 5.0
+
+# Zero preserves the previous no-wait behavior. Positive values apply a local,
+# in-process minimum interval per provider and endpoint identity.
+rate_limit_policy:
+  minimum_interval_seconds: 0.0
 
 # In production, repository_root must resolve to a persistent volume or other
 # durable filesystem. Container-ephemeral storage is not a valid data store.

@@ -32,9 +32,14 @@ from autowealth.market_data.coordinator import EODIncrementalCoordinator
 from autowealth.market_data.planning import EODRequestPlanStatus, EODRevisionPolicy
 from autowealth.market_data.provider_chain import (
     EODProviderAttempt,
+    EODProviderChain,
     EODProviderChainResult,
 )
+from autowealth.market_data.provider_resilience import EODProviderRetryPolicy
 from autowealth.market_data.providers import (
+    EODProviderCapability,
+    EODProviderError,
+    EODProviderErrorCode,
     EODProviderRequest,
     EODProviderResult,
     EODProviderResultStatus,
@@ -564,6 +569,114 @@ def test_multiple_dataset_execution_is_serial_and_canonical() -> None:
     assert_summary_invariants(result)
 
 
+def test_serial_batch_keeps_dataset_lock_during_provider_retry() -> None:
+    events: list[str] = []
+    datasets = tuple(make_dataset(symbol) for symbol in ("600000.SH", "000001.SZ"))
+
+    class RetryOnceProvider:
+        provider_name = "retry_once"
+        provider_version = "1"
+        endpoint_name = "fake_endpoint"
+
+        def __init__(self, dataset: EODDatasetKey) -> None:
+            self.dataset = dataset
+            self.calls = 0
+            self.capabilities = (
+                EODProviderCapability(
+                    dataset.market,
+                    dataset.venue,
+                    dataset.asset_type,
+                    dataset.frequency,
+                    dataset.adjustment_type,
+                    EODRevisionStrategy.APPEND_ONLY,
+                ),
+            )
+
+        def fetch(self, request: EODProviderRequest) -> EODProviderResult:
+            self.calls += 1
+            events.append(f"provider:{self.dataset.canonical_symbol}:{self.calls}")
+            if self.calls == 1:
+                raise EODProviderError(
+                    EODProviderErrorCode.TEMPORARY_PROVIDER_FAILURE,
+                    "The fake provider failed temporarily.",
+                )
+            return EODProviderResult(
+                request=request,
+                provider_name=self.provider_name,
+                provider_version=self.provider_version,
+                status=EODProviderResultStatus.SUCCESS,
+                bars=make_bars(self.dataset, trading_days(request.requested_range)),
+            )
+
+    class LockManager:
+        def __init__(self) -> None:
+            self.active: set[str] = set()
+
+        def acquire(self, lock_key: str) -> bool:
+            assert not self.active
+            self.active.add(lock_key)
+            events.append("lock:acquire")
+            return True
+
+        def release(self, lock_key: str) -> None:
+            assert lock_key in self.active
+            self.active.remove(lock_key)
+            events.append("lock:release")
+
+    class LockAwareSleeper:
+        def __init__(self, lock_manager: LockManager) -> None:
+            self.lock_manager = lock_manager
+            self.delays: list[float] = []
+
+        def sleep(self, seconds: float) -> None:
+            assert len(self.lock_manager.active) == 1
+            self.delays.append(seconds)
+            events.append("retry:backoff")
+
+    lock_manager = LockManager()
+    sleeper = LockAwareSleeper(lock_manager)
+    providers = {dataset: RetryOnceProvider(dataset) for dataset in datasets}
+    repositories = {dataset: FakeRepository(events=events) for dataset in datasets}
+    coordinators = {
+        dataset: EODIncrementalCoordinator(
+            repositories[dataset],
+            EODProviderChain(
+                [providers[dataset]],
+                retry_policy=EODProviderRetryPolicy(max_attempts=2),
+                retry_sleeper=sleeper,
+            ),
+            StaticCalendar(),
+        )
+        for dataset in datasets
+    }
+
+    result = EODBatchCoordinator(coordinators, lock_manager).run(
+        EODBatchRequest(tuple(batch_dataset_request(dataset) for dataset in reversed(datasets)))
+    )
+
+    assert result.status is EODBatchStatus.SUCCESS
+    assert [providers[dataset].calls for dataset in datasets] == [2, 2]
+    assert sleeper.delays == [1.0, 1.0]
+    first_release = events.index("lock:release")
+    assert events[:first_release] == [
+        "lock:acquire",
+        "load:600000.SH",
+        "provider:600000.SH:1",
+        "retry:backoff",
+        "provider:600000.SH:2",
+        "publish:600000.SH",
+    ]
+    assert events[first_release + 1 : first_release + 7] == [
+        "lock:acquire",
+        "load:000001.SZ",
+        "provider:000001.SZ:1",
+        "retry:backoff",
+        "provider:000001.SZ:2",
+        "publish:000001.SZ",
+    ]
+    assert lock_manager.active == set()
+
+
 def test_stop_on_failure_is_default_and_never_reports_global_success() -> None:
     datasets = tuple(
         make_dataset(symbol) for symbol in ("600000.SH", "600001.SH", "600002.SH", "600003.SH")
@@ -925,6 +1038,131 @@ def test_provider_failure_releases_lock_for_safe_retry_by_caller() -> None:
     assert second.status is EODBatchStatus.SUCCESS
     assert chain.fetch_count == 2
     assert repository.publish_count == 1
+
+
+def test_provider_retry_exhaustion_releases_dataset_lock() -> None:
+    dataset = make_dataset("600000.SH")
+    repository = FakeRepository()
+    lock_manager = CountingLockManager()
+
+    class AlwaysTemporaryProvider:
+        provider_name = "always_temporary"
+        provider_version = "1"
+        endpoint_name = "fake_endpoint"
+        capabilities = (
+            EODProviderCapability(
+                dataset.market,
+                dataset.venue,
+                dataset.asset_type,
+                dataset.frequency,
+                dataset.adjustment_type,
+                EODRevisionStrategy.APPEND_ONLY,
+            ),
+        )
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def fetch(self, request: EODProviderRequest) -> EODProviderResult:
+            self.calls += 1
+            raise EODProviderError(
+                EODProviderErrorCode.TEMPORARY_PROVIDER_FAILURE,
+                "The fake provider failed temporarily.",
+            )
+
+    class RecordingSleeper:
+        def __init__(self) -> None:
+            self.delays: list[float] = []
+
+        def sleep(self, seconds: float) -> None:
+            self.delays.append(seconds)
+
+    provider = AlwaysTemporaryProvider()
+    sleeper = RecordingSleeper()
+    single = EODIncrementalCoordinator(
+        repository,
+        EODProviderChain(
+            [provider],
+            retry_policy=EODProviderRetryPolicy(max_attempts=3),
+            retry_sleeper=sleeper,
+        ),
+        StaticCalendar(),
+    )
+
+    result = EODBatchCoordinator({dataset: single}, lock_manager).run(
+        EODBatchRequest((batch_dataset_request(dataset),))
+    )
+
+    assert result.status is EODBatchStatus.FAILED
+    assert provider.calls == 3
+    assert sleeper.delays == [1.0, 2.0]
+    assert lock_manager.acquire_count == lock_manager.release_count == 1
+    assert repository.publish_count == 0
+
+
+@pytest.mark.parametrize("failure_source", ["sleeper", "limiter"])
+def test_resilience_infrastructure_failure_releases_dataset_lock(
+    failure_source: str,
+) -> None:
+    dataset = make_dataset("600000.SH")
+    repository = FakeRepository()
+    lock_manager = CountingLockManager()
+
+    class Provider:
+        provider_name = "temporary_once"
+        provider_version = "1"
+        endpoint_name = "fake_endpoint"
+        capabilities = (
+            EODProviderCapability(
+                dataset.market,
+                dataset.venue,
+                dataset.asset_type,
+                dataset.frequency,
+                dataset.adjustment_type,
+                EODRevisionStrategy.APPEND_ONLY,
+            ),
+        )
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def fetch(self, request: EODProviderRequest) -> EODProviderResult:
+            self.calls += 1
+            raise EODProviderError(
+                EODProviderErrorCode.TEMPORARY_PROVIDER_FAILURE,
+                "The fake provider failed temporarily.",
+            )
+
+    class FailingSleeper:
+        def sleep(self, seconds: float) -> None:
+            raise RuntimeError("sleeper infrastructure failed")
+
+    class FailingLimiter:
+        def acquire(self, provider_name: str, endpoint_name: Optional[str]) -> float:
+            raise RuntimeError("limiter infrastructure failed")
+
+    provider = Provider()
+    chain_kwargs: dict[str, object] = {
+        "retry_policy": EODProviderRetryPolicy(max_attempts=2),
+    }
+    if failure_source == "sleeper":
+        chain_kwargs["retry_sleeper"] = FailingSleeper()
+    else:
+        chain_kwargs["rate_limiter"] = FailingLimiter()
+    single = EODIncrementalCoordinator(
+        repository,
+        EODProviderChain([provider], **chain_kwargs),
+        StaticCalendar(),
+    )
+
+    result = EODBatchCoordinator({dataset: single}, lock_manager).run(
+        EODBatchRequest((batch_dataset_request(dataset),))
+    )
+
+    assert result.status is EODBatchStatus.FAILED
+    assert provider.calls == (1 if failure_source == "sleeper" else 0)
+    assert lock_manager.acquire_count == lock_manager.release_count == 1
+    assert repository.publish_count == 0
 
 
 def test_repository_inspection_exception_releases_lock_for_safe_retry() -> None:

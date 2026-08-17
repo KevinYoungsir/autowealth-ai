@@ -32,6 +32,7 @@ from autowealth.market_data.provider_chain import (
     EODProviderChainError,
     EODProviderChainResult,
 )
+from autowealth.market_data.provider_resilience import EODProviderRetryPolicy
 from autowealth.market_data.providers import (
     EODProviderCapability,
     EODProviderErrorCode,
@@ -554,6 +555,54 @@ def test_initial_import_dry_run_stops_before_fetch_and_publication() -> None:
     assert repository.load_count == 1
     assert repository.publish_count == 0
     assert chain.fetch_count == 0
+
+
+def test_dry_run_never_calls_provider_rate_limiter_or_retry_sleeper() -> None:
+    dataset = make_dataset()
+    requested_range = EODDateRange(DAY_1, DAY_4)
+    provider_request = EODProviderRequest(dataset, requested_range)
+    provider_result = EODProviderResult(
+        request=provider_request,
+        provider_name="fake_provider",
+        provider_version="1",
+        status=EODProviderResultStatus.SUCCESS,
+        bars=make_bars(dataset, (DAY_1, DAY_2, DAY_3, DAY_4)),
+    )
+    provider = FakeProvider(provider_result, dataset)
+
+    class ForbiddenRateLimiter:
+        calls = 0
+
+        def acquire(self, provider_name: str, endpoint_name: Optional[str]) -> float:
+            self.calls += 1
+            raise AssertionError("dry-run must not acquire provider rate limits")
+
+    class ForbiddenSleeper:
+        calls = 0
+
+        def sleep(self, seconds: float) -> None:
+            self.calls += 1
+            raise AssertionError("dry-run must not sleep")
+
+    limiter = ForbiddenRateLimiter()
+    sleeper = ForbiddenSleeper()
+    chain = EODProviderChain(
+        [provider],
+        retry_policy=EODProviderRetryPolicy(max_attempts=5),
+        rate_limiter=limiter,
+        retry_sleeper=sleeper,
+    )
+    repository = FakeRepository()
+
+    result = EODIncrementalCoordinator(repository, chain, StaticCalendar()).execute(
+        EODUpdateRequest(dataset, requested_range, dry_run=True)
+    )
+
+    assert result.status is EODIncrementalUpdateStatus.INITIAL_IMPORT_PLANNED
+    assert provider.calls == 0
+    assert limiter.calls == 0
+    assert sleeper.calls == 0
+    assert repository.publish_count == 0
 
 
 def test_incremental_and_overlap_dry_runs_return_exact_plans_without_fetch() -> None:
