@@ -12,16 +12,24 @@
   单数据集 EOD runtime 的 production composition root。
 - 新增 production EOD YAML 配置样例；日历来源与 generation repository 路径必须由
   部署方显式提供。
+- 新增显式多数据集 EOD batch coordinator，按 canonical dataset identity 确定性排序并
+  串行复用单数据集 coordinator；默认在首个失败后停止，也可显式继续并保留逐数据集结果。
+- 新增真实 dry-run 规划路径，以及基于稳定 SHA-256 dataset identity 的单写锁协议和
+  进程内实现；dry-run 不调用 Provider、不发布 generation，也不获取写锁。
 
 ### 安全
 - 日历和 composition 在 import 时不联网、不读取凭据、不写 repository，也不会自动执行
   Provider fetch、增量更新或 generation publication。
 - 生产 EOD generation 必须存放在持久化 volume 或 durable filesystem；容器临时文件系统
   不得作为有效生产存储。
+- 非 dry-run 的锁覆盖 current 检查、规划、抓取、校验和发布全流程；重复 dataset、锁冲突、
+  Provider/校验异常和缺少 coordinator 均关闭式失败，不会伪造全局成功。
 
 ### 已知限制
-- 本阶段仍不包含 batch updater、retry/backoff、锁、API、CLI、worker、scheduler、
-  monitoring、full-refresh executor 或自动每日 ingestion。
+- 进程内锁不能协调多个进程、容器或主机；生产多实例部署仍需实现同一锁协议的持久化或
+  分布式锁管理器。
+- 本阶段仍不包含 retry/backoff、rate limiting、API、CLI、worker、scheduler、monitoring、
+  full-refresh executor、orphan cleanup 或自动每日 ingestion；batch 只做同步串行编排。
 
 ## [0.17.1] - 2026-08-13
 

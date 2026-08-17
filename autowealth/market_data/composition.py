@@ -28,6 +28,7 @@ MAX_EOD_PRODUCTION_CONFIG_BYTES = 1024 * 1024
 Path = importlib.import_module("pathlib").Path
 
 if TYPE_CHECKING:
+    from .batch import EODBatchCoordinator, EODDatasetLockManager
     from .coordinator import EODIncrementalCoordinator
     from .provider_chain import EODProviderChain
     from .repositories import EODFileRepository
@@ -301,6 +302,32 @@ def build_eod_runtime(
     )
 
 
+def build_eod_batch_coordinator(
+    runtimes: Tuple[EODRuntimeStack, ...],
+    *,
+    lock_manager: "EODDatasetLockManager",
+) -> "EODBatchCoordinator":
+    """Construct a batch coordinator from explicit runtimes without executing updates."""
+
+    if type(runtimes) not in (list, tuple):
+        raise TypeError("runtimes must be an exact list or exact tuple")
+    normalized = tuple(runtimes)
+    if not normalized:
+        raise ValueError("runtimes cannot be empty")
+    if any(type(runtime) is not EODRuntimeStack for runtime in normalized):
+        raise TypeError("runtimes must contain exact EODRuntimeStack values")
+    datasets = tuple(runtime.dataset for runtime in normalized)
+    if len(set(datasets)) != len(datasets):
+        raise ValueError("runtimes cannot contain duplicate dataset identities")
+
+    from .batch import EODBatchCoordinator
+
+    return EODBatchCoordinator(
+        {runtime.dataset: runtime.coordinator for runtime in normalized},
+        lock_manager,
+    )
+
+
 def _provider_factories(
     provider_order: Tuple[str, ...],
     supplied: Optional[Mapping[str, ProviderFactory]],
@@ -363,6 +390,7 @@ __all__ = [
     "EODProductionConfig",
     "EODRuntimeStack",
     "EOD_PRODUCTION_CONFIG_SCHEMA_VERSION",
+    "build_eod_batch_coordinator",
     "build_eod_runtime",
     "load_eod_production_config",
 ]
