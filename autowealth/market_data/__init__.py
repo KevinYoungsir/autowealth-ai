@@ -142,6 +142,23 @@ _LAZY_EXPORT_MODULES = MappingProxyType(
         "EODProviderChain": ".provider_chain",
         "EODProviderChainError": ".provider_chain",
         "EODProviderChainResult": ".provider_chain",
+        "EODProviderInvocation": ".provider_chain",
+        **{
+            name: ".provider_resilience"
+            for name in (
+                "EODMonotonicClock",
+                "EODProviderRateLimitPolicy",
+                "EODProviderRateLimiter",
+                "EODProviderRetryPolicy",
+                "EODRetrySleeper",
+                "MAX_EOD_PROVIDER_ATTEMPTS_PER_PROVIDER",
+                "MAX_EOD_PROVIDER_DELAY_SECONDS",
+                "MinimumIntervalEODProviderRateLimiter",
+                "NoOpEODProviderRateLimiter",
+                "SystemEODMonotonicClock",
+                "SystemEODRetrySleeper",
+            )
+        },
     }
 )
 
@@ -208,6 +225,10 @@ __all__ = [
     "EODProviderChain",
     "EODProviderChainError",
     "EODProviderChainResult",
+    "EODProviderInvocation",
+    "EODProviderRateLimitPolicy",
+    "EODProviderRateLimiter",
+    "EODProviderRetryPolicy",
     "EODProviderError",
     "EODProviderErrorCode",
     "EODProviderRequest",
@@ -222,6 +243,7 @@ __all__ = [
     "EODRevisionPolicy",
     "EODRevisionStrategy",
     "EODRuntimeStack",
+    "EODRetrySleeper",
     "EODStoredGeneration",
     "EODStructuredWarning",
     "EODUpdateRequest",
@@ -237,10 +259,15 @@ __all__ = [
     "LocalTradingCalendarIdentity",
     "Market",
     "MAX_EOD_BATCH_DATASETS",
+    "MAX_EOD_PROVIDER_ATTEMPTS_PER_PROVIDER",
+    "MAX_EOD_PROVIDER_DELAY_SECONDS",
+    "MinimumIntervalEODProviderRateLimiter",
+    "NoOpEODProviderRateLimiter",
     "TradingCalendar",
     "TradingCalendarContractError",
     "Venue",
     "VersionedLocalTradingCalendar",
+    "EODMonotonicClock",
     "InProcessEODDatasetLockManager",
     "build_eod_batch_coordinator",
     "build_eod_runtime",
@@ -262,4 +289,6 @@ __all__ = [
     "validate_eod_provider_request",
     "validate_eod_provider_result",
     "validate_trading_days",
+    "SystemEODMonotonicClock",
+    "SystemEODRetrySleeper",
 ]

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 import importlib
 import re
@@ -13,6 +13,14 @@ import yaml
 from .calendar import TradingCalendar
 from .local_calendar import VersionedLocalTradingCalendar
 from .providers import EODProvider, EODProviderCapability
+from .provider_resilience import (
+    EODProviderRateLimitPolicy,
+    EODProviderRetryPolicy,
+    MinimumIntervalEODProviderRateLimiter,
+    NoOpEODProviderRateLimiter,
+    SystemEODMonotonicClock,
+    SystemEODRetrySleeper,
+)
 from .schemas import (
     AdjustmentType,
     AssetType,
@@ -22,7 +30,8 @@ from .schemas import (
     Venue,
 )
 
-EOD_PRODUCTION_CONFIG_SCHEMA_VERSION = 1
+EOD_PRODUCTION_CONFIG_SCHEMA_VERSION = 2
+_LEGACY_EOD_PRODUCTION_CONFIG_SCHEMA_VERSION = 1
 MAX_EOD_PRODUCTION_CONFIG_BYTES = 1024 * 1024
 
 Path = importlib.import_module("pathlib").Path
@@ -44,7 +53,7 @@ _SUPPORTED_PROVIDER_NAMES = frozenset(
         AKSHARE_INDEX_DAILY_PROVIDER,
     }
 )
-_CONFIG_FIELDS = frozenset(
+_REQUIRED_CONFIG_FIELDS = frozenset(
     {
         "config_schema_version",
         "repository_root",
@@ -53,6 +62,8 @@ _CONFIG_FIELDS = frozenset(
         "provider_order",
     }
 )
+_OPTIONAL_CONFIG_FIELDS = frozenset({"retry_policy", "rate_limit_policy"})
+_CONFIG_FIELDS = _REQUIRED_CONFIG_FIELDS | _OPTIONAL_CONFIG_FIELDS
 _DATASET_FIELDS = frozenset(
     {
         "market",
@@ -63,6 +74,15 @@ _DATASET_FIELDS = frozenset(
         "adjustment_type",
     }
 )
+_RETRY_POLICY_FIELDS = frozenset(
+    {
+        "max_attempts",
+        "initial_backoff_seconds",
+        "backoff_multiplier",
+        "max_backoff_seconds",
+    }
+)
+_RATE_LIMIT_POLICY_FIELDS = frozenset({"minimum_interval_seconds"})
 _URI_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
 
 ProviderFactory = Callable[[TradingCalendar], EODProvider]
@@ -116,10 +136,15 @@ class EODProductionConfig:
     calendar_source: Path
     dataset: EODDatasetKey
     provider_order: Tuple[str, ...]
+    retry_policy: EODProviderRetryPolicy = field(default_factory=EODProviderRetryPolicy)
+    rate_limit_policy: EODProviderRateLimitPolicy = field(
+        default_factory=EODProviderRateLimitPolicy
+    )
 
     def __post_init__(self) -> None:
-        if type(self.config_schema_version) is not int or (
-            self.config_schema_version != EOD_PRODUCTION_CONFIG_SCHEMA_VERSION
+        if type(self.config_schema_version) is not int or self.config_schema_version not in (
+            _LEGACY_EOD_PRODUCTION_CONFIG_SCHEMA_VERSION,
+            EOD_PRODUCTION_CONFIG_SCHEMA_VERSION,
         ):
             raise ValueError("config_schema_version is unsupported")
         if not isinstance(self.repository_root, Path) or not self.repository_root.is_absolute():
@@ -144,6 +169,15 @@ class EODProductionConfig:
             raise ValueError("provider_order contains an unsupported provider")
         if len(set(provider_order)) != len(provider_order):
             raise ValueError("provider_order cannot contain duplicates")
+        if type(self.retry_policy) is not EODProviderRetryPolicy:
+            raise TypeError("retry_policy must be an exact EODProviderRetryPolicy")
+        if type(self.rate_limit_policy) is not EODProviderRateLimitPolicy:
+            raise TypeError("rate_limit_policy must be an exact EODProviderRateLimitPolicy")
+        if self.config_schema_version == _LEGACY_EOD_PRODUCTION_CONFIG_SCHEMA_VERSION and (
+            self.retry_policy != EODProviderRetryPolicy()
+            or self.rate_limit_policy != EODProviderRateLimitPolicy()
+        ):
+            raise ValueError("legacy config cannot enable provider resilience policies")
 
         allowed = (
             {AKSHARE_EQUITY_PROVIDER}
@@ -213,7 +247,7 @@ def load_eod_production_config(path: Path) -> EODProductionConfig:
     except yaml.YAMLError as exc:
         error = EODCompositionError(EODCompositionErrorCode.INVALID_YAML)
         raise error from exc
-    if type(payload) is not dict or set(payload) != _CONFIG_FIELDS:
+    if type(payload) is not dict or not _valid_config_envelope(payload):
         raise EODCompositionError(EODCompositionErrorCode.INVALID_CONFIG)
 
     root = _project_or_config_root(path)
@@ -238,6 +272,8 @@ def load_eod_production_config(path: Path) -> EODProductionConfig:
             calendar_source=_resolve_local_path(payload["calendar_source"], root),
             dataset=dataset,
             provider_order=tuple(provider_order),
+            retry_policy=_parse_retry_policy(payload.get("retry_policy")),
+            rate_limit_policy=_parse_rate_limit_policy(payload.get("rate_limit_policy")),
         )
     except (KeyError, TypeError, ValueError) as exc:
         error = EODCompositionError(EODCompositionErrorCode.INVALID_CONFIG)
@@ -284,7 +320,21 @@ def build_eod_runtime(
 
         from .provider_chain import EODProviderChain
 
-        provider_chain = EODProviderChain(tuple(providers))
+        sleeper = SystemEODRetrySleeper()
+        if config.rate_limit_policy.minimum_interval_seconds == 0.0:
+            rate_limiter = NoOpEODProviderRateLimiter()
+        else:
+            rate_limiter = MinimumIntervalEODProviderRateLimiter(
+                config.rate_limit_policy,
+                clock=SystemEODMonotonicClock(),
+                sleeper=sleeper,
+            )
+        provider_chain = EODProviderChain(
+            tuple(providers),
+            retry_policy=config.retry_policy,
+            rate_limiter=rate_limiter,
+            retry_sleeper=sleeper,
+        )
     except Exception as exc:
         error = EODCompositionError(EODCompositionErrorCode.PROVIDER_INVALID)
         raise error from exc
@@ -360,6 +410,37 @@ def _default_provider_factory(name: str) -> ProviderFactory:
         error = EODCompositionError(EODCompositionErrorCode.PROVIDER_INVALID)
         raise error from exc
     return provider_type
+
+
+def _parse_retry_policy(value: object) -> EODProviderRetryPolicy:
+    if value is None:
+        return EODProviderRetryPolicy()
+    if type(value) is not dict or set(value) != _RETRY_POLICY_FIELDS:
+        raise ValueError("retry_policy fields are invalid")
+    return EODProviderRetryPolicy(
+        max_attempts=value["max_attempts"],
+        initial_backoff_seconds=value["initial_backoff_seconds"],
+        backoff_multiplier=value["backoff_multiplier"],
+        max_backoff_seconds=value["max_backoff_seconds"],
+    )
+
+
+def _parse_rate_limit_policy(value: object) -> EODProviderRateLimitPolicy:
+    if value is None:
+        return EODProviderRateLimitPolicy()
+    if type(value) is not dict or set(value) != _RATE_LIMIT_POLICY_FIELDS:
+        raise ValueError("rate_limit_policy fields are invalid")
+    return EODProviderRateLimitPolicy(minimum_interval_seconds=value["minimum_interval_seconds"])
+
+
+def _valid_config_envelope(payload: dict[object, object]) -> bool:
+    version = payload.get("config_schema_version")
+    fields = set(payload)
+    if version == _LEGACY_EOD_PRODUCTION_CONFIG_SCHEMA_VERSION:
+        return fields == _REQUIRED_CONFIG_FIELDS
+    if version == EOD_PRODUCTION_CONFIG_SCHEMA_VERSION:
+        return _REQUIRED_CONFIG_FIELDS.issubset(fields) and fields.issubset(_CONFIG_FIELDS)
+    return False
 
 
 def _resolve_local_path(value: object, root: Path) -> Path:

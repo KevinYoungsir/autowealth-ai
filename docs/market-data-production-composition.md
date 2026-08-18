@@ -49,12 +49,19 @@ AutoWealth 的生产 EOD runtime 使用部署方显式提供的版本化本地�
 
 ## Production configuration
 
-`configs/eod_production.example.yaml` 展示 schema version 1。配置必须显式提供：
+`configs/eod_production.example.yaml` 展示 production config schema version 2。配置必须显式提供：
 
 - `repository_root`；
 - `calendar_source`；
 - 完整 `EODDatasetKey`；
 - 有序 `provider_order`。
+
+配置可选提供严格的 `retry_policy` 和 `rate_limit_policy`。缺省值分别为
+`max_attempts=1` 和 `minimum_interval_seconds=0`，因此旧配置不重试、不等待。启用后，
+单 Provider 的 `max_attempts` 包含第一次调用且上限为 5；退避按
+`min(initial_backoff * multiplier ** retry_index, max_backoff)` 计算，不使用 jitter。
+schema version 1 的既有五字段配置仍可读取，并映射到上述兼容缺省值；v1 不接受新增
+resilience 字段。version 2 严格允许这两个可选 section，未知字段仍关闭式拒绝。
 
 相对路径按最近的项目根目录解析；项目根目录不可识别时按配置文件目录解析。配置不
 包含 API Key，也没有用户目录或本机绝对路径默认值。生产环境可显式提供挂载路径。
@@ -67,6 +74,7 @@ YAML configuration
   -> EODDatasetKey
   -> LocalEODFileRepository
   -> AKShare primary/fallback providers
+  -> bounded retry policy + local provider/endpoint rate limiter
   -> EODProviderChain
   -> EODIncrementalCoordinator
 ```
@@ -100,14 +108,24 @@ repository state。
   文件系统不满足要求。
 - 内置 `InProcessEODDatasetLockManager` 提供单进程、非阻塞的同 dataset 单写保护；它不
   协调多个进程、容器或主机。多实例生产部署必须注入实现同一协议的共享锁管理器。
-- batch 严格串行执行，不实现并行 Provider 请求、重试、退避或限流。
+- batch 严格串行执行，不实现并行 Provider 请求。只有
+  `temporary_provider_failure` 会在当前 Provider 内按显式预算重试，耗尽后才进入下一个
+  fallback；其他错误不重试。
+- 最小间隔限流按 `(provider_name, endpoint_name)` 在同一 runtime/ProviderChain 内共享，
+  不按股票代码拆分，也不是整个 Python 进程的全局单例。重试退避完成后会基于 monotonic
+  clock 重新计算限流剩余时间，避免再次等待
+  完整间隔。同一 identity 串行取得 invocation slot；不同 identity 只短暂共享 state registry
+  锁，不会在某一 identity 睡眠时被全局阻塞。state 的生命周期等于 limiter/runtime，实际
+  key 数由最多 32 个已配置 Provider identity 限定。
+- 非 dry-run 的 Provider 重试和等待发生在 dataset 写锁内。第一版不提前释放锁，以免在
+  current 检查与 publication 之间重新引入 TOCTOU；部署方应使用有界预算。
 
 ## Trade-offs and known limitations
 
 本设计避免伪造交易日期，也保留可审计版本，但需要独立运维流程提供真实日历。当前
 batch 仅编排调用方显式给出的 dataset，不发现股票池，也不执行调度。当前仍不包含
-retry/backoff、rate limiting、full-refresh executor、orphan cleanup、API、CLI、worker、
-scheduler、monitoring 或自动每日 ingestion。旧 research pipeline 尚未迁移到新 EOD
-stack。
+分布式限流、随机 jitter、full-refresh executor、orphan cleanup、API、CLI、worker、
+scheduler、monitoring 或自动每日 ingestion。不同 runtime 不共享 limiter state，进程内限流
+也不能协调多个 worker、容器或主机。旧 research pipeline 尚未迁移到新 EOD stack。
 
 本模块不包含真实交易能力，不调用 DeepSeek，也不改变既有研究结果或历史 artifacts。

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 import inspect
 import json
+import math
 import re
 from typing import Optional, Tuple
 
@@ -19,6 +20,15 @@ from .providers import (
     EODProviderResult,
     EODProviderResultStatus,
     validate_eod_provider_request,
+)
+from .provider_resilience import (
+    EODProviderRateLimiter,
+    EODProviderRetryPolicy,
+    EODRetrySleeper,
+    MAX_EOD_PROVIDER_ATTEMPTS_PER_PROVIDER,
+    MAX_EOD_PROVIDER_DELAY_SECONDS,
+    NoOpEODProviderRateLimiter,
+    SystemEODRetrySleeper,
 )
 from .schemas import EODDateRange
 
@@ -88,6 +98,131 @@ def _warning_codes(result: EODProviderResult) -> Tuple[str, ...]:
     return tuple(sorted({warning.code for warning in result.warnings}))
 
 
+def _diagnostic_seconds(value: object, field_name: str) -> float:
+    if type(value) not in (int, float):
+        raise TypeError(f"{field_name} must be an exact integer or float")
+    normalized = float(value)
+    if not math.isfinite(normalized) or normalized < 0.0:
+        raise ValueError(f"{field_name} must be finite and non-negative")
+    if normalized > MAX_EOD_PROVIDER_DELAY_SECONDS:
+        raise ValueError(f"{field_name} exceeds the provider delay limit")
+    return normalized
+
+
+@dataclass(frozen=True)
+class EODProviderInvocation:
+    """Bounded diagnostics for one actual call to a provider endpoint."""
+
+    provider_position: int
+    invocation_number: int
+    retry_number: int
+    backoff_seconds: float
+    rate_limit_wait_seconds: float
+    result_status: Optional[EODProviderResultStatus]
+    error_code: Optional[EODProviderErrorCode]
+    row_count: int
+    effective_range: Optional[EODDateRange]
+    warning_codes: Tuple[str, ...]
+    safe_message: str
+
+    def __post_init__(self) -> None:
+        if type(self.provider_position) is not int or self.provider_position < 0:
+            raise ValueError("provider_position must be a non-negative exact integer")
+        if type(self.invocation_number) is not int or self.invocation_number < 1:
+            raise ValueError("invocation_number must be a positive exact integer")
+        if type(self.retry_number) is not int or self.retry_number < 0:
+            raise ValueError("retry_number must be a non-negative exact integer")
+        if self.retry_number != self.invocation_number - 1:
+            raise ValueError("retry_number must equal invocation_number minus one")
+        if self.invocation_number > MAX_EOD_PROVIDER_ATTEMPTS_PER_PROVIDER:
+            raise ValueError("invocation_number exceeds the provider retry limit")
+        has_result = type(self.result_status) is EODProviderResultStatus
+        has_error = type(self.error_code) is EODProviderErrorCode
+        if has_result == has_error:
+            raise ValueError("exactly one of result_status and error_code must be provided")
+        if type(self.row_count) is not int or self.row_count < 0:
+            raise ValueError("row_count must be a non-negative exact integer")
+        if self.effective_range is not None and type(self.effective_range) is not EODDateRange:
+            raise TypeError("effective_range must be an exact EODDateRange or None")
+        if type(self.warning_codes) not in (list, tuple):
+            raise TypeError("warning_codes must be an exact list or exact tuple")
+        warning_codes = tuple(self.warning_codes)
+        if any(
+            type(code) is not str or _WARNING_CODE_PATTERN.fullmatch(code) is None
+            for code in warning_codes
+        ):
+            raise ValueError("warning_codes must contain safe machine identifiers")
+        warning_codes = tuple(sorted(set(warning_codes)))
+        if has_result:
+            if self.result_status is EODProviderResultStatus.EMPTY:
+                if self.row_count != 0 or self.effective_range is not None:
+                    raise ValueError("an empty invocation cannot contain rows")
+            elif self.row_count <= 0 or self.effective_range is None:
+                raise ValueError("a non-empty invocation requires rows and an effective range")
+        elif self.row_count != 0 or self.effective_range is not None or warning_codes:
+            raise ValueError("an error invocation cannot contain result evidence")
+        object.__setattr__(
+            self,
+            "backoff_seconds",
+            _diagnostic_seconds(self.backoff_seconds, "backoff_seconds"),
+        )
+        object.__setattr__(
+            self,
+            "rate_limit_wait_seconds",
+            _diagnostic_seconds(
+                self.rate_limit_wait_seconds,
+                "rate_limit_wait_seconds",
+            ),
+        )
+        object.__setattr__(self, "warning_codes", warning_codes)
+        object.__setattr__(self, "safe_message", _safe_message(self.safe_message))
+
+    @property
+    def status(self) -> str:
+        if self.result_status is not None:
+            return _RESULT_STATUS_NAMES[self.result_status]
+        if self.error_code is None:  # pragma: no cover - guarded by construction.
+            raise RuntimeError("invocation status is unavailable")
+        return _ERROR_STATUS_NAMES[self.error_code]
+
+    @property
+    def reason_code(self) -> str:
+        if self.result_status is not None:
+            return self.result_status.value
+        if self.error_code is None:  # pragma: no cover - guarded by construction.
+            raise RuntimeError("invocation reason code is unavailable")
+        return self.error_code.value
+
+    @property
+    def retryable(self) -> bool:
+        return self.error_code is EODProviderErrorCode.TEMPORARY_PROVIDER_FAILURE
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "provider_position": self.provider_position,
+            "invocation_number": self.invocation_number,
+            "retry_number": self.retry_number,
+            "backoff_seconds": self.backoff_seconds,
+            "rate_limit_wait_seconds": self.rate_limit_wait_seconds,
+            "status": self.status,
+            "result_status": None if self.result_status is None else self.result_status.value,
+            "error_code": None if self.error_code is None else self.error_code.value,
+            "retryable": self.retryable,
+            "row_count": self.row_count,
+            "effective_range": (
+                None if self.effective_range is None else self.effective_range.to_dict()
+            ),
+            "warning_codes": list(self.warning_codes),
+            "reason_code": self.reason_code,
+            "safe_message": self.safe_message,
+        }
+
+    def to_json(self) -> str:
+        """Serialize invocation diagnostics deterministically."""
+
+        return _json_text(self.to_dict())
+
+
 @dataclass(frozen=True)
 class EODProviderAttempt:
     """Immutable, bounded diagnostics for one provider evaluation."""
@@ -103,6 +238,7 @@ class EODProviderAttempt:
     warning_codes: Tuple[str, ...]
     selected: bool
     safe_message: str
+    invocations: Tuple[EODProviderInvocation, ...] = ()
 
     def __post_init__(self) -> None:
         if type(self.position) is not int or self.position < 0:
@@ -143,6 +279,21 @@ class EODProviderAttempt:
         warning_codes = tuple(sorted(set(warning_codes)))
         if type(self.selected) is not bool:
             raise ValueError("selected must be a strict boolean")
+        if type(self.invocations) not in (list, tuple):
+            raise TypeError("invocations must be an exact list or exact tuple")
+        invocations = tuple(self.invocations)
+        if len(invocations) > MAX_EOD_PROVIDER_ATTEMPTS_PER_PROVIDER:
+            raise ValueError("invocations exceed the provider retry limit")
+        if any(type(item) is not EODProviderInvocation for item in invocations):
+            raise TypeError("invocations must contain exact EODProviderInvocation values")
+        if tuple(item.invocation_number for item in invocations) != tuple(
+            range(1, len(invocations) + 1)
+        ):
+            raise ValueError("invocation numbers must be contiguous from one")
+        if any(item.provider_position != self.position for item in invocations):
+            raise ValueError("invocation provider positions must match the attempt position")
+        if any(not item.retryable for item in invocations[:-1]):
+            raise ValueError("only retryable failures may precede another invocation")
 
         if has_result:
             if self.result_status is EODProviderResultStatus.EMPTY:
@@ -160,11 +311,24 @@ class EODProviderAttempt:
             if self.selected:
                 raise ValueError("an error attempt cannot be selected")
 
+        if invocations:
+            final_invocation = invocations[-1]
+            if (
+                final_invocation.result_status is not self.result_status
+                or final_invocation.error_code is not self.error_code
+                or final_invocation.row_count != self.row_count
+                or final_invocation.effective_range != self.effective_range
+                or final_invocation.warning_codes != warning_codes
+                or final_invocation.safe_message != self.safe_message
+            ):
+                raise ValueError("final invocation diagnostics must match the provider attempt")
+
         object.__setattr__(self, "provider_name", provider_name)
         object.__setattr__(self, "provider_version", provider_version)
         object.__setattr__(self, "endpoint_name", endpoint_name)
         object.__setattr__(self, "warning_codes", warning_codes)
         object.__setattr__(self, "safe_message", _safe_message(self.safe_message))
+        object.__setattr__(self, "invocations", invocations)
 
     @property
     def role(self) -> str:
@@ -198,6 +362,33 @@ class EODProviderAttempt:
 
         return self.error_code is EODProviderErrorCode.TEMPORARY_PROVIDER_FAILURE
 
+    @property
+    def succeeded_after_retry(self) -> bool:
+        """Return whether this provider produced usable data after a retry."""
+
+        return len(self.invocations) > 1 and self.result_status in (
+            EODProviderResultStatus.SUCCESS,
+            EODProviderResultStatus.PARTIAL_SUCCESS,
+        )
+
+    @property
+    def invocation_count(self) -> int:
+        """Return the number of real provider calls represented by this attempt."""
+
+        return len(self.invocations)
+
+    @property
+    def retry_count(self) -> int:
+        """Return the number of retry invocations represented by this attempt."""
+
+        return max(0, self.invocation_count - 1)
+
+    @property
+    def retry_backoff_seconds(self) -> Tuple[float, ...]:
+        """Return backoff durations applied before retry invocations."""
+
+        return tuple(invocation.backoff_seconds for invocation in self.invocations[1:])
+
     def to_dict(self) -> dict[str, object]:
         """Return deterministic JSON-safe attempt diagnostics."""
 
@@ -219,6 +410,11 @@ class EODProviderAttempt:
             "selected": self.selected,
             "reason_code": self.reason_code,
             "safe_message": self.safe_message,
+            "invocation_count": self.invocation_count,
+            "retry_count": self.retry_count,
+            "succeeded_after_retry": self.succeeded_after_retry,
+            "retry_backoff_seconds": list(self.retry_backoff_seconds),
+            "invocations": [invocation.to_dict() for invocation in self.invocations],
         }
 
     def to_json(self) -> str:
@@ -389,9 +585,16 @@ class EODProviderChainError(RuntimeError):
 
 
 class EODProviderChain:
-    """Try immutable EOD providers once each in their declared order."""
+    """Try providers in order with bounded retries before each fallback."""
 
-    def __init__(self, providers: Tuple[EODProvider, ...]) -> None:
+    def __init__(
+        self,
+        providers: Tuple[EODProvider, ...],
+        *,
+        retry_policy: Optional[EODProviderRetryPolicy] = None,
+        rate_limiter: Optional[EODProviderRateLimiter] = None,
+        retry_sleeper: Optional[EODRetrySleeper] = None,
+    ) -> None:
         if type(providers) not in (list, tuple):
             raise TypeError("providers must be an exact list or exact tuple")
         normalized = tuple(providers)
@@ -429,6 +632,21 @@ class EODProviderChain:
 
         self._providers = normalized
         self._provider_identities = tuple(identities)
+        if retry_policy is None:
+            retry_policy = EODProviderRetryPolicy()
+        if type(retry_policy) is not EODProviderRetryPolicy:
+            raise TypeError("retry_policy must be an exact EODProviderRetryPolicy")
+        if rate_limiter is None:
+            rate_limiter = NoOpEODProviderRateLimiter()
+        if not callable(getattr(rate_limiter, "acquire", None)):
+            raise TypeError("rate_limiter must implement the EODProviderRateLimiter contract")
+        if retry_sleeper is None:
+            retry_sleeper = SystemEODRetrySleeper()
+        if not callable(getattr(retry_sleeper, "sleep", None)):
+            raise TypeError("retry_sleeper must implement the EODRetrySleeper contract")
+        self._retry_policy = retry_policy
+        self._rate_limiter = rate_limiter
+        self._retry_sleeper = retry_sleeper
 
     def fetch(self, request: EODProviderRequest) -> EODProviderChainResult:
         """Return the first complete result or the deterministic best partial result."""
@@ -476,65 +694,129 @@ class EODProviderChain:
                 last_cause = endpoint_error
                 continue
 
-            try:
-                result = provider.fetch(request)
-            except EODProviderError as exc:
-                attempts.append(
-                    _error_attempt(
-                        position,
-                        provider_name,
-                        provider_version,
-                        endpoint_name,
-                        exc.code,
-                        exc.message,
-                    )
-                )
-                last_cause = exc
-                continue
-            except Exception as exc:
-                attempts.append(
-                    _error_attempt(
-                        position,
-                        provider_name,
-                        provider_version,
-                        endpoint_name,
-                        EODProviderErrorCode.PROVIDER_UNAVAILABLE,
-                        "The EOD provider is unavailable for this request.",
-                    )
-                )
-                last_cause = exc
-                continue
-
-            if not _result_identity_matches(
-                result,
-                request,
-                provider_name,
-                provider_version,
-            ):
-                attempts.append(
-                    _error_attempt(
-                        position,
-                        provider_name,
-                        provider_version,
-                        endpoint_name,
-                        EODProviderErrorCode.MALFORMED_PROVIDER_PAYLOAD,
-                        "The EOD provider returned an inconsistent result identity.",
-                    )
-                )
-                continue
-
-            if result.status is EODProviderResultStatus.SUCCESS:
-                attempts.append(_result_attempt(position, endpoint_name, result, selected=True))
-                return EODProviderChainResult(
-                    request=request,
-                    selected_result=result,
-                    selected_position=position,
-                    attempts=tuple(attempts),
+            invocations = []
+            for invocation_number in range(1, self._retry_policy.max_attempts + 1):
+                backoff_seconds = 0.0
+                if invocation_number > 1:
+                    backoff_seconds = self._retry_policy.delay_for_retry(invocation_number - 2)
+                    if backoff_seconds > 0.0:
+                        self._retry_sleeper.sleep(backoff_seconds)
+                rate_limit_wait_seconds = _diagnostic_seconds(
+                    self._rate_limiter.acquire(provider_name, endpoint_name),
+                    "rate_limit_wait_seconds",
                 )
 
-            attempts.append(_result_attempt(position, endpoint_name, result, selected=False))
-            if result.status is EODProviderResultStatus.PARTIAL_SUCCESS:
-                partial_candidates.append((position, result))
+                try:
+                    result = provider.fetch(request)
+                except EODProviderError as exc:
+                    invocations.append(
+                        _error_invocation(
+                            position,
+                            invocation_number,
+                            backoff_seconds,
+                            rate_limit_wait_seconds,
+                            exc.code,
+                            exc.message,
+                        )
+                    )
+                    last_cause = exc
+                    if exc.retryable and invocation_number < self._retry_policy.max_attempts:
+                        continue
+                    attempts.append(
+                        _error_attempt(
+                            position,
+                            provider_name,
+                            provider_version,
+                            endpoint_name,
+                            exc.code,
+                            exc.message,
+                            invocations=tuple(invocations),
+                        )
+                    )
+                    break
+                except Exception as exc:
+                    safe_message = "The EOD provider is unavailable for this request."
+                    invocations.append(
+                        _error_invocation(
+                            position,
+                            invocation_number,
+                            backoff_seconds,
+                            rate_limit_wait_seconds,
+                            EODProviderErrorCode.PROVIDER_UNAVAILABLE,
+                            safe_message,
+                        )
+                    )
+                    attempts.append(
+                        _error_attempt(
+                            position,
+                            provider_name,
+                            provider_version,
+                            endpoint_name,
+                            EODProviderErrorCode.PROVIDER_UNAVAILABLE,
+                            safe_message,
+                            invocations=tuple(invocations),
+                        )
+                    )
+                    last_cause = exc
+                    break
+
+                if not _result_identity_matches(
+                    result,
+                    request,
+                    provider_name,
+                    provider_version,
+                ):
+                    safe_message = "The EOD provider returned an inconsistent result identity."
+                    invocations.append(
+                        _error_invocation(
+                            position,
+                            invocation_number,
+                            backoff_seconds,
+                            rate_limit_wait_seconds,
+                            EODProviderErrorCode.MALFORMED_PROVIDER_PAYLOAD,
+                            safe_message,
+                        )
+                    )
+                    attempts.append(
+                        _error_attempt(
+                            position,
+                            provider_name,
+                            provider_version,
+                            endpoint_name,
+                            EODProviderErrorCode.MALFORMED_PROVIDER_PAYLOAD,
+                            safe_message,
+                            invocations=tuple(invocations),
+                        )
+                    )
+                    break
+
+                invocations.append(
+                    _result_invocation(
+                        position,
+                        invocation_number,
+                        backoff_seconds,
+                        rate_limit_wait_seconds,
+                        result,
+                    )
+                )
+                attempt = _result_attempt(
+                    position,
+                    endpoint_name,
+                    result,
+                    selected=result.status is EODProviderResultStatus.SUCCESS,
+                    invocations=tuple(invocations),
+                )
+                attempts.append(attempt)
+                if result.status is EODProviderResultStatus.SUCCESS:
+                    return EODProviderChainResult(
+                        request=request,
+                        selected_result=result,
+                        selected_position=position,
+                        attempts=tuple(attempts),
+                    )
+                if result.status is EODProviderResultStatus.PARTIAL_SUCCESS:
+                    partial_candidates.append((position, result))
+                break
 
         if partial_candidates:
             selected_position, selected_result = max(
@@ -635,14 +917,8 @@ def _result_attempt(
     result: EODProviderResult,
     *,
     selected: bool,
+    invocations: Tuple[EODProviderInvocation, ...] = (),
 ) -> EODProviderAttempt:
-    messages = {
-        EODProviderResultStatus.SUCCESS: ("The EOD provider returned a complete validated result."),
-        EODProviderResultStatus.PARTIAL_SUCCESS: (
-            "The EOD provider returned a partial validated result."
-        ),
-        EODProviderResultStatus.EMPTY: "The EOD provider returned no rows.",
-    }
     return EODProviderAttempt(
         position=position,
         provider_name=result.provider_name,
@@ -654,7 +930,8 @@ def _result_attempt(
         effective_range=result.effective_range,
         warning_codes=_warning_codes(result),
         selected=selected,
-        safe_message=messages[result.status],
+        safe_message=_result_message(result.status),
+        invocations=invocations,
     )
 
 
@@ -665,6 +942,8 @@ def _error_attempt(
     endpoint_name: Optional[str],
     error_code: EODProviderErrorCode,
     safe_message: str,
+    *,
+    invocations: Tuple[EODProviderInvocation, ...] = (),
 ) -> EODProviderAttempt:
     return EODProviderAttempt(
         position=position,
@@ -678,7 +957,63 @@ def _error_attempt(
         warning_codes=(),
         selected=False,
         safe_message=safe_message,
+        invocations=invocations,
     )
+
+
+def _result_invocation(
+    position: int,
+    invocation_number: int,
+    backoff_seconds: float,
+    rate_limit_wait_seconds: float,
+    result: EODProviderResult,
+) -> EODProviderInvocation:
+    return EODProviderInvocation(
+        provider_position=position,
+        invocation_number=invocation_number,
+        retry_number=invocation_number - 1,
+        backoff_seconds=backoff_seconds,
+        rate_limit_wait_seconds=rate_limit_wait_seconds,
+        result_status=result.status,
+        error_code=None,
+        row_count=len(result.bars),
+        effective_range=result.effective_range,
+        warning_codes=_warning_codes(result),
+        safe_message=_result_message(result.status),
+    )
+
+
+def _error_invocation(
+    position: int,
+    invocation_number: int,
+    backoff_seconds: float,
+    rate_limit_wait_seconds: float,
+    error_code: EODProviderErrorCode,
+    safe_message: str,
+) -> EODProviderInvocation:
+    return EODProviderInvocation(
+        provider_position=position,
+        invocation_number=invocation_number,
+        retry_number=invocation_number - 1,
+        backoff_seconds=backoff_seconds,
+        rate_limit_wait_seconds=rate_limit_wait_seconds,
+        result_status=None,
+        error_code=error_code,
+        row_count=0,
+        effective_range=None,
+        warning_codes=(),
+        safe_message=safe_message,
+    )
+
+
+def _result_message(status: EODProviderResultStatus) -> str:
+    return {
+        EODProviderResultStatus.SUCCESS: ("The EOD provider returned a complete validated result."),
+        EODProviderResultStatus.PARTIAL_SUCCESS: (
+            "The EOD provider returned a partial validated result."
+        ),
+        EODProviderResultStatus.EMPTY: "The EOD provider returned no rows.",
+    }[status]
 
 
 def _partial_rank(position: int, result: EODProviderResult) -> tuple[int, int, int, int]:
@@ -716,4 +1051,5 @@ __all__ = [
     "EODProviderChain",
     "EODProviderChainError",
     "EODProviderChainResult",
+    "EODProviderInvocation",
 ]

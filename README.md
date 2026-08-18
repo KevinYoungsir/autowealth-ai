@@ -52,6 +52,8 @@ generations、原子 `current` pointer 和 incremental coordinator。
 视为交易日。构造过程不会执行 Provider fetch、更新或 publication。配置样例见
 `configs/eod_production.example.yaml`，完整 contract 见
 `docs/market-data-production-composition.md`。
+当前样例使用 production config schema version 2；既有 version 1 配置仍按单次调用、零等待
+的兼容默认值加载，不需要为保持旧行为而修改部署文件。
 
 显式 batch coordinator 可将多个已构造 runtime 按 canonical dataset identity 排序后串行
 执行。默认策略在首个失败后停止，也可显式继续；每个 dataset 的成功、失败、跳过和
@@ -61,8 +63,10 @@ Provider、获取写锁或发布 generation。非 dry-run 使用稳定 dataset l
 不会回滚此前已成功发布的独立 generation。
 
 生产 `repository_root` 必须位于持久化 volume 或其他 durable filesystem。当前仍没有
-retry/backoff、rate limiting、worker、scheduler、EOD API/CLI、full-refresh executor 或
-自动每日 ingestion。
+worker、scheduler、EOD API/CLI、full-refresh executor 或自动每日 ingestion。Provider
+调用边界现支持显式配置的有界临时失败重试和单 runtime 进程内最小间隔限流；默认仍只调用一次且
+不等待。退避确定性且不含 jitter，只有 `temporary_provider_failure` 会重试。batch 继续
+串行执行，重试与等待期间仍持有对应 dataset 的写锁。
 
 本地启动入口：
 

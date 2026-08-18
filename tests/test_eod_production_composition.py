@@ -37,6 +37,10 @@ from autowealth.market_data.local_calendar import (
     VersionedLocalTradingCalendar,
 )
 from autowealth.market_data.provider_chain import EODProviderChain
+from autowealth.market_data.provider_resilience import (
+    EODProviderRateLimitPolicy,
+    EODProviderRetryPolicy,
+)
 from autowealth.market_data.providers import (
     EODProviderCapability,
     EODProviderRequest,
@@ -295,6 +299,87 @@ def test_valid_configuration_resolves_paths_without_loading_calendar(tmp_path: P
         AKSHARE_INDEX_PROVIDER,
         AKSHARE_INDEX_DAILY_PROVIDER,
     )
+    assert config.retry_policy == EODProviderRetryPolicy()
+    assert config.rate_limit_policy == EODProviderRateLimitPolicy()
+
+
+def test_legacy_v1_configuration_loads_with_behavior_compatible_defaults(
+    tmp_path: Path,
+) -> None:
+    payload = _config_payload()
+    payload["config_schema_version"] = 1
+
+    config = load_eod_production_config(_write_config(tmp_path, payload))
+
+    assert config.config_schema_version == 1
+    assert config.retry_policy == EODProviderRetryPolicy(max_attempts=1)
+    assert config.rate_limit_policy == EODProviderRateLimitPolicy(minimum_interval_seconds=0)
+
+
+def test_legacy_v1_configuration_rejects_resilience_extension_fields(tmp_path: Path) -> None:
+    payload = _config_payload()
+    payload["config_schema_version"] = 1
+    payload["retry_policy"] = {
+        "max_attempts": 1,
+        "initial_backoff_seconds": 1,
+        "backoff_multiplier": 2,
+        "max_backoff_seconds": 5,
+    }
+
+    with pytest.raises(EODCompositionError) as captured:
+        load_eod_production_config(_write_config(tmp_path, payload))
+
+    assert captured.value.code is EODCompositionErrorCode.INVALID_CONFIG
+
+
+def test_optional_resilience_configuration_is_strict_and_explicit(tmp_path: Path) -> None:
+    payload = _config_payload()
+    payload["retry_policy"] = {
+        "max_attempts": 3,
+        "initial_backoff_seconds": 0.5,
+        "backoff_multiplier": 2.0,
+        "max_backoff_seconds": 2.0,
+    }
+    payload["rate_limit_policy"] = {"minimum_interval_seconds": 1.5}
+
+    config = load_eod_production_config(_write_config(tmp_path, payload))
+
+    assert config.retry_policy == EODProviderRetryPolicy(
+        max_attempts=3,
+        initial_backoff_seconds=0.5,
+        backoff_multiplier=2.0,
+        max_backoff_seconds=2.0,
+    )
+    assert config.rate_limit_policy == EODProviderRateLimitPolicy(minimum_interval_seconds=1.5)
+
+
+@pytest.mark.parametrize(
+    ("section", "value"),
+    [
+        ("retry_policy", {"max_attempts": 3}),
+        (
+            "retry_policy",
+            {
+                "max_attempts": 6,
+                "initial_backoff_seconds": 1,
+                "backoff_multiplier": 2,
+                "max_backoff_seconds": 5,
+            },
+        ),
+        ("rate_limit_policy", {"minimum_interval_seconds": 0, "jitter": 1}),
+        ("rate_limit_policy", {"minimum_interval_seconds": -1}),
+    ],
+)
+def test_invalid_resilience_configuration_fails_closed(
+    tmp_path: Path,
+    section: str,
+    value: object,
+) -> None:
+    payload = _config_payload()
+    payload[section] = value
+    with pytest.raises(EODCompositionError) as captured:
+        load_eod_production_config(_write_config(tmp_path, payload))
+    assert captured.value.code is EODCompositionErrorCode.INVALID_CONFIG
 
 
 @pytest.mark.parametrize("mutation", ["missing_calendar", "invalid_repository", "unsupported"])
@@ -325,11 +410,14 @@ def test_configuration_has_no_machine_specific_path_defaults() -> None:
     assert "token" not in example.lower()
 
     parsed = load_eod_production_config(ROOT / "configs/eod_production.example.yaml")
+    assert parsed.config_schema_version == 2
     assert parsed.dataset.canonical_symbol == "000300.SH"
     assert parsed.provider_order == (
         AKSHARE_INDEX_PROVIDER,
         AKSHARE_INDEX_DAILY_PROVIDER,
     )
+    assert parsed.retry_policy.max_attempts == 1
+    assert parsed.rate_limit_policy.minimum_interval_seconds == 0.0
 
 
 def test_configuration_errors_do_not_leak_paths_or_credentials(tmp_path: Path) -> None:
@@ -548,6 +636,8 @@ def test_root_exports_remain_lazy_and_new_modules_parse_as_python_39() -> None:
         "EOD_CALENDAR_SCHEMA_VERSION",
         "EOD_PRODUCTION_CONFIG_SCHEMA_VERSION",
         "EODProductionConfig",
+        "EODProviderRateLimitPolicy",
+        "EODProviderRetryPolicy",
         "EODRuntimeStack",
         "VersionedLocalTradingCalendar",
         "build_eod_batch_coordinator",
@@ -560,6 +650,7 @@ def test_root_exports_remain_lazy_and_new_modules_parse_as_python_39() -> None:
     for relative_path in (
         "autowealth/market_data/local_calendar.py",
         "autowealth/market_data/composition.py",
+        "autowealth/market_data/provider_resilience.py",
         "autowealth/market_data/batch.py",
         "autowealth/market_data/__init__.py",
         "tests/test_eod_batch_coordinator.py",

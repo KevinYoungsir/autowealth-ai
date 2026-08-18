@@ -16,6 +16,12 @@
   串行复用单数据集 coordinator；默认在首个失败后停止，也可显式继续并保留逐数据集结果。
 - 新增真实 dry-run 规划路径，以及基于稳定 SHA-256 dataset identity 的单写锁协议和
   进程内实现；dry-run 不调用 Provider、不发布 generation，也不获取写锁。
+- 新增 Provider 调用边界的有界临时失败重试、确定性退避、可注入 sleeper/monotonic clock
+  以及按 Provider/endpoint 在单 runtime 内共享的进程内最小间隔限流；默认仍为单次调用且不等待。
+- Provider attempt 以增量字段保留每次 invocation、retry number、实际退避和限流等待；
+  provider chain position、fallback 顺序和既有结果字段保持不变。
+- production config schema 升级为 version 2 以承载严格的 resilience section；既有 version 1
+  五字段配置继续按单次调用、零等待的兼容默认值读取。
 
 ### 安全
 - 日历和 composition 在 import 时不联网、不读取凭据、不写 repository，也不会自动执行
@@ -24,12 +30,15 @@
   不得作为有效生产存储。
 - 非 dry-run 的锁覆盖 current 检查、规划、抓取、校验和发布全流程；重复 dataset、锁冲突、
   Provider/校验异常和缺少 coordinator 均关闭式失败，不会伪造全局成功。
+- 只有现有 `temporary_provider_failure` 分类可以重试；不支持、不可用、永久失败、格式错误
+  和普通未分类异常均不会重试，诊断不保存原始异常、凭据、绝对路径或 traceback。
 
 ### 已知限制
 - 进程内锁不能协调多个进程、容器或主机；生产多实例部署仍需实现同一锁协议的持久化或
   分布式锁管理器。
-- 本阶段仍不包含 retry/backoff、rate limiting、API、CLI、worker、scheduler、monitoring、
-  full-refresh executor、orphan cleanup 或自动每日 ingestion；batch 只做同步串行编排。
+- 限流器仅协调单个 Python 进程，不是跨进程或分布式配额系统；当前退避不含 jitter。
+- 本阶段仍不包含 API、CLI、worker、scheduler、monitoring、full-refresh executor、
+  orphan cleanup 或自动每日 ingestion；batch 继续只做同步串行编排。
 
 ## [0.17.1] - 2026-08-13
 
