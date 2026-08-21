@@ -541,10 +541,35 @@ current 读取、规划、Provider chain、合并、校验和原子发布全流�
 Provider retry/backoff 和 rate limiting 只位于统一调用边界：只有临时失败可重试，退避
 确定且有界，限流只在单个 runtime/ProviderChain 内生效。batch 继续串行，真实执行时 dataset 写锁在
 Provider 重试和等待期间保持持有；dry-run 不调用 Provider、limiter 或 sleeper。本阶段仍
-没有分布式限流、随机 jitter、worker、scheduler、API、CLI、full-refresh executor、
-orphan cleanup 或自动每日 ingestion。旧 research pipeline、旧 cache 和历史 artifacts
+没有分布式限流、随机 jitter、worker、scheduler、API、CLI、orphan cleanup 或自动每日
+ingestion。旧 research pipeline、旧 cache 和历史 artifacts
 均未迁移或修改。
 
 production config 因新增严格的 `retry_policy`、`rate_limit_policy` section 升级为 schema
 version 2。旧 schema version 1 五字段配置继续加载，并固定映射为 `max_attempts=1`、最小
 间隔 0；v1 不接受 v2 字段，避免旧 parser 与新配置对同一版本产生不同解释。
+
+## 22. Explicit EOD Full Refresh Execution
+
+`EODFullRefreshExecutor` 是独立的显式执行边界。普通 incremental update 和既有 batch
+继续把 `full_refresh_required` 当作 planner outcome，不会自动抓取或重建完整历史。调用方
+必须显式提交 `EODFullRefreshRequest`，执行器随后在 dataset 写锁内重新读取 current、调用
+同一 planner，并且只在 planner 仍返回 `full_refresh_required` 时继续。
+
+Provider request 精确使用 planner 的完整 `effective_range`。replacement candidate 只由
+本次 ProviderChain 返回的 bars 构成，不与 current bars 合并，因此 qfq/hfq 历史修订不会
+遗留旧 generation 的价格。只有完整 `success` 可进入严格 coverage validation；partial、
+缺失交易日、区间外日期、重复、OHLC/数值异常或 identity 不一致均关闭式失败，不发布也
+不改变 current pointer。执行器直接复用 ProviderChain 的有界 retry、backoff、rate limit、
+fallback 和 attempts，不增加外层 retry。
+
+候选内容 checksum 与 current 相同时返回 `unchanged_content`，不创建重复 generation。
+内容变化时复用现有 repository format，创建新的 immutable generation，并让
+`previous_generation_id` 指向锁内读取到的 current；旧 generation 不修改、不删除，指针
+继续原子激活。dry-run 只读取 current 和规划，返回 intended full range 与待替换 generation，
+不抓取、不获取写锁、不等待、不创建 generation 或写 pointer。
+
+production composition 可通过 `build_eod_full_refresh_executor` 显式构造该边界，但不会执行。
+调用方必须把与 incremental writer 共用的 lock manager 注入 executor；内置进程锁仍不能
+协调多进程或多实例。本阶段不增加 batch full-refresh mode、配置默认开关、orphan cleanup、
+worker、scheduler、API、CLI 或自动每日 ingestion。

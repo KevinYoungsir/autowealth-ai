@@ -117,6 +117,7 @@ _LAZY_EXPORT_MODULES = MappingProxyType(
                 "EODRuntimeStack",
                 "EOD_PRODUCTION_CONFIG_SCHEMA_VERSION",
                 "build_eod_batch_coordinator",
+                "build_eod_full_refresh_executor",
                 "build_eod_runtime",
                 "load_eod_production_config",
             )
@@ -129,6 +130,17 @@ _LAZY_EXPORT_MODULES = MappingProxyType(
                 "EODIncrementalCoordinatorErrorCode",
                 "EODIncrementalUpdateResult",
                 "EODIncrementalUpdateStatus",
+            )
+        },
+        **{
+            name: ".full_refresh"
+            for name in (
+                "EODFullRefreshErrorCode",
+                "EODFullRefreshExecutor",
+                "EODFullRefreshExecutorError",
+                "EODFullRefreshRequest",
+                "EODFullRefreshResult",
+                "EODFullRefreshStatus",
             )
         },
         "AKShareEODEquityProvider": ".akshare_adapters",
@@ -212,6 +224,12 @@ __all__ = [
     "EODFileRepository",
     "EODGenerationExistsError",
     "EODGenerationManifest",
+    "EODFullRefreshErrorCode",
+    "EODFullRefreshExecutor",
+    "EODFullRefreshExecutorError",
+    "EODFullRefreshRequest",
+    "EODFullRefreshResult",
+    "EODFullRefreshStatus",
     "EODIntegrityError",
     "EODIncrementalCoordinator",
     "EODIncrementalCoordinatorError",
@@ -270,6 +288,7 @@ __all__ = [
     "EODMonotonicClock",
     "InProcessEODDatasetLockManager",
     "build_eod_batch_coordinator",
+    "build_eod_full_refresh_executor",
     "build_eod_runtime",
     "calculate_bytes_sha256",
     "calculate_eod_content_sha256",

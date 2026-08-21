@@ -22,6 +22,8 @@
   provider chain position、fallback 顺序和既有结果字段保持不变。
 - production config schema 升级为 version 2 以承载严格的 resilience section；既有 version 1
   五字段配置继续按单次调用、零等待的兼容默认值读取。
+- 新增独立、显式授权的 EOD full-refresh executor；只有既有 planner 返回
+  `full_refresh_required` 时才抓取完整 effective range 并发布 replacement generation。
 
 ### 安全
 - 日历和 composition 在 import 时不联网、不读取凭据、不写 repository，也不会自动执行
@@ -32,13 +34,15 @@
   Provider/校验异常和缺少 coordinator 均关闭式失败，不会伪造全局成功。
 - 只有现有 `temporary_provider_failure` 分类可以重试；不支持、不可用、永久失败、格式错误
   和普通未分类异常均不会重试，诊断不保存原始异常、凭据、绝对路径或 traceback。
+- full refresh 不合并旧历史 bars，partial、缺失交易日、区间外数据或 publication 校验失败
+  均不激活新 generation；dry-run 不抓取、不限流、不等待、不获取写锁或写 repository。
 
 ### 已知限制
 - 进程内锁不能协调多个进程、容器或主机；生产多实例部署仍需实现同一锁协议的持久化或
   分布式锁管理器。
 - 限流器仅协调单个 Python 进程，不是跨进程或分布式配额系统；当前退避不含 jitter。
-- 本阶段仍不包含 API、CLI、worker、scheduler、monitoring、full-refresh executor、
-  orphan cleanup 或自动每日 ingestion；batch 继续只做同步串行编排。
+- 本阶段仍不包含 API、CLI、worker、scheduler、monitoring、orphan cleanup 或自动每日
+  ingestion；batch 继续只做默认 incremental 的同步串行编排，不隐式执行 full refresh。
 
 ## [0.17.1] - 2026-08-13
 

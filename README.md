@@ -42,7 +42,7 @@ AutoWealth AI 是一款基于**多智能体技术**的智能投资分析引擎�
 
 v0.17.0 在 `autowealth.market_data` 下提供 library-level capability，包括显式 dataset
 identity、确定性 request planning、AKShare adapters、provider fallback chain、不可变
-generations、原子 `current` pointer 和 incremental coordinator。
+generations、原子 `current` pointer、incremental coordinator 和显式 full-refresh executor。
 
 该能力尚未接入自动每日抓取或生产调度。既有真实研究流水线在 v0.17.0 中没有迁移到
 这套 EOD stack，其行为和数据路径保持不变。
@@ -62,8 +62,15 @@ Provider、获取写锁或发布 generation。非 dry-run 使用稳定 dataset l
 单个 Python 进程内有效，不是多实例分布式锁。batch 不是跨 dataset 原子事务，后续失败
 不会回滚此前已成功发布的独立 generation。
 
+`full_refresh_required` 仍只是普通 incremental planner outcome，不会自动抓取完整历史。
+调用方必须显式构造 `EODFullRefreshRequest` 并交给 `EODFullRefreshExecutor`；执行器只在 planner
+确认 eligible 时请求完整 effective range，候选数据完全来自本次 Provider 结果，不与旧历史合并。完整结果通过
+严格覆盖校验后才可发布；旧 generation 保持 immutable，`current` pointer 原子切换。dry-run
+只读取 current 和规划，不抓取、不获取写锁或写 repository。现有 batch 默认路径没有新增
+full-refresh execution mode。
+
 生产 `repository_root` 必须位于持久化 volume 或其他 durable filesystem。当前仍没有
-worker、scheduler、EOD API/CLI、full-refresh executor 或自动每日 ingestion。Provider
+worker、scheduler、EOD API/CLI、orphan cleanup 或自动每日 ingestion。Provider
 调用边界现支持显式配置的有界临时失败重试和单 runtime 进程内最小间隔限流；默认仍只调用一次且
 不等待。退避确定性且不含 jitter，只有 `temporary_provider_failure` 会重试。batch 继续
 串行执行，重试与等待期间仍持有对应 dataset 的写锁。
