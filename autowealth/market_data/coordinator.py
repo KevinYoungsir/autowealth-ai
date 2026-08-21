@@ -19,6 +19,7 @@ from .calendar import TradingCalendar
 from .normalization import normalize_eod_bars
 from .planning import (
     EODRequestPlan,
+    EODRequestPlanningError,
     EODRequestPlanStatus,
     EODRevisionPolicy,
     plan_eod_request_window,
@@ -28,7 +29,7 @@ from .provider_chain import (
     EODProviderChainError,
     EODProviderChainResult,
 )
-from .providers import EODProviderErrorCode, EODProviderResultStatus
+from .providers import EODProviderErrorCode, EODProviderRequest, EODProviderResultStatus
 from .schemas import EODBar, EODDatasetKey, EODDateRange, EODUpdateRequest
 from .validation import EODValidationReport, validate_eod_batch
 from .versioning import (
@@ -49,6 +50,7 @@ _STAGES = frozenset(
         "planning",
         "provider_chain",
         "merge",
+        "replacement",
         "validation",
         "publication_context",
         "publish",
@@ -663,10 +665,16 @@ class EODIncrementalCoordinator:
         self,
         dataset: EODDatasetKey,
         requested_range: EODDateRange,
+        *,
+        propagate_unknown: bool = False,
     ) -> Optional[EODStoredGeneration]:
+        if type(propagate_unknown) is not bool:
+            raise ValueError("propagate_unknown must be a strict boolean")
         try:
             current = self._repository.load_current(dataset)
         except Exception as exc:
+            if propagate_unknown:
+                raise
             error = self._error(
                 EODIncrementalCoordinatorErrorCode.CURRENT_GENERATION_INVALID,
                 "load_current",
@@ -722,7 +730,11 @@ class EODIncrementalCoordinator:
         requested_range: EODDateRange,
         current_manifest: Optional[EODGenerationManifest],
         revision_policy: Optional[EODRevisionPolicy],
+        *,
+        propagate_unknown: bool = False,
     ) -> EODRequestPlan:
+        if type(propagate_unknown) is not bool:
+            raise ValueError("propagate_unknown must be a strict boolean")
         try:
             plan = plan_eod_request_window(
                 dataset,
@@ -732,6 +744,8 @@ class EODIncrementalCoordinator:
                 revision_policy,
             )
         except Exception as exc:
+            if propagate_unknown and not isinstance(exc, EODRequestPlanningError):
+                raise
             error = self._error(
                 EODIncrementalCoordinatorErrorCode.PLANNING_FAILED,
                 "planning",
@@ -801,6 +815,28 @@ class EODIncrementalCoordinator:
         request = plan.provider_request
         if request is None:  # pragma: no cover - guarded by the caller.
             raise RuntimeError("fetch plan request is unavailable")
+        return self._fetch_provider_request(
+            request,
+            plan,
+            dataset,
+            requested_range,
+        )
+
+    def _fetch_provider_request(
+        self,
+        request: EODProviderRequest,
+        plan: EODRequestPlan,
+        dataset: EODDatasetKey,
+        requested_range: EODDateRange,
+        *,
+        propagate_unknown: bool = False,
+    ) -> EODProviderChainResult:
+        """Fetch one explicit planned request through the shared ProviderChain boundary."""
+
+        if type(request) is not EODProviderRequest:
+            raise TypeError("request must be an exact EODProviderRequest")
+        if type(propagate_unknown) is not bool:
+            raise ValueError("propagate_unknown must be a strict boolean")
         try:
             result = self._provider_chain.fetch(request)
         except EODProviderChainError as exc:
@@ -817,6 +853,8 @@ class EODIncrementalCoordinator:
             )
             raise error from exc
         except Exception as exc:
+            if propagate_unknown:
+                raise
             error = self._error(
                 EODIncrementalCoordinatorErrorCode.PROVIDER_CHAIN_FAILED,
                 "provider_chain",
@@ -966,7 +1004,11 @@ class EODIncrementalCoordinator:
         dataset: EODDatasetKey,
         requested_range: EODDateRange,
         attempts: Tuple[EODProviderAttempt, ...],
+        *,
+        propagate_unknown: bool = False,
     ) -> None:
+        if type(propagate_unknown) is not bool:
+            raise ValueError("propagate_unknown must be a strict boolean")
         effective_range = plan.effective_range
         if effective_range is None:
             raise self._error(
@@ -997,6 +1039,8 @@ class EODIncrementalCoordinator:
                 expected_range=None,
             )
         except Exception as exc:
+            if propagate_unknown:
+                raise
             error = self._error(
                 EODIncrementalCoordinatorErrorCode.VALIDATION_FAILED,
                 "validation",
@@ -1025,6 +1069,8 @@ class EODIncrementalCoordinator:
                 expected_range=effective_range,
             )
         except Exception as exc:
+            if propagate_unknown:
+                raise
             error = self._error(
                 EODIncrementalCoordinatorErrorCode.VALIDATION_FAILED,
                 "validation",

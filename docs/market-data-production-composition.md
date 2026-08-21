@@ -77,11 +77,17 @@ YAML configuration
   -> bounded retry policy + local provider/endpoint rate limiter
   -> EODProviderChain
   -> EODIncrementalCoordinator
+  -> optional explicit EODFullRefreshExecutor
 ```
 
 `build_eod_runtime` 只执行 `VALIDATE + CONSTRUCT`。AKShare 仍在首次显式 `fetch` 时才
 延迟导入；构造 runtime 不会访问网络、创建 generation、写 `current.json` 或调用
 Coordinator `update`。
+
+`build_eod_full_refresh_executor` 可从一个已验证 runtime 和调用方显式提供的同一 dataset
+lock manager 构造独立 full-refresh execution boundary。构造过程同样不读取 current、抓取、
+等待、获取锁或发布。普通 `EODIncrementalCoordinator` 和既有 batch 不会因为该构造函数
+自动执行 full refresh。
 
 多个 runtime 可通过 `build_eod_batch_coordinator` 显式组装：
 
@@ -99,6 +105,15 @@ batch 默认在首个失败后停止，也支持显式 continue-on-failure。dry
 校验和发布全流程。batch 不是跨 dataset 原子事务，后续 dataset 失败不会回滚此前已经
 成功发布的独立 generation。dry-run 不持写锁，因此其计划不保证后续执行时仍对应相同
 repository state。
+
+只有 exact `EODFullRefreshRequest` 可以进入显式 full-refresh executor。真实执行会先获取写锁，
+再在锁内首次读取 current 并调用同一 planner。只有结果为
+`full_refresh_required` 才构造覆盖完整 `effective_range` 的 Provider request；其他 planner
+状态返回 `not_eligible`，不抓取。replacement candidate 完全来自本次完整 Provider 结果，
+不会与旧 bars 合并。partial、缺失交易日、区间外数据或校验失败均不发布；内容 checksum
+未变化返回 `unchanged_content`。内容变化时继续复用既有 immutable generation、manifest、
+lineage 和原子 `current` pointer。dry-run 是观察性的，不获取写锁、调用 Provider/limiter/
+sleeper 或创建 generation；该结果不保留锁或 reservation，返回后 current 仍可能变化。
 
 ## Operational responsibility
 
@@ -124,8 +139,9 @@ repository state。
 
 本设计避免伪造交易日期，也保留可审计版本，但需要独立运维流程提供真实日历。当前
 batch 仅编排调用方显式给出的 dataset，不发现股票池，也不执行调度。当前仍不包含
-分布式限流、随机 jitter、full-refresh executor、orphan cleanup、API、CLI、worker、
-scheduler、monitoring 或自动每日 ingestion。不同 runtime 不共享 limiter state，进程内限流
+分布式限流、随机 jitter、orphan cleanup、API、CLI、worker、scheduler、monitoring 或自动
+每日 ingestion。既有 batch 也没有 full-refresh execution mode；需要完整替换时，调用方必须
+使用独立 executor 显式执行。不同 runtime 不共享 limiter state，进程内限流
 也不能协调多个 worker、容器或主机。旧 research pipeline 尚未迁移到新 EOD stack。
 
 本模块不包含真实交易能力，不调用 DeepSeek，也不改变既有研究结果或历史 artifacts。

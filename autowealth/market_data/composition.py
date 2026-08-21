@@ -39,6 +39,7 @@ Path = importlib.import_module("pathlib").Path
 if TYPE_CHECKING:
     from .batch import EODBatchCoordinator, EODDatasetLockManager
     from .coordinator import EODIncrementalCoordinator
+    from .full_refresh import EODFullRefreshExecutor
     from .provider_chain import EODProviderChain
     from .repositories import EODFileRepository
 
@@ -374,6 +375,25 @@ def build_eod_batch_coordinator(
 
     return EODBatchCoordinator(
         {runtime.dataset: runtime.coordinator for runtime in normalized},
+        lock_manager,
+    )
+
+
+def build_eod_full_refresh_executor(
+    runtime: EODRuntimeStack,
+    *,
+    lock_manager: "EODDatasetLockManager",
+) -> "EODFullRefreshExecutor":
+    """Construct an explicit full-refresh boundary without executing it."""
+
+    if type(runtime) is not EODRuntimeStack:
+        raise TypeError("runtime must be an exact EODRuntimeStack")
+    from .full_refresh import EODFullRefreshExecutor
+
+    return EODFullRefreshExecutor(
+        runtime.repository,
+        runtime.provider_chain,
+        runtime.calendar,
         lock_manager,
     )
 
