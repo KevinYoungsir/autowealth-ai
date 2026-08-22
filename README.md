@@ -69,11 +69,18 @@ Provider、获取写锁或发布 generation。非 dry-run 使用稳定 dataset l
 只读取 current 和规划，不抓取、不获取写锁或写 repository。现有 batch 默认路径没有新增
 full-refresh execution mode。
 
+repository maintenance 同样是显式执行边界。dry-run 不获取锁或修改文件，只分类精确命名的
+stale staging 目录、`current` 临时文件、完整 generation 和未知 artifact。真实执行使用与
+incremental/full-refresh writer 相同的 dataset lock，并只删除严格匹配的临时残留；删除后会
+在锁内重新检查 repository。当前 generation、完整历史 generation、不可达 generation 和
+回滚候选均不会自动删除。谱系损坏、未知 generation 内容或符号链接会关闭式阻止清理。
+
 生产 `repository_root` 必须位于持久化 volume 或其他 durable filesystem。当前仍没有
-worker、scheduler、EOD API/CLI、orphan cleanup 或自动每日 ingestion。Provider
-调用边界现支持显式配置的有界临时失败重试和单 runtime 进程内最小间隔限流；默认仍只调用一次且
-不等待。退避确定性且不含 jitter，只有 `temporary_provider_failure` 会重试。batch 继续
-串行执行，重试与等待期间仍持有对应 dataset 的写锁。
+worker、scheduler、EOD API/CLI、自动 maintenance 调度、完整 generation pruning 或自动每日
+ingestion。Provider 调用边界现支持显式配置的有界临时失败重试和单 runtime 进程内最小间隔
+限流；默认仍只调用一次且不等待。退避确定性且不含 jitter，只有
+`temporary_provider_failure` 会重试。batch 继续串行执行，重试与等待期间仍持有对应
+dataset 的写锁。
 
 本地启动入口：
 

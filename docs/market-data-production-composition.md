@@ -78,6 +78,7 @@ YAML configuration
   -> EODProviderChain
   -> EODIncrementalCoordinator
   -> optional explicit EODFullRefreshExecutor
+  -> optional explicit EODRepositoryMaintenanceExecutor
 ```
 
 `build_eod_runtime` 只执行 `VALIDATE + CONSTRUCT`。AKShare 仍在首次显式 `fetch` 时才
@@ -88,6 +89,13 @@ Coordinator `update`。
 lock manager 构造独立 full-refresh execution boundary。构造过程同样不读取 current、抓取、
 等待、获取锁或发布。普通 `EODIncrementalCoordinator` 和既有 batch 不会因为该构造函数
 自动执行 full refresh。
+
+`build_eod_repository_maintenance_executor` 从已验证 runtime 和调用方显式提供的同一
+dataset lock manager 构造 repository maintenance boundary。构造过程不读取或创建
+repository，也不会自动清理。dry-run 只观察并分类，不获取锁；真实执行在锁内重新检查，
+只删除精确匹配的 stale staging 目录和 `current` 临时文件，再次检查后才释放锁。完整
+generation（包括不可达和回滚候选）只报告，不删除；谱系不明确、畸形内容或符号链接会
+关闭式阻止清理。
 
 多个 runtime 可通过 `build_eod_batch_coordinator` 显式组装：
 
@@ -135,13 +143,20 @@ sleeper 或创建 generation；该结果不保留锁或 reservation，返回后 
 - 非 dry-run 的 Provider 重试和等待发生在 dataset 写锁内。第一版不提前释放锁，以免在
   current 检查与 publication 之间重新引入 TOCTOU；部署方应使用有界预算。
 
+- maintenance 必须使用与 incremental/full-refresh writer 相同的 dataset lock manager。
+  内置进程锁只适用于单进程；多实例部署必须注入共享锁。maintenance 不是 startup hook 或
+  background task，只有调用方显式提交 request 时才检查或清理。
+- 不得把 unreachable generation 视为自动删除授权。回滚候选、完整历史 generation 和
+  unknown artifact 均保留；运维人员应在独立审计后处理超出精确临时残留范围的内容。
+
 ## Trade-offs and known limitations
 
 本设计避免伪造交易日期，也保留可审计版本，但需要独立运维流程提供真实日历。当前
 batch 仅编排调用方显式给出的 dataset，不发现股票池，也不执行调度。当前仍不包含
-分布式限流、随机 jitter、orphan cleanup、API、CLI、worker、scheduler、monitoring 或自动
-每日 ingestion。既有 batch 也没有 full-refresh execution mode；需要完整替换时，调用方必须
-使用独立 executor 显式执行。不同 runtime 不共享 limiter state，进程内限流
-也不能协调多个 worker、容器或主机。旧 research pipeline 尚未迁移到新 EOD stack。
+分布式限流、随机 jitter、自动 maintenance 调度、完整 generation pruning、API、CLI、
+worker、scheduler、monitoring 或自动每日 ingestion。既有 batch 也没有 full-refresh
+execution mode；需要完整替换时，调用方必须使用独立 executor 显式执行。不同 runtime
+不共享 limiter state，进程内限流也不能协调多个 worker、容器或主机。旧 research
+pipeline 尚未迁移到新 EOD stack。
 
 本模块不包含真实交易能力，不调用 DeepSeek，也不改变既有研究结果或历史 artifacts。

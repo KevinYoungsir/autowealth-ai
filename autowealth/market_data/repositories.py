@@ -6,6 +6,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 import importlib
 import json
+import re
 import secrets
 import shutil
 from typing import Optional, Protocol, Sequence, Tuple, runtime_checkable
@@ -54,6 +55,26 @@ EOD_PARQUET_SCHEMA = pa.schema(
 _MANIFEST_FILE = "manifest.json"
 _CURRENT_FILE = "current.json"
 _GENERATIONS_DIRECTORY = "generations"
+_STAGING_DIRECTORY_PATTERN = re.compile(
+    r"^\.([A-Za-z0-9][A-Za-z0-9_.-]{0,127})\.([0-9a-f]{16})\.staging$"
+)
+_POINTER_TEMPORARY_FILE_PATTERN = re.compile(r"^\.current\.([0-9a-f]{16})\.tmp$")
+
+
+def _maintenance_staging_generation_id(value: object) -> Optional[str]:
+    if type(value) is not str:
+        return None
+    match = _STAGING_DIRECTORY_PATTERN.fullmatch(value)
+    if match is None:
+        return None
+    try:
+        return validate_generation_id(match.group(1))
+    except ValueError:
+        return None
+
+
+def _is_maintenance_pointer_temporary_file(value: object) -> bool:
+    return type(value) is str and _POINTER_TEMPORARY_FILE_PATTERN.fullmatch(value) is not None
 
 
 class EODRepositoryError(RuntimeError):
@@ -294,6 +315,84 @@ class LocalEODFileRepository:
             if manifest_path.is_file() and parquet_path.is_file():
                 generation_ids.append(generation_id)
         return tuple(generation_ids)
+
+    def _find_existing_dataset_directory(
+        self,
+        dataset: EODDatasetKey,
+    ) -> Optional[Path]:
+        """Locate one dataset without creating directories or following symlinks."""
+
+        dataset_directory = self._dataset_directory(dataset)
+        try:
+            relative_parts = dataset_directory.relative_to(self._root).parts
+        except ValueError:
+            raise EODUnsafePathError("repository path escapes its root") from None
+
+        current = self._root
+        if current.is_symlink():
+            raise EODUnsafePathError("repository root must not be a symbolic link")
+        if not current.exists():
+            return None
+        if not current.is_dir():
+            raise EODIntegrityError("repository root must be a directory")
+        for part in relative_parts:
+            current = current / part
+            if current.is_symlink():
+                raise EODUnsafePathError("repository directory must not be a symbolic link")
+            if not current.exists():
+                return None
+            if not current.is_dir():
+                raise EODIntegrityError("repository directory path is invalid")
+        return dataset_directory
+
+    def _remove_maintenance_staging_directory(
+        self,
+        dataset: EODDatasetKey,
+        artifact_name: str,
+    ) -> bool:
+        """Remove one exact stale staging directory after revalidating its identity."""
+
+        if _maintenance_staging_generation_id(artifact_name) is None:
+            raise ValueError("artifact_name must be an exact staging directory name")
+        dataset_directory = self._find_existing_dataset_directory(dataset)
+        if dataset_directory is None:
+            return False
+        candidate = dataset_directory / artifact_name
+        if candidate.is_symlink():
+            raise EODUnsafePathError("staging directory must not be a symbolic link")
+        self._assert_within_root(candidate)
+        if not candidate.exists():
+            return False
+        if not candidate.is_dir():
+            raise EODIntegrityError("staging artifact must be a directory")
+        self._remove_staging_directory(candidate)
+        return True
+
+    def _remove_maintenance_pointer_temporary_file(
+        self,
+        dataset: EODDatasetKey,
+        artifact_name: str,
+    ) -> bool:
+        """Remove one exact pointer temporary regular file without reading its content."""
+
+        if not _is_maintenance_pointer_temporary_file(artifact_name):
+            raise ValueError("artifact_name must be an exact pointer temporary file name")
+        dataset_directory = self._find_existing_dataset_directory(dataset)
+        if dataset_directory is None:
+            return False
+        candidate = dataset_directory / artifact_name
+        if candidate.is_symlink():
+            raise EODUnsafePathError("pointer temporary file must not be a symbolic link")
+        self._assert_within_root(candidate)
+        if not candidate.exists():
+            return False
+        if not candidate.is_file():
+            raise EODIntegrityError("pointer temporary artifact must be a regular file")
+        try:
+            candidate.unlink()
+        except OSError as exc:
+            raise EODRepositoryError("pointer temporary cleanup failed") from exc
+        return True
 
     def _load_generation(
         self,
