@@ -109,6 +109,23 @@ _LAZY_EXPORT_MODULES = MappingProxyType(
             )
         },
         **{
+            name: ".maintenance"
+            for name in (
+                "EODRepositoryArtifactClass",
+                "EODRepositoryArtifactLocation",
+                "EODRepositoryMaintenanceArtifact",
+                "EODRepositoryMaintenanceError",
+                "EODRepositoryMaintenanceErrorCode",
+                "EODRepositoryMaintenanceExecutor",
+                "EODRepositoryMaintenanceRequest",
+                "EODRepositoryMaintenanceResult",
+                "EODRepositoryMaintenanceStatus",
+                "EODRepositoryMaintenanceWarningCode",
+                "MAX_EOD_GENERATION_LINEAGE_DEPTH",
+                "MAX_EOD_REPOSITORY_MAINTENANCE_ARTIFACTS",
+            )
+        },
+        **{
             name: ".composition"
             for name in (
                 "EODCompositionError",
@@ -118,6 +135,7 @@ _LAZY_EXPORT_MODULES = MappingProxyType(
                 "EOD_PRODUCTION_CONFIG_SCHEMA_VERSION",
                 "build_eod_batch_coordinator",
                 "build_eod_full_refresh_executor",
+                "build_eod_repository_maintenance_executor",
                 "build_eod_runtime",
                 "load_eod_production_config",
             )
@@ -253,6 +271,16 @@ __all__ = [
     "EODProviderResult",
     "EODProviderResultStatus",
     "EODProductionConfig",
+    "EODRepositoryArtifactClass",
+    "EODRepositoryArtifactLocation",
+    "EODRepositoryMaintenanceArtifact",
+    "EODRepositoryMaintenanceError",
+    "EODRepositoryMaintenanceErrorCode",
+    "EODRepositoryMaintenanceExecutor",
+    "EODRepositoryMaintenanceRequest",
+    "EODRepositoryMaintenanceResult",
+    "EODRepositoryMaintenanceStatus",
+    "EODRepositoryMaintenanceWarningCode",
     "EODRepositoryError",
     "EODRequestPlan",
     "EODRequestPlanningError",
@@ -277,6 +305,8 @@ __all__ = [
     "LocalTradingCalendarIdentity",
     "Market",
     "MAX_EOD_BATCH_DATASETS",
+    "MAX_EOD_GENERATION_LINEAGE_DEPTH",
+    "MAX_EOD_REPOSITORY_MAINTENANCE_ARTIFACTS",
     "MAX_EOD_PROVIDER_ATTEMPTS_PER_PROVIDER",
     "MAX_EOD_PROVIDER_DELAY_SECONDS",
     "MinimumIntervalEODProviderRateLimiter",
@@ -289,6 +319,7 @@ __all__ = [
     "InProcessEODDatasetLockManager",
     "build_eod_batch_coordinator",
     "build_eod_full_refresh_executor",
+    "build_eod_repository_maintenance_executor",
     "build_eod_runtime",
     "calculate_bytes_sha256",
     "calculate_eod_content_sha256",

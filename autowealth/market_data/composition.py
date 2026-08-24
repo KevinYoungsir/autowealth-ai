@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from .batch import EODBatchCoordinator, EODDatasetLockManager
     from .coordinator import EODIncrementalCoordinator
     from .full_refresh import EODFullRefreshExecutor
+    from .maintenance import EODRepositoryMaintenanceExecutor
     from .provider_chain import EODProviderChain
     from .repositories import EODFileRepository
 
@@ -398,6 +399,23 @@ def build_eod_full_refresh_executor(
     )
 
 
+def build_eod_repository_maintenance_executor(
+    runtime: EODRuntimeStack,
+    *,
+    lock_manager: "EODDatasetLockManager",
+) -> "EODRepositoryMaintenanceExecutor":
+    """Construct explicit repository maintenance without inspecting or deleting."""
+
+    if type(runtime) is not EODRuntimeStack:
+        raise TypeError("runtime must be an exact EODRuntimeStack")
+    from .maintenance import EODRepositoryMaintenanceExecutor
+
+    return EODRepositoryMaintenanceExecutor(
+        runtime.repository,
+        lock_manager,
+    )
+
+
 def _provider_factories(
     provider_order: Tuple[str, ...],
     supplied: Optional[Mapping[str, ProviderFactory]],
@@ -492,6 +510,7 @@ __all__ = [
     "EODRuntimeStack",
     "EOD_PRODUCTION_CONFIG_SCHEMA_VERSION",
     "build_eod_batch_coordinator",
+    "build_eod_repository_maintenance_executor",
     "build_eod_runtime",
     "load_eod_production_config",
 ]

@@ -571,5 +571,33 @@ fallback 和 attempts，不增加外层 retry。
 
 production composition 可通过 `build_eod_full_refresh_executor` 显式构造该边界，但不会执行。
 调用方必须把与 incremental writer 共用的 lock manager 注入 executor；内置进程锁仍不能
-协调多进程或多实例。本阶段不增加 batch full-refresh mode、配置默认开关、orphan cleanup、
-worker、scheduler、API、CLI 或自动每日 ingestion。
+协调多进程或多实例。本阶段不增加 batch full-refresh mode、配置默认开关、自动 maintenance
+调度、完整 generation pruning、worker、scheduler、API、CLI 或自动每日 ingestion。
+
+## 23. Explicit EOD Repository Maintenance
+
+`EODRepositoryMaintenanceExecutor` 是独立、显式调用的 repository 检查与有限清理边界。
+构造 executor 不读取或创建 repository，也不获取锁。dry-run 不获取写锁、不删除文件，
+只返回有界、确定性、可 JSON 序列化的 artifact 分类和 warning。
+
+自动删除范围严格限定为两类：
+
+- generation ID 合法且名称精确匹配
+  `.<generation_id>.<16-lowercase-hex>.staging` 的 stale staging 目录；
+- 名称精确匹配 `.current.<16-lowercase-hex>.tmp` 的普通临时文件。
+
+真实执行使用 canonical dataset identity 对应的同一写锁。executor 在锁内首次检查，
+逐项重新验证待删除 artifact，只删除上述精确临时残留，然后在释放锁前再次检查
+repository。删除失败会保留已删除项、剩余项和稳定错误码；不会把部分清理伪装成成功。
+dry-run 结果不保留锁或 reservation，真实执行必须基于当时状态重新判断。
+
+完整 generation 会读取并验证 manifest/parquet，并从 current 沿
+`previous_generation_id` 进行有界、可检测循环的 lineage 遍历。active、可达历史、
+不可达或可用于回滚的完整 generation 均只报告，不删除。不存在 current 但存在完整
+generation、谱系断裂、循环、超限、畸形 generation、未知 generation 内容或符号链接时，
+清理关闭式阻止。未知 root artifact 保留并报告。
+
+maintenance 不修改 `current.json`、manifest、parquet、data version 或 EOD 配置，也不
+提供 retention policy、generation pruning 或自动 orphan 回收。内置进程锁不能协调多进程、
+容器或主机；多实例部署必须注入与 writer 共用的共享锁实现。本阶段没有 startup hook、
+background cleanup、worker、scheduler、API 或 CLI 接线。

@@ -24,6 +24,10 @@
   五字段配置继续按单次调用、零等待的兼容默认值读取。
 - 新增独立、显式授权的 EOD full-refresh executor；只有既有 planner 返回
   `full_refresh_required` 时才抓取完整 effective range 并发布 replacement generation。
+- 新增显式 EOD repository maintenance executor：dry-run 只观察并分类 repository，
+  真实执行只删除严格匹配的 stale staging 目录和 `current` 临时文件。
+- maintenance 会按 `previous_generation_id` 检查完整 generation lineage；不可达或回滚
+  generation 仅报告，不自动删除。
 
 ### 安全
 - 日历和 composition 在 import 时不联网、不读取凭据、不写 repository，也不会自动执行
@@ -36,13 +40,17 @@
   和普通未分类异常均不会重试，诊断不保存原始异常、凭据、绝对路径或 traceback。
 - full refresh 不合并旧历史 bars，partial、缺失交易日、区间外数据或 publication 校验失败
   均不激活新 generation；dry-run 不抓取、不限流、不等待、不获取写锁或写 repository。
+- 非 dry-run maintenance 在调用方提供的同 dataset 写锁内重新检查 repository、删除精确
+  临时残留并再次验证；未知、畸形、符号链接或谱系不明确的 artifact 均关闭式阻止清理。
+- maintenance 不删除任何完整 generation，也不改变 `current.json`、manifest 或 parquet。
 
 ### 已知限制
 - 进程内锁不能协调多个进程、容器或主机；生产多实例部署仍需实现同一锁协议的持久化或
   分布式锁管理器。
 - 限流器仅协调单个 Python 进程，不是跨进程或分布式配额系统；当前退避不含 jitter。
-- 本阶段仍不包含 API、CLI、worker、scheduler、monitoring、orphan cleanup 或自动每日
-  ingestion；batch 继续只做默认 incremental 的同步串行编排，不隐式执行 full refresh。
+- 本阶段仍不包含 API、CLI、worker、scheduler、monitoring、自动 maintenance 调度、完整
+  generation pruning 或自动每日 ingestion；batch 继续只做默认 incremental 的同步串行编排，
+  不隐式执行 full refresh。
 
 ## [0.17.1] - 2026-08-13
 
