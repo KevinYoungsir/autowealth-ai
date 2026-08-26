@@ -8,6 +8,8 @@
 ## [未发布]
 
 ### 新增
+- 新增版本化 EOD operation request、immutable job lifecycle 和 Repository Protocol，
+  以及同主机 SQLite schema v1 的 durable submit、幂等 alias、claim/lease 和显式 abandonment。
 - 新增严格校验的版本化本地 A 股交易日历 artifact contract，以及只负责验证和构造
   单数据集 EOD runtime 的 production composition root。
 - 新增 production EOD YAML 配置样例；日历来源与 generation repository 路径必须由
@@ -30,6 +32,9 @@
   generation 仅报告，不自动删除。
 
 ### 安全
+- operation job constructor、import 和读取路径不创建仓储或执行 EOD 操作；幂等键仅保存
+  domain-separated SHA-256；schema v1 会严格验证物理表、列、外键及关键 partial unique index，
+  已识别版本的物理损坏、record checksum、lifecycle 或不安全路径均关闭式失败且不自动修复。
 - 日历和 composition 在 import 时不联网、不读取凭据、不写 repository，也不会自动执行
   Provider fetch、增量更新或 generation publication。
 - 生产 EOD generation 必须存放在持久化 volume 或 durable filesystem；容器临时文件系统
@@ -45,6 +50,8 @@
 - maintenance 不删除任何完整 generation，也不改变 `current.json`、manifest 或 parquet。
 
 ### 已知限制
+- operation job SQLite 实现仅支持同一主机的 durable filesystem；本阶段不含 worker、scheduler、
+  CLI、API、自动 recovery/retention、operation execution 或每日 ingestion。
 - 进程内锁不能协调多个进程、容器或主机；生产多实例部署仍需实现同一锁协议的持久化或
   分布式锁管理器。
 - 限流器仅协调单个 Python 进程，不是跨进程或分布式配额系统；当前退避不含 jitter。
