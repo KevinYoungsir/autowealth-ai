@@ -73,10 +73,51 @@ _REPOSITORY_EXPORTS = frozenset(
         "LocalEODFileRepository",
     }
 )
+_OPERATION_EXPORTS = frozenset(
+    {
+        "EOD_OPERATION_JOB_SCHEMA_VERSION",
+        "EOD_OPERATION_SCHEMA_VERSION",
+        "EODFullRefreshOperationPayload",
+        "EODIncrementalBatchOperationPayload",
+        "EODIncrementalSingleOperationPayload",
+        "EODMaintenanceOperationPayload",
+        "EODOperationExecutionContext",
+        "EODOperationFailurePolicy",
+        "EODOperationFailureSummary",
+        "EODOperationJob",
+        "EODOperationJobStatus",
+        "EODOperationRequest",
+        "EODOperationResultSummary",
+        "EODOperationSubmission",
+        "EODOperationSubmissionStatus",
+        "EODOperationType",
+        "generate_eod_operation_job_id",
+        "validate_eod_operation_job_id",
+        "validate_operation_fingerprint",
+        "validate_worker_id",
+    }
+)
+_OPERATION_JOB_REPOSITORY_EXPORTS = frozenset(
+    {
+        "EOD_OPERATION_BUSY_TIMEOUT_MILLISECONDS",
+        "EOD_OPERATION_DATABASE_NAME",
+        "EOD_OPERATION_PERSISTENCE_SCHEMA_VERSION",
+        "EODOperationJobRepository",
+        "EODOperationJobRepositoryError",
+        "EODOperationJobRepositoryErrorCode",
+        "EODOperationRepositoryHealth",
+        "EODOperationRepositoryHealthStatus",
+        "LocalEODOperationJobRepository",
+        "MAX_EOD_JOB_ALIASES",
+        "MAX_EOD_JOB_LIST_LIMIT",
+    }
+)
 
 _LAZY_EXPORT_MODULES = MappingProxyType(
     {
         **{name: ".repositories" for name in _REPOSITORY_EXPORTS},
+        **{name: ".operations" for name in _OPERATION_EXPORTS},
+        **{name: ".job_repository" for name in _OPERATION_JOB_REPOSITORY_EXPORTS},
         **{
             name: ".local_calendar"
             for name in (
@@ -342,3 +383,4 @@ __all__ = [
     "SystemEODMonotonicClock",
     "SystemEODRetrySleeper",
 ]
+__all__.extend(sorted(_OPERATION_EXPORTS | _OPERATION_JOB_REPOSITORY_EXPORTS))
