@@ -1133,14 +1133,16 @@ import autowealth.market_data.operation_worker
 after = sorted(path.relative_to(root).as_posix() for path in root.rglob('*'))
 assert before == after
 """
+    subprocess_env = {"PYTHONPATH": str(ROOT)}
+    for name in ("SystemRoot", "WINDIR"):
+        value = os.environ.get(name)
+        if value is not None:
+            subprocess_env[name] = value
+
     completed = subprocess.run(
         [sys.executable, "-c", script],
         cwd=tmp_path,
-        env={
-            "PYTHONPATH": str(ROOT),
-            "SystemRoot": os.environ["SystemRoot"],
-            "WINDIR": os.environ["WINDIR"],
-        },
+        env=subprocess_env,
         capture_output=True,
         text=True,
         check=False,
