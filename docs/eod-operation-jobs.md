@@ -185,6 +185,51 @@ The operation-job database must reside on a trusted, service-owned local filesys
 not defend against a hostile local process replacing, rewriting, or mutating that same SQLite
 database file or schema. Multi-host and hostile shared filesystems are unsupported.
 
+## PR4B Worker Integration
+
+PR4B adds an explicit synchronous worker and an in-memory operation catalog without changing
+operation schema version 1 or the SQLite persistence schema. The worker is constructed with a
+durable job repository, an exact catalog, one shared `InProcessEODDatasetLockManager`, a worker
+identity, and an explicit absolute operation root. Construction does not inspect the database,
+claim work, create files, load Providers, or access the network.
+
+Before every claim attempt, `run_one` checks repository health and calls bounded expired-lease
+recovery with the actual worker clock and `limit=256`. It then claims the oldest queued job
+using the repository's `created_at, job_id` ordering. Unknown or disabled datasets and execution
+contexts that do not exactly match the current catalog fail closed as terminal job failures;
+they do not execute a Provider or publication.
+
+The worker starts a daemon heartbeat after claim and stops it before the final lease renewal and
+terminal transition. The default initial lease is 300 seconds, the heartbeat interval is 60
+seconds, and the idle poll interval is 5 seconds. These values are strictly bounded. Lease loss,
+renewal persistence errors, heartbeat startup/shutdown failure, or an unsafe checkpoint stop the
+worker without writing a potentially stale terminal result.
+
+Generation identity is deterministic for a claimed job and dataset:
+
+```text
+<job_id>-sha256(canonical EODDatasetKey.to_dict())
+```
+
+Publication `created_at` is the durable job's `started_at`. Incremental single and batch jobs
+reuse `EODBatchCoordinator`; full refresh and maintenance use their explicit executors. All
+writers receive the same in-process dataset lock manager.
+
+Cooperative checkpoints run before Provider invocations, after Provider invocations, after the
+Provider stage, before publication, before the next batch dataset, before each maintenance
+delete, and before terminal transition. A checkpoint only prevents a new controlled side
+effect; it cannot roll back a Provider response or immutable generation already committed
+before lease loss.
+
+A crash after generation publication but before job completion leaves the immutable generation
+and the job in `running` state. Later expired-lease recovery marks that job `abandoned`; it does
+not delete or roll back the generation. Retrying is always a new explicit job linked through
+`retry_of_job_id`. PR4B does not implement hidden whole-job retry.
+
+The worker is a library-level same-host execution boundary. It does not provide a scheduler,
+service manager, CLI, API, distributed lock, fencing token, multi-host coordination, automatic
+daily ingestion, or automatic startup. Only one intentional writer process is supported by the
+built-in lock implementation.
 ## Compatibility, Rollback, and Exclusions
 
 PR4A adds an independent schema v1. It does not change existing EOD generations, manifests,
@@ -197,9 +242,9 @@ store already exists, an older release will not read or modify it; operators sho
 file until a separate migration or disposition decision. Unknown future schemas always fail
 closed and are never migrated automatically.
 
-A later PR4B composition layer must verify that the operation store root and EOD generation
-repository root are different and non-nested before enabling either write path. PR4A does not
-compose or execute those repositories.
+PR4B's explicit `EODOperationWorker` verifies that the operation store root and every EOD
+generation repository root are different and non-nested before execution. PR4A itself still
+does not compose or execute those repositories.
 
 This module is research data operations infrastructure only. It has no real-trading capability,
 does not call DeepSeek, and does not constitute investment advice.

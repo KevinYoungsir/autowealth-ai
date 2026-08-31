@@ -8,6 +8,11 @@ import json
 from typing import Optional, Tuple
 
 from .batch import EODDatasetLockManager, eod_dataset_lock_key
+from .operation_control import (
+    EODCheckpointStage,
+    EODExecutionCheckpoint,
+    run_eod_checkpoint,
+)
 from .repositories import (
     EODIntegrityError,
     EODRepositoryError,
@@ -504,6 +509,8 @@ class EODRepositoryMaintenanceExecutor:
     def execute(
         self,
         request: EODRepositoryMaintenanceRequest,
+        *,
+        checkpoint: Optional[EODExecutionCheckpoint] = None,
     ) -> EODRepositoryMaintenanceResult:
         """Run one observational dry-run or one lock-protected cleanup."""
 
@@ -545,7 +552,11 @@ class EODRepositoryMaintenanceExecutor:
             )
 
         try:
-            result = self._execute_locked(request, lock_key)
+            result = self._execute_locked(
+                request,
+                lock_key,
+                checkpoint,
+            )
         except BaseException as original:
             try:
                 self._lock_manager.release(lock_key)
@@ -583,6 +594,7 @@ class EODRepositoryMaintenanceExecutor:
         self,
         request: EODRepositoryMaintenanceRequest,
         lock_key: str,
+        checkpoint: Optional[EODExecutionCheckpoint],
     ) -> EODRepositoryMaintenanceResult:
         inspection = self._inspect(request.dataset)
         if inspection.blocked:
@@ -599,6 +611,11 @@ class EODRepositoryMaintenanceExecutor:
         candidates = self._cleanup_candidates(inspection, request)
         deleted = []
         for index, artifact in enumerate(candidates):
+            run_eod_checkpoint(
+                checkpoint,
+                EODCheckpointStage.BEFORE_MAINTENANCE_DELETE,
+                request.dataset,
+            )
             try:
                 removed = self._remove(request.dataset, artifact)
             except EODRepositoryError as exc:

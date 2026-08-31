@@ -11,6 +11,12 @@ from typing import Optional, Tuple
 
 from autowealth.security import contains_absolute_path, contains_sensitive_value
 
+from .operation_control import (
+    EODCheckpointStage,
+    EODExecutionCheckpoint,
+    EODOperationControlError,
+    run_eod_checkpoint,
+)
 from .providers import (
     EODProvider,
     EODProviderCapability,
@@ -648,7 +654,12 @@ class EODProviderChain:
         self._rate_limiter = rate_limiter
         self._retry_sleeper = retry_sleeper
 
-    def fetch(self, request: EODProviderRequest) -> EODProviderChainResult:
+    def fetch(
+        self,
+        request: EODProviderRequest,
+        *,
+        checkpoint: Optional[EODExecutionCheckpoint] = None,
+    ) -> EODProviderChainResult:
         """Return the first complete result or the deterministic best partial result."""
 
         if type(request) is not EODProviderRequest:
@@ -706,9 +717,21 @@ class EODProviderChain:
                     "rate_limit_wait_seconds",
                 )
 
+                run_eod_checkpoint(
+                    checkpoint,
+                    EODCheckpointStage.BEFORE_PROVIDER_INVOCATION,
+                    request.dataset,
+                )
                 try:
                     result = provider.fetch(request)
+                except EODOperationControlError:
+                    raise
                 except EODProviderError as exc:
+                    run_eod_checkpoint(
+                        checkpoint,
+                        EODCheckpointStage.AFTER_PROVIDER_INVOCATION,
+                        request.dataset,
+                    )
                     invocations.append(
                         _error_invocation(
                             position,
@@ -735,6 +758,11 @@ class EODProviderChain:
                     )
                     break
                 except Exception as exc:
+                    run_eod_checkpoint(
+                        checkpoint,
+                        EODCheckpointStage.AFTER_PROVIDER_INVOCATION,
+                        request.dataset,
+                    )
                     safe_message = "The EOD provider is unavailable for this request."
                     invocations.append(
                         _error_invocation(
@@ -760,6 +788,11 @@ class EODProviderChain:
                     last_cause = exc
                     break
 
+                run_eod_checkpoint(
+                    checkpoint,
+                    EODCheckpointStage.AFTER_PROVIDER_INVOCATION,
+                    request.dataset,
+                )
                 if not _result_identity_matches(
                     result,
                     request,
@@ -808,6 +841,11 @@ class EODProviderChain:
                 )
                 attempts.append(attempt)
                 if result.status is EODProviderResultStatus.SUCCESS:
+                    run_eod_checkpoint(
+                        checkpoint,
+                        EODCheckpointStage.AFTER_PROVIDER_STAGE,
+                        request.dataset,
+                    )
                     return EODProviderChainResult(
                         request=request,
                         selected_result=result,
@@ -827,6 +865,11 @@ class EODProviderChain:
                 replace(attempt, selected=attempt.position == selected_position)
                 for attempt in attempts
             )
+            run_eod_checkpoint(
+                checkpoint,
+                EODCheckpointStage.AFTER_PROVIDER_STAGE,
+                request.dataset,
+            )
             return EODProviderChainResult(
                 request=request,
                 selected_result=selected_result,
@@ -834,6 +877,11 @@ class EODProviderChain:
                 attempts=selected_attempts,
             )
 
+        run_eod_checkpoint(
+            checkpoint,
+            EODCheckpointStage.AFTER_PROVIDER_STAGE,
+            request.dataset,
+        )
         normalized_attempts = tuple(attempts)
         final_code = _aggregate_final_code(normalized_attempts)
         chain_error = EODProviderChainError(

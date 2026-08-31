@@ -31,6 +31,10 @@ from autowealth.market_data.full_refresh import (
     EODFullRefreshResult,
     EODFullRefreshStatus,
 )
+from autowealth.market_data.operation_control import (
+    EODCheckpointStage,
+    EODOperationControlError,
+)
 from autowealth.market_data.planning import (
     EODRequestPlan,
     EODRequestPlanningError,
@@ -173,7 +177,12 @@ class FakeChain:
         self.fetch_count = 0
         self.requests = []
 
-    def fetch(self, request: EODProviderRequest) -> object:
+    def fetch(
+        self,
+        request: EODProviderRequest,
+        *,
+        checkpoint: object = None,
+    ) -> object:
         self.fetch_count += 1
         self.requests.append(request)
         if isinstance(self.outcome, BaseException):
@@ -1365,3 +1374,58 @@ def test_full_refresh_python_files_parse_with_python_39_grammar(relative_path: s
     source = (root / relative_path).read_text(encoding="utf-8")
 
     ast.parse(source, filename=relative_path, feature_version=(3, 9))
+
+
+def test_full_refresh_checkpoint_runs_immediately_before_publication() -> None:
+    dataset, requested_range, repository, chain, lock_manager = eligible_setup()
+    checkpoints = []
+
+    def checkpoint(stage: EODCheckpointStage, value: Optional[EODDatasetKey]) -> None:
+        checkpoints.append((stage, value, repository.publish_count))
+
+    result = EODFullRefreshExecutor(
+        repository,
+        chain,
+        StaticCalendar(),
+        lock_manager,
+    ).execute(
+        EODFullRefreshRequest(dataset, requested_range),
+        generation_id="generation-2",
+        created_at=UTC_TIME,
+        checkpoint=checkpoint,
+    )
+
+    assert result.status is EODFullRefreshStatus.FULL_REFRESH_PUBLISHED
+    assert checkpoints == [(EODCheckpointStage.BEFORE_PUBLICATION, dataset, 0)]
+    assert repository.publish_count == 1
+    assert lock_manager.release_count == 1
+
+
+def test_full_refresh_publication_checkpoint_error_propagates_unchanged() -> None:
+    dataset, requested_range, repository, chain, lock_manager = eligible_setup()
+    original_generation = repository.current
+    error = EODOperationControlError("lease_control_failure")
+
+    def checkpoint(stage: EODCheckpointStage, value: Optional[EODDatasetKey]) -> None:
+        assert stage is EODCheckpointStage.BEFORE_PUBLICATION
+        assert value == dataset
+        raise error
+
+    with pytest.raises(EODOperationControlError) as captured:
+        EODFullRefreshExecutor(
+            repository,
+            chain,
+            StaticCalendar(),
+            lock_manager,
+        ).execute(
+            EODFullRefreshRequest(dataset, requested_range),
+            generation_id="generation-2",
+            created_at=UTC_TIME,
+            checkpoint=checkpoint,
+        )
+
+    assert captured.value is error
+    assert repository.publish_count == 0
+    assert repository.current is original_generation
+    assert lock_manager.acquire_count == lock_manager.release_count == 1
+    assert not lock_manager.held

@@ -29,6 +29,10 @@ from autowealth.market_data.batch import (
     eod_dataset_lock_key,
 )
 from autowealth.market_data.coordinator import EODIncrementalCoordinator
+from autowealth.market_data.operation_control import (
+    EODCheckpointStage,
+    EODOperationControlError,
+)
 from autowealth.market_data.planning import EODRequestPlanStatus, EODRevisionPolicy
 from autowealth.market_data.provider_chain import (
     EODProviderAttempt,
@@ -173,7 +177,12 @@ class DynamicChain:
         self.events = [] if events is None else events
         self.fetch_count = 0
 
-    def fetch(self, request: EODProviderRequest) -> object:
+    def fetch(
+        self,
+        request: EODProviderRequest,
+        *,
+        checkpoint: object = None,
+    ) -> object:
         self.fetch_count += 1
         self.events.append(f"fetch:{request.dataset.canonical_symbol}")
         response = self.responder(request)
@@ -1290,3 +1299,84 @@ assert {"akshare", "pandas", "pyarrow", "requests", "yfinance"}.isdisjoint(new_r
         text=True,
     )
     assert completed.returncode == 0, completed.stderr
+
+
+def test_batch_checkpoints_run_before_publication_and_each_next_dataset() -> None:
+    datasets = (
+        make_dataset("600000.SH"),
+        make_dataset("000001.SZ"),
+    )
+    repositories = {dataset: FakeRepository() for dataset in datasets}
+    chains = {
+        dataset: DynamicChain(
+            lambda request: make_chain_result(
+                request,
+                trading_days(request.requested_range),
+            )
+        )
+        for dataset in datasets
+    }
+    coordinator = EODBatchCoordinator(
+        {
+            dataset: make_coordinator(dataset, repositories[dataset], chains[dataset])
+            for dataset in datasets
+        },
+        InProcessEODDatasetLockManager(),
+    )
+    checkpoints = []
+
+    def checkpoint(stage: EODCheckpointStage, dataset: Optional[EODDatasetKey]) -> None:
+        checkpoints.append((stage, dataset))
+
+    result = coordinator.run(
+        EODBatchRequest(tuple(batch_dataset_request(dataset) for dataset in reversed(datasets))),
+        checkpoint=checkpoint,
+    )
+
+    assert result.status is EODBatchStatus.SUCCESS
+    assert checkpoints == [
+        (EODCheckpointStage.BEFORE_PUBLICATION, datasets[0]),
+        (EODCheckpointStage.BEFORE_NEXT_DATASET, datasets[1]),
+        (EODCheckpointStage.BEFORE_PUBLICATION, datasets[1]),
+    ]
+    assert [repositories[dataset].publish_count for dataset in datasets] == [1, 1]
+
+
+def test_batch_next_dataset_control_error_propagates_unchanged() -> None:
+    datasets = (
+        make_dataset("600000.SH"),
+        make_dataset("000001.SZ"),
+    )
+    repositories = {dataset: FakeRepository() for dataset in datasets}
+    chains = {
+        dataset: DynamicChain(
+            lambda request: make_chain_result(
+                request,
+                trading_days(request.requested_range),
+            )
+        )
+        for dataset in datasets
+    }
+    coordinator = EODBatchCoordinator(
+        {
+            dataset: make_coordinator(dataset, repositories[dataset], chains[dataset])
+            for dataset in datasets
+        },
+        InProcessEODDatasetLockManager(),
+    )
+    error = EODOperationControlError("lease_control_failure")
+
+    def checkpoint(stage: EODCheckpointStage, dataset: Optional[EODDatasetKey]) -> None:
+        if stage is EODCheckpointStage.BEFORE_NEXT_DATASET:
+            assert dataset == datasets[1]
+            raise error
+
+    with pytest.raises(EODOperationControlError) as captured:
+        coordinator.run(
+            EODBatchRequest(tuple(batch_dataset_request(dataset) for dataset in datasets)),
+            checkpoint=checkpoint,
+        )
+
+    assert captured.value is error
+    assert [repositories[dataset].publish_count for dataset in datasets] == [1, 0]
+    assert [chains[dataset].fetch_count for dataset in datasets] == [1, 0]

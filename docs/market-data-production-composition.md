@@ -123,9 +123,42 @@ repository state。
 lineage 和原子 `current` pointer。dry-run 是观察性的，不获取写锁、调用 Provider/limiter/
 sleeper 或创建 generation；该结果不保留锁或 reservation，返回后 current 仍可能变化。
 
+## Operation catalog and worker composition
+
+PR4B 可将多个已验证 runtime 显式组成 `EODOperationCatalog`。catalog 最多包含 256 个
+canonical dataset，严格拒绝重复 dataset、重复 storage identity、非 exact boolean 和
+已启用 runtime 的混合日历 identity。`storage_identity` 是部署方提供的稳定逻辑标识，
+不是本机路径。
+
+catalog execution fingerprint 使用 canonical JSON 和 SHA-256，包含：
+
+- catalog/runtime contract schema version；
+- 完整 `LocalTradingCalendarIdentity.to_dict()`；
+- 按 dataset identity 排序的完整 `EODDatasetKey`；
+- enabled 状态与 storage identity；
+- production config schema version；
+- 有序 Provider name/version；
+- retry 与 rate-limit policy。
+
+指纹不包含 repository path、calendar path、endpoint、mtime、主机名或 PID。同一逻辑部署
+移动到不同挂载路径时 identity 保持不变；日历版本、Provider 版本、dataset、口径或执行策略
+变化时 fingerprint 改变。job execution context 必须与当前 catalog 精确相等。
+
+`EODOperationWorker` 是调用方显式启动的同步 library boundary。每次 claim 前检查 durable
+job repository、执行有界过期 lease recovery，再按 FIFO claim 一项工作。它将 catalog
+runtime 组合为 incremental batch、full refresh 或 maintenance executor，并为所有 writer
+共享同一个 `InProcessEODDatasetLockManager`。构造 worker 本身不读取 job database、不调用
+Provider、不创建目录也不启动线程。
+
+worker 的 heartbeat 和 cooperative checkpoints 只能在失去 lease 后阻止新的受控副作用；
+它们不是分布式 fencing token。generation 已原子发布但 job 尚未 terminal 时发生 crash，
+generation 保持有效，过期 running job 由后续 recovery 标记为 abandoned，不做隐式回滚。
+重试必须由调用方显式提交新 job，PR4B 不做 whole-job 自动重试。
 ## Operational responsibility
 
 - 部署方负责日历来源授权、版本标识、更新频率、完整性验证和回滚。
+- worker 必须作为单一有意 writer 由部署方显式启动和停止；内置 heartbeat、SQLite lease
+  与进程内 dataset lock 不协调多个进程、容器或主机。
 - 日历更新必须先生成新 artifact、离线验证，再原子替换部署引用；应用不会修改源文件。
 - `repository_root` 必须位于 persistent volume 或 durable filesystem。Vercel/容器临时
   文件系统不满足要求。
@@ -154,7 +187,7 @@ sleeper 或创建 generation；该结果不保留锁或 reservation，返回后 
 本设计避免伪造交易日期，也保留可审计版本，但需要独立运维流程提供真实日历。当前
 batch 仅编排调用方显式给出的 dataset，不发现股票池，也不执行调度。当前仍不包含
 分布式限流、随机 jitter、自动 maintenance 调度、完整 generation pruning、API、CLI、
-worker、scheduler、monitoring 或自动每日 ingestion。既有 batch 也没有 full-refresh
+scheduler、monitoring 或自动每日 ingestion。既有 batch 也没有 full-refresh
 execution mode；需要完整替换时，调用方必须使用独立 executor 显式执行。不同 runtime
 不共享 limiter state，进程内限流也不能协调多个 worker、容器或主机。旧 research
 pipeline 尚未迁移到新 EOD stack。

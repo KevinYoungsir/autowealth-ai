@@ -21,6 +21,10 @@ from autowealth.market_data.coordinator import (
     EODIncrementalUpdateResult,
     EODIncrementalUpdateStatus,
 )
+from autowealth.market_data.operation_control import (
+    EODCheckpointStage,
+    EODOperationControlError,
+)
 from autowealth.market_data.planning import (
     EODRequestPlan,
     EODRequestPlanStatus,
@@ -169,7 +173,12 @@ class FakeChain:
         self.fetch_count = 0
         self.requests: list[EODProviderRequest] = []
 
-    def fetch(self, request: EODProviderRequest) -> object:
+    def fetch(
+        self,
+        request: EODProviderRequest,
+        *,
+        checkpoint: object = None,
+    ) -> object:
         self.fetch_count += 1
         self.requests.append(request)
         self.events.append("fetch")
@@ -1626,3 +1635,44 @@ def test_coordinator_source_has_no_clock_uuid_environment_or_forbidden_imports()
 def test_pr6_python_files_parse_with_python_39_grammar(relative_path: str) -> None:
     source = (ROOT / relative_path).read_text(encoding="utf-8")
     ast.parse(source, filename=relative_path, feature_version=(3, 9))
+
+
+def test_checkpoint_runs_immediately_before_incremental_publication() -> None:
+    dataset, requested_range, repository, chain, calendar = initial_setup()
+    checkpoints = []
+
+    def checkpoint(stage: EODCheckpointStage, value: Optional[EODDatasetKey]) -> None:
+        checkpoints.append((stage, value, repository.publish_count))
+
+    result = run_update(
+        EODIncrementalCoordinator(repository, chain, calendar),
+        dataset,
+        requested_range,
+        checkpoint=checkpoint,
+    )
+
+    assert result.status is EODIncrementalUpdateStatus.INITIAL_IMPORT_PUBLISHED
+    assert checkpoints == [(EODCheckpointStage.BEFORE_PUBLICATION, dataset, 0)]
+    assert repository.publish_count == 1
+
+
+def test_incremental_publication_checkpoint_error_propagates_unchanged() -> None:
+    dataset, requested_range, repository, chain, calendar = initial_setup()
+    error = EODOperationControlError("lease_control_failure")
+
+    def checkpoint(stage: EODCheckpointStage, value: Optional[EODDatasetKey]) -> None:
+        assert stage is EODCheckpointStage.BEFORE_PUBLICATION
+        assert value == dataset
+        raise error
+
+    with pytest.raises(EODOperationControlError) as captured:
+        run_update(
+            EODIncrementalCoordinator(repository, chain, calendar),
+            dataset,
+            requested_range,
+            checkpoint=checkpoint,
+        )
+
+    assert captured.value is error
+    assert chain.fetch_count == 1
+    assert repository.publish_count == 0
