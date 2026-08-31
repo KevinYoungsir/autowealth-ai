@@ -21,6 +21,11 @@ from autowealth.market_data.akshare_adapters import (
     AKShareEODIndexDailyProvider,
     akshare_index_daily_symbol,
 )
+from autowealth.market_data.operation_control import (
+    EODCheckpointStage,
+    EODOperationControlError,
+)
+from autowealth.market_data.provider_resilience import EODProviderRetryPolicy
 from autowealth.market_data.provider_chain import (
     EODProviderAttempt,
     EODProviderChain,
@@ -1474,3 +1479,75 @@ def test_public_exports_are_exactly_additive_and_do_not_expose_chain_internals()
         "default_eod_provider_chain",
         "default_eod_index_providers",
     }.isdisjoint(market_data.__all__)
+
+
+def test_checkpoints_cover_retry_fallback_and_success_in_order() -> None:
+    request = make_request()
+
+    class SequenceProvider(FakeProvider):
+        def __init__(self, provider_name: str, responses: list[object]) -> None:
+            super().__init__(provider_name, object())
+            self.responses = responses
+
+        def fetch(self, value: EODProviderRequest) -> EODProviderResult:
+            self.calls.append(value)
+            response = self.responses.pop(0)
+            if isinstance(response, BaseException):
+                raise response
+            return response  # type: ignore[return-value]
+
+    primary = SequenceProvider(
+        "primary",
+        [
+            EODProviderError(
+                EODProviderErrorCode.TEMPORARY_PROVIDER_FAILURE,
+                "The primary provider failed temporarily.",
+            ),
+            EODProviderError(
+                EODProviderErrorCode.PROVIDER_UNAVAILABLE,
+                "The primary provider is unavailable.",
+            ),
+        ],
+    )
+    fallback = provider_with_result("fallback", request)
+    checkpoints = []
+
+    def checkpoint(stage: EODCheckpointStage, dataset: Optional[EODDatasetKey]) -> None:
+        checkpoints.append((stage, dataset))
+
+    result = EODProviderChain(
+        [primary, fallback],
+        retry_policy=EODProviderRetryPolicy(
+            max_attempts=2,
+            initial_backoff_seconds=0,
+        ),
+    ).fetch(request, checkpoint=checkpoint)
+
+    assert result.selected_provider_name == "fallback"
+    assert [len(primary.calls), len(fallback.calls)] == [2, 1]
+    assert checkpoints == [
+        (EODCheckpointStage.BEFORE_PROVIDER_INVOCATION, request.dataset),
+        (EODCheckpointStage.AFTER_PROVIDER_INVOCATION, request.dataset),
+        (EODCheckpointStage.BEFORE_PROVIDER_INVOCATION, request.dataset),
+        (EODCheckpointStage.AFTER_PROVIDER_INVOCATION, request.dataset),
+        (EODCheckpointStage.BEFORE_PROVIDER_INVOCATION, request.dataset),
+        (EODCheckpointStage.AFTER_PROVIDER_INVOCATION, request.dataset),
+        (EODCheckpointStage.AFTER_PROVIDER_STAGE, request.dataset),
+    ]
+
+
+def test_checkpoint_control_error_propagates_before_provider_side_effect() -> None:
+    request = make_request()
+    provider = provider_with_result("provider", request)
+    error = EODOperationControlError("lease_control_failure")
+
+    def checkpoint(stage: EODCheckpointStage, dataset: Optional[EODDatasetKey]) -> None:
+        assert stage is EODCheckpointStage.BEFORE_PROVIDER_INVOCATION
+        assert dataset == request.dataset
+        raise error
+
+    with pytest.raises(EODOperationControlError) as captured:
+        EODProviderChain([provider]).fetch(request, checkpoint=checkpoint)
+
+    assert captured.value is error
+    assert provider.calls == []

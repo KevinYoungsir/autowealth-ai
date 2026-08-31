@@ -97,6 +97,29 @@ _OPERATION_EXPORTS = frozenset(
         "validate_worker_id",
     }
 )
+_OPERATION_CONTROL_EXPORTS = frozenset(
+    {
+        "EODCheckpointStage",
+        "EODLeaseControlState",
+        "EODOperationControlError",
+        "EODOperationWorkerConfig",
+        "eod_calendar_identity",
+        "eod_generation_id",
+    }
+)
+_OPERATION_CATALOG_EXPORTS = frozenset(
+    {
+        "EODOperationCatalog",
+        "EODOperationCatalogEntry",
+        "EODOperationCatalogError",
+        "EODOperationCatalogErrorCode",
+        "build_eod_operation_catalog",
+    }
+)
+_OPERATION_WORKER_EXPORTS = frozenset(
+    {"EODOperationWorker", "EODOperationWorkerResult", "EODOperationWorkerStatus"}
+)
+
 _OPERATION_JOB_REPOSITORY_EXPORTS = frozenset(
     {
         "EOD_OPERATION_BUSY_TIMEOUT_MILLISECONDS",
@@ -118,6 +141,9 @@ _LAZY_EXPORT_MODULES = MappingProxyType(
         **{name: ".repositories" for name in _REPOSITORY_EXPORTS},
         **{name: ".operations" for name in _OPERATION_EXPORTS},
         **{name: ".job_repository" for name in _OPERATION_JOB_REPOSITORY_EXPORTS},
+        **{name: ".operation_control" for name in _OPERATION_CONTROL_EXPORTS},
+        **{name: ".operation_catalog" for name in _OPERATION_CATALOG_EXPORTS},
+        **{name: ".operation_worker" for name in _OPERATION_WORKER_EXPORTS},
         **{
             name: ".local_calendar"
             for name in (
@@ -383,4 +409,12 @@ __all__ = [
     "SystemEODMonotonicClock",
     "SystemEODRetrySleeper",
 ]
-__all__.extend(sorted(_OPERATION_EXPORTS | _OPERATION_JOB_REPOSITORY_EXPORTS))
+__all__.extend(
+    sorted(
+        _OPERATION_EXPORTS
+        | _OPERATION_JOB_REPOSITORY_EXPORTS
+        | _OPERATION_CONTROL_EXPORTS
+        | _OPERATION_CATALOG_EXPORTS
+        | _OPERATION_WORKER_EXPORTS
+    )
+)

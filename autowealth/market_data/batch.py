@@ -22,6 +22,11 @@ from .coordinator import (
     EODIncrementalCoordinatorError,
     EODIncrementalUpdateResult,
 )
+from .operation_control import (
+    EODCheckpointStage,
+    EODExecutionCheckpoint,
+    run_eod_checkpoint,
+)
 from .planning import EODRevisionPolicy
 from .schemas import EODDatasetKey, EODDateRange, EODUpdateRequest
 from .versioning import validate_generation_id
@@ -549,7 +554,12 @@ class EODBatchCoordinator:
         self._coordinators = normalized
         self._lock_manager = lock_manager
 
-    def run(self, request: EODBatchRequest) -> EODBatchResult:
+    def run(
+        self,
+        request: EODBatchRequest,
+        *,
+        checkpoint: Optional[EODExecutionCheckpoint] = None,
+    ) -> EODBatchResult:
         """Execute one canonical batch without retries or parallel provider calls."""
 
         if type(request) is not EODBatchRequest:
@@ -559,11 +569,21 @@ class EODBatchCoordinator:
 
         outcomes = []
         stop = False
-        for dataset_request in request.datasets:
+        for index, dataset_request in enumerate(request.datasets):
+            if index:
+                run_eod_checkpoint(
+                    checkpoint,
+                    EODCheckpointStage.BEFORE_NEXT_DATASET,
+                    dataset_request.dataset,
+                )
             if stop:
                 outcomes.append(self._skipped_result(dataset_request))
                 continue
-            outcome = self._run_dataset(dataset_request, request.dry_run)
+            outcome = self._run_dataset(
+                dataset_request,
+                request.dry_run,
+                checkpoint,
+            )
             outcomes.append(outcome)
             if (
                 outcome.status is EODBatchDatasetStatus.FAILED
@@ -579,6 +599,7 @@ class EODBatchCoordinator:
         self,
         request: EODBatchDatasetRequest,
         dry_run: bool,
+        checkpoint: Optional[EODExecutionCheckpoint],
     ) -> EODBatchDatasetResult:
         coordinator = self._coordinators[request.dataset]
         update_request = EODUpdateRequest(
@@ -587,7 +608,13 @@ class EODBatchCoordinator:
             dry_run=dry_run,
         )
         if dry_run:
-            return self._execute_coordinator(coordinator, request, update_request, None)
+            return self._execute_coordinator(
+                coordinator,
+                request,
+                update_request,
+                None,
+                checkpoint,
+            )
 
         lock_key = eod_dataset_lock_key(request.dataset)
         try:
@@ -620,7 +647,13 @@ class EODBatchCoordinator:
         outcome: Optional[EODBatchDatasetResult] = None
         release_failed = False
         try:
-            outcome = self._execute_coordinator(coordinator, request, update_request, lock_key)
+            outcome = self._execute_coordinator(
+                coordinator,
+                request,
+                update_request,
+                lock_key,
+                checkpoint,
+            )
         finally:
             try:
                 self._lock_manager.release(lock_key)
@@ -645,6 +678,7 @@ class EODBatchCoordinator:
         request: EODBatchDatasetRequest,
         update_request: EODUpdateRequest,
         lock_key: Optional[str],
+        checkpoint: Optional[EODExecutionCheckpoint],
     ) -> EODBatchDatasetResult:
         try:
             update_result = coordinator.execute(
@@ -652,6 +686,7 @@ class EODBatchCoordinator:
                 revision_policy=request.revision_policy,
                 generation_id=request.generation_id,
                 created_at=request.created_at,
+                checkpoint=checkpoint,
             )
         except EODIncrementalCoordinatorError as exc:
             failure = EODBatchDatasetFailure(

@@ -27,6 +27,10 @@ from autowealth.market_data.maintenance import (
     EODRepositoryMaintenanceWarningCode,
     MAX_EOD_REPOSITORY_MAINTENANCE_ARTIFACTS,
 )
+from autowealth.market_data.operation_control import (
+    EODCheckpointStage,
+    EODOperationControlError,
+)
 from autowealth.market_data.repositories import (
     EODRepositoryError,
     LocalEODFileRepository,
@@ -1225,3 +1229,72 @@ def test_unknown_symlink_fails_closed_without_following_or_deleting_target(
     assert link.is_symlink()
     assert external.read_text(encoding="utf-8") == "keep"
     assert "manual-link" in result.unsafe_artifacts
+
+
+def test_maintenance_checkpoint_runs_before_every_actual_delete(
+    tmp_path: Path,
+    dataset: EODDatasetKey,
+) -> None:
+    root = tmp_path / "eod"
+    repository = LocalEODFileRepository(root)
+    publish_generations(repository, dataset, 1)
+    dataset_dir = dataset_directory(root, dataset)
+    staging = dataset_dir / STAGING_ONE
+    pointer_temp = dataset_dir / POINTER_TEMP
+    staging.mkdir()
+    pointer_temp.write_text("temporary", encoding="utf-8")
+    candidates = (staging, pointer_temp)
+    checkpoints = []
+
+    def checkpoint(stage: EODCheckpointStage, value: Optional[EODDatasetKey]) -> None:
+        checkpoints.append(
+            (
+                stage,
+                value,
+                sum(candidate.exists() for candidate in candidates),
+            )
+        )
+
+    result = EODRepositoryMaintenanceExecutor(
+        repository,
+        InProcessEODDatasetLockManager(),
+    ).execute(
+        EODRepositoryMaintenanceRequest(dataset, dry_run=False),
+        checkpoint=checkpoint,
+    )
+
+    assert result.status is EODRepositoryMaintenanceStatus.CLEANED
+    assert checkpoints == [
+        (EODCheckpointStage.BEFORE_MAINTENANCE_DELETE, dataset, 2),
+        (EODCheckpointStage.BEFORE_MAINTENANCE_DELETE, dataset, 1),
+    ]
+    assert not staging.exists()
+    assert not pointer_temp.exists()
+
+
+def test_maintenance_delete_checkpoint_error_propagates_unchanged(
+    tmp_path: Path,
+    dataset: EODDatasetKey,
+) -> None:
+    root = tmp_path / "eod"
+    repository = LocalEODFileRepository(root)
+    publish_generations(repository, dataset, 1)
+    candidate = dataset_directory(root, dataset) / STAGING_ONE
+    candidate.mkdir()
+    lock_manager = RecordingLockManager()
+    error = EODOperationControlError("lease_control_failure")
+
+    def checkpoint(stage: EODCheckpointStage, value: Optional[EODDatasetKey]) -> None:
+        assert stage is EODCheckpointStage.BEFORE_MAINTENANCE_DELETE
+        assert value == dataset
+        raise error
+
+    with pytest.raises(EODOperationControlError) as captured:
+        EODRepositoryMaintenanceExecutor(repository, lock_manager).execute(
+            EODRepositoryMaintenanceRequest(dataset, dry_run=False),
+            checkpoint=checkpoint,
+        )
+
+    assert captured.value is error
+    assert candidate.is_dir()
+    assert lock_manager.acquire_count == lock_manager.release_count == 1

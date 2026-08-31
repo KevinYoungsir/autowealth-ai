@@ -16,6 +16,12 @@ from autowealth.security import (
 )
 
 from .calendar import TradingCalendar
+from .operation_control import (
+    EODCheckpointStage,
+    EODExecutionCheckpoint,
+    EODOperationControlError,
+    run_eod_checkpoint,
+)
 from .normalization import normalize_eod_bars
 from .planning import (
     EODRequestPlan,
@@ -396,6 +402,7 @@ class EODIncrementalCoordinator:
         revision_policy: Optional[EODRevisionPolicy] = None,
         generation_id: Optional[str] = None,
         created_at: Optional[datetime] = None,
+        checkpoint: Optional[EODExecutionCheckpoint] = None,
     ) -> EODIncrementalUpdateResult:
         """Execute one serializable update request without changing legacy defaults."""
 
@@ -408,6 +415,7 @@ class EODIncrementalCoordinator:
             generation_id=generation_id,
             created_at=created_at,
             dry_run=request.dry_run,
+            checkpoint=checkpoint,
         )
 
     def update(
@@ -419,6 +427,7 @@ class EODIncrementalCoordinator:
         generation_id: Optional[str] = None,
         created_at: Optional[datetime] = None,
         dry_run: bool = False,
+        checkpoint: Optional[EODExecutionCheckpoint] = None,
     ) -> EODIncrementalUpdateResult:
         if type(dataset) is not EODDatasetKey:
             raise TypeError("dataset must be an exact EODDatasetKey")
@@ -479,7 +488,12 @@ class EODIncrementalCoordinator:
                 replaced_row_count=0,
                 dry_run=True,
             )
-        chain_result = self._fetch(plan, dataset, requested_range)
+        chain_result = self._fetch(
+            plan,
+            dataset,
+            requested_range,
+            checkpoint=checkpoint,
+        )
         attempts = chain_result.attempts
         fetched_bars = chain_result.selected_result.bars
         candidate, added_count, replaced_count = self._merge(
@@ -538,6 +552,11 @@ class EODIncrementalCoordinator:
                 attempts=attempts,
             )
 
+        run_eod_checkpoint(
+            checkpoint,
+            EODCheckpointStage.BEFORE_PUBLICATION,
+            dataset,
+        )
         try:
             published_manifest = self._repository.publish(
                 dataset,
@@ -545,6 +564,8 @@ class EODIncrementalCoordinator:
                 generation_id=validated_generation_id,
                 created_at=normalized_created_at,
             )
+        except EODOperationControlError:
+            raise
         except Exception as exc:
             error = self._error(
                 EODIncrementalCoordinatorErrorCode.PUBLICATION_FAILED,
@@ -811,6 +832,8 @@ class EODIncrementalCoordinator:
         plan: EODRequestPlan,
         dataset: EODDatasetKey,
         requested_range: EODDateRange,
+        *,
+        checkpoint: Optional[EODExecutionCheckpoint] = None,
     ) -> EODProviderChainResult:
         request = plan.provider_request
         if request is None:  # pragma: no cover - guarded by the caller.
@@ -820,6 +843,7 @@ class EODIncrementalCoordinator:
             plan,
             dataset,
             requested_range,
+            checkpoint=checkpoint,
         )
 
     def _fetch_provider_request(
@@ -830,6 +854,7 @@ class EODIncrementalCoordinator:
         requested_range: EODDateRange,
         *,
         propagate_unknown: bool = False,
+        checkpoint: Optional[EODExecutionCheckpoint] = None,
     ) -> EODProviderChainResult:
         """Fetch one explicit planned request through the shared ProviderChain boundary."""
 
@@ -838,7 +863,13 @@ class EODIncrementalCoordinator:
         if type(propagate_unknown) is not bool:
             raise ValueError("propagate_unknown must be a strict boolean")
         try:
-            result = self._provider_chain.fetch(request)
+            result = (
+                self._provider_chain.fetch(request)
+                if checkpoint is None
+                else self._provider_chain.fetch(request, checkpoint=checkpoint)
+            )
+        except EODOperationControlError:
+            raise
         except EODProviderChainError as exc:
             error = self._error(
                 EODIncrementalCoordinatorErrorCode.PROVIDER_CHAIN_FAILED,

@@ -20,6 +20,11 @@ from .coordinator import (
     EODIncrementalCoordinator,
     EODIncrementalCoordinatorErrorCode,
 )
+from .operation_control import (
+    EODCheckpointStage,
+    EODExecutionCheckpoint,
+    run_eod_checkpoint,
+)
 from .normalization import normalize_eod_bars
 from .planning import EODRequestPlan, EODRequestPlanStatus, EODRevisionPolicy
 from .provider_chain import EODProviderAttempt
@@ -394,6 +399,7 @@ class EODFullRefreshExecutor:
         revision_policy: Optional[EODRevisionPolicy] = None,
         generation_id: Optional[str] = None,
         created_at: Optional[datetime] = None,
+        checkpoint: Optional[EODExecutionCheckpoint] = None,
     ) -> EODFullRefreshResult:
         """Evaluate or run one explicitly authorized complete replacement."""
 
@@ -409,6 +415,7 @@ class EODFullRefreshExecutor:
                 generation_id,
                 created_at,
                 lock_key=None,
+                checkpoint=checkpoint,
             )
 
         lock_key = eod_dataset_lock_key(request.dataset)
@@ -444,6 +451,7 @@ class EODFullRefreshExecutor:
                 generation_id,
                 created_at,
                 lock_key=lock_key,
+                checkpoint=checkpoint,
             )
         except BaseException:
             self._release_after_failure(request, lock_key)
@@ -459,6 +467,7 @@ class EODFullRefreshExecutor:
         created_at: Optional[datetime],
         *,
         lock_key: Optional[str],
+        checkpoint: Optional[EODExecutionCheckpoint],
     ) -> EODFullRefreshResult:
         current = self._operations._load_current(
             request.dataset,
@@ -520,6 +529,7 @@ class EODFullRefreshExecutor:
             request.dataset,
             request.requested_range,
             propagate_unknown=True,
+            checkpoint=checkpoint,
         )
         attempts = chain_result.attempts
         candidate = self._replacement_candidate(
@@ -574,6 +584,11 @@ class EODFullRefreshExecutor:
                 attempts=attempts,
             )
 
+        run_eod_checkpoint(
+            checkpoint,
+            EODCheckpointStage.BEFORE_PUBLICATION,
+            request.dataset,
+        )
         published_manifest = self._repository.publish(
             request.dataset,
             candidate,

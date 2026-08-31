@@ -31,6 +31,10 @@
 - maintenance 会按 `previous_generation_id` 检查完整 generation lineage；不可达或回滚
   generation 仅报告，不自动删除。
 
+- 新增 path-independent EOD operation catalog：按 canonical dataset identity 排序，
+  以完整日历 identity、storage identity、Provider 顺序与版本、重试和限流配置生成稳定指纹。
+- 新增显式同步 EOD operation worker：每次 claim 前执行有界过期 lease recovery，
+  支持四类 durable job、heartbeat lease、协作式副作用 checkpoint 和确定性 terminal summary。
 ### 安全
 - operation job constructor、import 和读取路径不创建仓储或执行 EOD 操作；幂等键仅保存
   domain-separated SHA-256；schema v1 会严格验证物理表、列、外键及关键 partial unique index，
@@ -49,13 +53,17 @@
   临时残留并再次验证；未知、畸形、符号链接或谱系不明确的 artifact 均关闭式阻止清理。
 - maintenance 不删除任何完整 generation，也不改变 `current.json`、manifest 或 parquet。
 
+- worker 在 Provider 调用、publication、下一 dataset、maintenance 删除和 terminal transition
+  前检查本地 lease ownership；控制异常原样上抛，失去 lease 后不再开始新的受控副作用。
+- catalog 对未知、禁用或 execution context 不匹配的数据集关闭式失败；operation SQLite root
+  与 generation repository root 必须分离且互不嵌套。
 ### 已知限制
-- operation job SQLite 实现仅支持同一主机的 durable filesystem；本阶段不含 worker、scheduler、
-  CLI、API、自动 recovery/retention、operation execution 或每日 ingestion。
+- operation job SQLite 与 PR4B worker 仅支持同一主机的 durable filesystem 和单一有意 writer；
+  本阶段不含 scheduler、CLI、API、自动 retention 或每日 ingestion。
 - 进程内锁不能协调多个进程、容器或主机；生产多实例部署仍需实现同一锁协议的持久化或
   分布式锁管理器。
 - 限流器仅协调单个 Python 进程，不是跨进程或分布式配额系统；当前退避不含 jitter。
-- 本阶段仍不包含 API、CLI、worker、scheduler、monitoring、自动 maintenance 调度、完整
+- 本阶段仍不包含 API、CLI、scheduler、monitoring、自动 maintenance 调度、完整
   generation pruning 或自动每日 ingestion；batch 继续只做默认 incremental 的同步串行编排，
   不隐式执行 full refresh。
 
