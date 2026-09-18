@@ -248,3 +248,16 @@ does not compose or execute those repositories.
 
 This module is research data operations infrastructure only. It has no real-trading capability,
 does not call DeepSeek, and does not constitute investment advice.
+
+## PR4C Operator CLI integration
+
+PR4C exposes durable jobs through the independent operator CLI. The health, list, and show
+commands construct only LocalEODOperationJobRepository; they do not load production YAML,
+calendars, Providers, or the operation catalog, and an absent repository remains a valid read
+result without directory or SQLite creation.
+
+Jobs retry is the only write command in this group. It accepts only failed or abandoned jobs,
+requires the current catalog execution context to exactly match the predecessor, and submits the
+exact original request with retry_of_job_id. Real predecessors require explicit --execute;
+dry-run predecessors remain dry-run. The CLI adds no SQL surface, delete, repair, migration,
+scheduler, API, or automatic retry loop.

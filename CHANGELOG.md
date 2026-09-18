@@ -8,6 +8,8 @@
 ## [未发布]
 
 ### 新增
+- 新增 schema v1 EOD operator manifest 与独立 operator CLI，提供 catalog inspect、durable job
+  只读查询、显式提交/重试和单次 worker run-one 边界。
 - 新增版本化 EOD operation request、immutable job lifecycle 和 Repository Protocol，
   以及同主机 SQLite schema v1 的 durable submit、幂等 alias、claim/lease 和显式 abandonment。
 - 新增严格校验的版本化本地 A 股交易日历 artifact contract，以及只负责验证和构造
@@ -36,6 +38,8 @@
 - 新增显式同步 EOD operation worker：每次 claim 前执行有界过期 lease recovery，
   支持四类 durable job、heartbeat lease、协作式副作用 checkpoint 和确定性 terminal summary。
 ### 安全
+- 四类 submit 均要求显式 dry-run/execute 二选一；真实 retry 与 worker run-one 也要求显式
+  execute。CLI 不回显幂等键、路径、凭据、Provider payload、原始异常或 traceback。
 - operation job constructor、import 和读取路径不创建仓储或执行 EOD 操作；幂等键仅保存
   domain-separated SHA-256；schema v1 会严格验证物理表、列、外键及关键 partial unique index，
   已识别版本的物理损坏、record checksum、lifecycle 或不安全路径均关闭式失败且不自动修复。
@@ -58,14 +62,13 @@
 - catalog 对未知、禁用或 execution context 不匹配的数据集关闭式失败；operation SQLite root
   与 generation repository root 必须分离且互不嵌套。
 ### 已知限制
-- operation job SQLite 与 PR4B worker 仅支持同一主机的 durable filesystem 和单一有意 writer；
-  本阶段不含 scheduler、CLI、API、自动 retention 或每日 ingestion。
+- operation job SQLite、PR4B worker 与 PR4C operator CLI 仅支持同一主机的 durable filesystem 和
+  单一有意 writer；本阶段不含 scheduler、常驻 worker service、API、自动 retention 或每日 ingestion。
 - 进程内锁不能协调多个进程、容器或主机；生产多实例部署仍需实现同一锁协议的持久化或
   分布式锁管理器。
 - 限流器仅协调单个 Python 进程，不是跨进程或分布式配额系统；当前退避不含 jitter。
-- 本阶段仍不包含 API、CLI、scheduler、monitoring、自动 maintenance 调度、完整
-  generation pruning 或自动每日 ingestion；batch 继续只做默认 incremental 的同步串行编排，
-  不隐式执行 full refresh。
+- PR4C CLI 只提供显式单次运维命令；仍不包含 API、scheduler、monitoring、自动 maintenance
+  调度、完整 generation pruning 或自动每日 ingestion，也不提供长期运行或队列自动排空。
 
 ## [0.17.1] - 2026-08-13
 

@@ -144,3 +144,14 @@ No historical research artifact, metric, curve, cache schema, or trading behavio
 
 This is research data operations infrastructure only. It does not constitute investment advice
 and contains no real-trading capability.
+
+## PR4C Explicit run-one boundary
+
+PR4C exposes only the operator worker run-one command. It requires both a bounded worker identity
+and explicit --execute confirmation before catalog loading, repository inspection, recovery,
+claim, or worker construction. One invocation calls EODOperationWorker.run_one() exactly once and
+maps its stable status to a JSON result and exit code.
+
+The CLI does not expose run-forever, queue draining, scheduling, service supervision, automatic
+startup, API execution, or daily ingestion. Existing lease, checkpoint, lock, root-separation,
+failure, and publication semantics are unchanged.

@@ -193,3 +193,21 @@ execution mode；需要完整替换时，调用方必须使用独立 executor �
 pipeline 尚未迁移到新 EOD stack。
 
 本模块不包含真实交易能力，不调用 DeepSeek，也不改变既有研究结果或历史 artifacts。
+
+## PR4C operator composition
+
+The schema-versioned operator manifest lists explicit production-config paths, stable
+path-independent storage identities, enabled flags, and a separate durable operation root.
+Relative paths resolve from the manifest directory; URLs, environment expansion, implicit
+discovery, home fallback, and CWD fallback are not supported.
+
+Only catalog-dependent commands load each production config and reuse
+build_eod_operation_catalog. The operator checks duplicate datasets before constructing mappings
+and preserves catalog ordering, Provider identity, calendar identity, and execution fingerprint
+semantics. It also validates that the operation root and every generation repository root are
+different and non-nested.
+
+Read-only job commands bypass composition entirely, so operators can inspect durable job state
+when a production config or calendar artifact is temporarily unavailable. The operator adds no
+Provider fetch during inspection, no production publication during submission, no scheduler, no
+API, and no automatic daily ingestion.

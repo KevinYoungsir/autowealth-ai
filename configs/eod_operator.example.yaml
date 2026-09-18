@@ -1,0 +1,7 @@
+# Schema example only. This is not a production dataset configuration.
+config_schema_version: 1
+operations_root: ../var/eod-operations
+datasets:
+  - production_config: ./eod_equity_600000.yaml
+    storage_identity: cn-sse-equity-600000-qfq
+    enabled: true
