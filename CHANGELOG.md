@@ -8,6 +8,12 @@
 ## [未发布]
 
 ### 新增
+- 新增 `tushare_eod_equity` 生产 Provider 基础：仅支持 A 股股票、不复权、日频和
+  single-dataset closed-range request；在 Adapter 边界把 Tushare `vol` 从手转换为股、
+  `amount` 从千元转换为人民币元，并继续复用既有 ProviderChain、校验和 immutable
+  generation publication 边界。
+- 新增 configured-enabled-datasets readiness 纯合同与确定性 evaluator；它区分 ready、
+  not-ready、partial、stale、not-expected、unavailable 和 unsupported，但不执行 ingestion。
 - 新增 schema v1 EOD operator manifest 与独立 operator CLI，提供 catalog inspect、durable job
   只读查询、显式提交/重试和单次 worker run-one 边界。
 - 新增版本化 EOD operation request、immutable job lifecycle 和 Repository Protocol，
@@ -38,6 +44,11 @@
 - 新增显式同步 EOD operation worker：每次 claim 前执行有界过期 lease recovery，
   支持四类 durable job、heartbeat lease、协作式副作用 checkpoint 和确定性 terminal summary。
 ### 安全
+- `TUSHARE_TOKEN` 只允许在真实 Provider fetch 边界延迟解析；import、配置解析、catalog
+  inspect、runtime construction 和 dry-run 均不读取凭据、不初始化 SDK、不访问 Provider。
+- 当前 `stock_zh_a_hist` 成交量/成交额单位尚无可冻结的一手合同，因此 production composition
+  明确拒绝 Tushare 与 AKShare equity 组成同一 fallback chain；旧 AKShare 单 Provider 和
+  AKShare index 配置保持兼容。
 - 四类 submit 均要求显式 dry-run/execute 二选一；真实 retry 与 worker run-one 也要求显式
   execute。CLI 不回显幂等键、路径、凭据、Provider payload、原始异常或 traceback。
 - operation job constructor、import 和读取路径不创建仓储或执行 EOD 操作；幂等键仅保存
@@ -62,6 +73,9 @@
 - catalog 对未知、禁用或 execution context 不匹配的数据集关闭式失败；operation SQLite root
   与 generation repository root 必须分离且互不嵌套。
 ### 已知限制
+- readiness 只覆盖 operator catalog 中配置且启用的数据集，不声明整个 A 股市场完整；本阶段
+  没有证券主数据、scheduler 或自动每日 ingestion。Tushare index、qfq/hfq 与跨源质量比较
+  留待后续独立阶段。
 - operation job SQLite、PR4B worker 与 PR4C operator CLI 仅支持同一主机的 durable filesystem 和
   单一有意 writer；本阶段不含 scheduler、常驻 worker service、API、自动 retention 或每日 ingestion。
 - 进程内锁不能协调多个进程、容器或主机；生产多实例部署仍需实现同一锁协议的持久化或

@@ -237,7 +237,12 @@ class EODDatasetKey:
 
 @dataclass(frozen=True)
 class EODBar:
-    """One validated EOD bar with stable decimal values."""
+    """One validated EOD bar with stable decimal values.
+
+    For equity datasets, ``volume`` is canonical shares and ``amount`` is
+    canonical CNY yuan. Provider adapters must normalize source units before
+    constructing this value.
+    """
 
     dataset: EODDatasetKey
     trade_date: date
