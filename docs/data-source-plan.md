@@ -601,3 +601,29 @@ maintenance 不修改 `current.json`、manifest、parquet、data version 或 EOD
 提供 retention policy、generation pruning 或自动 orphan 回收。内置进程锁不能协调多进程、
 容器或主机；多实例部署必须注入与 writer 共用的共享锁实现。本阶段没有 startup hook、
 background cleanup、worker、scheduler、API 或 CLI 接线。
+
+## 24. PR5A Production Tushare Equity Provider Foundation
+
+`tushare_eod_equity` 复用现有 `EODProviderRequest` 的单 dataset、闭区间粒度，只支持沪深
+A 股股票、日频和不复权 `daily` endpoint。模块 import、配置解析和 runtime construction
+不会读取 `TUSHARE_TOKEN`、导入 Tushare SDK 或访问网络；凭据与 client 只在显式 fetch
+边界延迟解析，测试全部使用 fake client。
+
+股票 `EODBar` canonical 单位固定为 `volume=shares`、`amount=CNY yuan`。Tushare `daily`
+的 `vol` 按手乘 100，`amount` 按千元乘 1000，转换使用 Decimal。symbol、日期、OHLC、
+有限数值、非负成交量/额、必需列、重复日期和请求范围均关闭式验证；额外字段不进入
+canonical storage。
+
+AKShare `stock_zh_a_hist` 当前公开文档和上游实现没有提供可冻结的日线成交量/成交额单位
+合同。为避免未经验证的单位互换，production composition 以稳定
+`mixed_equity_units_unverified` code 拒绝同时配置 Tushare 与 AKShare equity。AKShare
+单 Provider 和既有指数配置保持兼容，但在完成独立单位证据和回归测试前不视为与 Tushare
+可互换。
+
+readiness foundation 只对显式 configured enabled datasets 进行确定性分类。非交易日由本地
+日历直接返回 `not_expected`；其余状态依据 expected date、逐 dataset observation 和 previous
+trading-day watermark 计算。`observed_at` 是注入的 UTC 审计证据，不进入 execution
+fingerprint。readiness 不发布 generation、不提交 job、不创建 SQLite、不执行 worker 或 ingestion。
+
+本阶段不含 scheduler、自动每日 ingestion、whole-market security master、Tushare index、
+qfq/hfq、PR5B cross-source comparison、research bridge、API、交易或真实 Provider CI。

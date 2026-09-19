@@ -47,12 +47,14 @@ if TYPE_CHECKING:
 AKSHARE_EQUITY_PROVIDER = "akshare_eod_equity"
 AKSHARE_INDEX_PROVIDER = "akshare_eod_index"
 AKSHARE_INDEX_DAILY_PROVIDER = "akshare_eod_index_daily"
+TUSHARE_EQUITY_PROVIDER = "tushare_eod_equity"
 
 _SUPPORTED_PROVIDER_NAMES = frozenset(
     {
         AKSHARE_EQUITY_PROVIDER,
         AKSHARE_INDEX_PROVIDER,
         AKSHARE_INDEX_DAILY_PROVIDER,
+        TUSHARE_EQUITY_PROVIDER,
     }
 )
 _REQUIRED_CONFIG_FIELDS = frozenset(
@@ -99,6 +101,7 @@ class EODCompositionErrorCode(str, Enum):
     INVALID_CONFIG = "invalid_config"
     REPOSITORY_INVALID = "repository_invalid"
     PROVIDER_INVALID = "provider_invalid"
+    MIXED_EQUITY_UNITS_UNVERIFIED = "mixed_equity_units_unverified"
 
 
 _ERROR_MESSAGES = {
@@ -111,6 +114,9 @@ _ERROR_MESSAGES = {
     ),
     EODCompositionErrorCode.PROVIDER_INVALID: (
         "The production EOD provider configuration is invalid."
+    ),
+    EODCompositionErrorCode.MIXED_EQUITY_UNITS_UNVERIFIED: (
+        "The configured equity provider chain has incompatible unverified units."
     ),
 }
 
@@ -182,12 +188,17 @@ class EODProductionConfig:
             raise ValueError("legacy config cannot enable provider resilience policies")
 
         allowed = (
-            {AKSHARE_EQUITY_PROVIDER}
+            {AKSHARE_EQUITY_PROVIDER, TUSHARE_EQUITY_PROVIDER}
             if self.dataset.asset_type is AssetType.EQUITY
             else {AKSHARE_INDEX_PROVIDER, AKSHARE_INDEX_DAILY_PROVIDER}
         )
         if any(name not in allowed for name in provider_order):
             raise ValueError("provider_order is incompatible with the dataset asset type")
+        if {
+            AKSHARE_EQUITY_PROVIDER,
+            TUSHARE_EQUITY_PROVIDER,
+        }.issubset(provider_order):
+            raise EODCompositionError(EODCompositionErrorCode.MIXED_EQUITY_UNITS_UNVERIFIED)
         if (
             self.dataset.asset_type is AssetType.INDEX
             and self.dataset.adjustment_type is not AdjustmentType.NONE
@@ -277,6 +288,8 @@ def load_eod_production_config(path: Path) -> EODProductionConfig:
             retry_policy=_parse_retry_policy(payload.get("retry_policy")),
             rate_limit_policy=_parse_rate_limit_policy(payload.get("rate_limit_policy")),
         )
+    except EODCompositionError:
+        raise
     except (KeyError, TypeError, ValueError) as exc:
         error = EODCompositionError(EODCompositionErrorCode.INVALID_CONFIG)
         raise error from exc
@@ -436,11 +449,13 @@ def _default_provider_factory(name: str) -> ProviderFactory:
         AKShareEODIndexDailyProvider,
         AKShareEODIndexProvider,
     )
+    from .tushare_adapters import TushareEODEquityProvider
 
     provider_types = {
         AKSHARE_EQUITY_PROVIDER: AKShareEODEquityProvider,
         AKSHARE_INDEX_PROVIDER: AKShareEODIndexProvider,
         AKSHARE_INDEX_DAILY_PROVIDER: AKShareEODIndexDailyProvider,
+        TUSHARE_EQUITY_PROVIDER: TushareEODEquityProvider,
     }
     try:
         provider_type = provider_types[name]
@@ -504,6 +519,7 @@ __all__ = [
     "AKSHARE_EQUITY_PROVIDER",
     "AKSHARE_INDEX_DAILY_PROVIDER",
     "AKSHARE_INDEX_PROVIDER",
+    "TUSHARE_EQUITY_PROVIDER",
     "EODCompositionError",
     "EODCompositionErrorCode",
     "EODProductionConfig",

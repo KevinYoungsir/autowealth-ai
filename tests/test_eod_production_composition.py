@@ -25,6 +25,7 @@ from autowealth.market_data.composition import (
     EODCompositionErrorCode,
     EODProductionConfig,
     EOD_PRODUCTION_CONFIG_SCHEMA_VERSION,
+    TUSHARE_EQUITY_PROVIDER,
     build_eod_batch_coordinator,
     build_eod_full_refresh_executor,
     build_eod_repository_maintenance_executor,
@@ -415,11 +416,8 @@ def test_configuration_has_no_machine_specific_path_defaults() -> None:
 
     parsed = load_eod_production_config(ROOT / "configs/eod_production.example.yaml")
     assert parsed.config_schema_version == 2
-    assert parsed.dataset.canonical_symbol == "000300.SH"
-    assert parsed.provider_order == (
-        AKSHARE_INDEX_PROVIDER,
-        AKSHARE_INDEX_DAILY_PROVIDER,
-    )
+    assert parsed.dataset.canonical_symbol == "600000.SH"
+    assert parsed.provider_order == (TUSHARE_EQUITY_PROVIDER,)
     assert parsed.retry_policy.max_attempts == 1
     assert parsed.rate_limit_policy.minimum_interval_seconds == 0.0
 

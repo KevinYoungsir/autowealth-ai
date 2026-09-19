@@ -8,16 +8,15 @@ calendar_source: data/calendars/cn_a_share_calendar.json
 dataset:
   market: CN
   venue: SSE
-  asset_type: index
-  canonical_symbol: 000300.SH
+  asset_type: equity
+  canonical_symbol: 600000.SH
   frequency: 1d
   adjustment_type: none
 
 # Declared order is authoritative. Each provider is constructed lazily and is
 # contacted only when a caller explicitly invokes the coordinator.
 provider_order:
-  - akshare_eod_index
-  - akshare_eod_index_daily
+  - tushare_eod_equity
 
 # Retry is disabled by default because max_attempts includes the initial call.
 # Only temporary_provider_failure is eligible for these deterministic retries.

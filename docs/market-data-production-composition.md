@@ -211,3 +211,30 @@ Read-only job commands bypass composition entirely, so operators can inspect dur
 when a production config or calendar artifact is temporarily unavailable. The operator adds no
 Provider fetch during inspection, no production publication during submission, no scheduler, no
 API, and no automatic daily ingestion.
+
+## PR5A Tushare provider composition
+
+Production config schema version 2 now accepts `tushare_eod_equity` in `provider_order` for an
+unadjusted daily equity dataset. No credential field is added to YAML or the operator manifest.
+The default factory constructs `TushareEODEquityProvider` without reading `TUSHARE_TOKEN`, importing
+the SDK, initializing a client, or contacting the Provider. The existing catalog fingerprint records
+only `provider_name=tushare_eod_equity` and `provider_version=1`; credentials, endpoint timestamps,
+paths and readiness observations remain excluded.
+
+The canonical equity units are shares and CNY yuan. The Tushare adapter converts `daily.vol` lots to
+shares by multiplying by 100 and converts `daily.amount` thousand-CNY values to yuan by multiplying
+by 1000. These conversions occur before `EODBar` construction. The current AKShare equity endpoint
+does not yet have a frozen upstream unit contract, so a config containing both
+`tushare_eod_equity` and `akshare_eod_equity` fails with
+`mixed_equity_units_unverified`. Existing AKShare-only equity and index configs remain readable.
+
+`TUSHARE_TOKEN` is resolved only when an explicit fetch begins. Missing/invalid credentials and hard
+quota or permission failures are permanent; explicit short rate-limit and transport failures map to
+the existing temporary failure class. The adapter contains no retry, sleep, queue or fallback loop.
+Those semantics remain owned by `EODProviderChain`.
+
+Readiness is a separate read-only protocol and pure evaluator over configured enabled datasets. It
+does not expand `EODProvider`, does not claim whole-market coverage, and does not authorize ingestion.
+The evaluator uses the local calendar, expected trade date, supplied observations and previous
+trading-day watermark; it never infers readiness solely from wall-clock time. It performs no
+repository, job database, worker or publication operation.
