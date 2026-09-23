@@ -10,6 +10,14 @@ from .calendar import (
     validate_trading_days,
 )
 from .normalization import normalize_canonical_symbol, normalize_eod_bars
+from .observation import (
+    DatasetObservationExpectation,
+    DatasetObservationExpectationContractError,
+    StrictTradingDayObservationExpectation,
+    is_observation_expected,
+    observation_expectation_identity,
+    validate_expected_observation_dates,
+)
 from .planning import (
     EODRequestPlan,
     EODRequestPlanningError,
@@ -155,6 +163,16 @@ _LAZY_EXPORT_MODULES = MappingProxyType(
             )
         },
         **{
+            name: ".local_observation"
+            for name in (
+                "EOD_OBSERVATION_SCHEMA_VERSION",
+                "LocalObservationError",
+                "LocalObservationErrorCode",
+                "LocalObservationIdentity",
+                "VersionedLocalObservationExpectation",
+            )
+        },
+        **{
             name: ".batch"
             for name in (
                 "EODBatchCoordinator",
@@ -287,6 +305,7 @@ def __getattr__(name: str) -> object:
 
 __all__ = [
     "EOD_MANIFEST_SCHEMA_VERSION",
+    "EOD_OBSERVATION_SCHEMA_VERSION",
     "EOD_CALENDAR_SCHEMA_VERSION",
     "EOD_PARQUET_COLUMNS",
     "EOD_PARQUET_FILE",
@@ -317,6 +336,8 @@ __all__ = [
     "EODCompositionError",
     "EODCompositionErrorCode",
     "EODDatasetKey",
+    "DatasetObservationExpectation",
+    "DatasetObservationExpectationContractError",
     "EODDateRange",
     "EODDatasetLockManager",
     "EODFileRepository",
@@ -387,6 +408,9 @@ __all__ = [
     "LocalTradingCalendarError",
     "LocalTradingCalendarErrorCode",
     "LocalTradingCalendarIdentity",
+    "LocalObservationError",
+    "LocalObservationErrorCode",
+    "LocalObservationIdentity",
     "Market",
     "MAX_EOD_BATCH_DATASETS",
     "MAX_EOD_GENERATION_LINEAGE_DEPTH",
@@ -398,8 +422,10 @@ __all__ = [
     "NoOpEODProviderRateLimiter",
     "TradingCalendar",
     "TradingCalendarContractError",
+    "StrictTradingDayObservationExpectation",
     "Venue",
     "VersionedLocalTradingCalendar",
+    "VersionedLocalObservationExpectation",
     "TUSHARE_TOKEN_ENVIRONMENT_VARIABLE",
     "TushareEODEquityProvider",
     "EODMonotonicClock",
@@ -416,8 +442,10 @@ __all__ = [
     "eod_bar_identity",
     "eod_dataset_lock_key",
     "evaluate_eod_provider_readiness",
+    "is_observation_expected",
     "normalize_canonical_symbol",
     "normalize_eod_bars",
+    "observation_expectation_identity",
     "load_eod_production_config",
     "akshare_equity_symbol",
     "akshare_index_daily_symbol",
@@ -426,6 +454,7 @@ __all__ = [
     "validate_eod_batch",
     "validate_eod_provider_request",
     "validate_eod_provider_result",
+    "validate_expected_observation_dates",
     "validate_trading_days",
     "SystemEODMonotonicClock",
     "SystemEODRetrySleeper",

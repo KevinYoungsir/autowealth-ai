@@ -627,3 +627,29 @@ fingerprint。readiness 不发布 generation、不提交 job、不创建 SQLite�
 
 本阶段不含 scheduler、自动每日 ingestion、whole-market security master、Tushare index、
 qfq/hfq、PR5B cross-source comparison、research bridge、API、交易或真实 Provider CI。
+
+## 25. PR5A Suspension-aware Dataset Observation Contract
+
+交易日历只回答交易所是否开市，不再直接代表每个证券都必须存在日线记录。新增
+`DatasetObservationExpectation` 作为 provider-neutral 观测合同：默认 strict 实现继续要求每个
+交易日都有 observation，保持 AKShare、指数和 legacy caller 行为；Tushare equity production
+runtime 则必须显式加载版本化本地只读 observation artifact。
+
+artifact 精确绑定完整 `EODDatasetKey`，只保存由可信来源确认的全日合法 absence。schema、来源、
+版本、dataset、日期格式、排序、唯一性和交易日属性均严格校验。未知 missing、网络或配额失败、
+权限失败、malformed payload 和行情值推断都不能写成 confirmed absence；如果 provider 在已确认
+absence 的日期返回 bar，系统以 `unexpected_observation` 关闭式拒绝。系统不生成零成交量或前收盘
+价占位 bar。
+
+planning 先从交易日历取得 exchange sessions，再由 observation expectation 得到真正 required dates。
+leading/trailing/all-suspended 区间可以零调用确定性 no-op，复牌后的 append-only request 从下一 required
+date 开始。Provider validation、incremental/overlap coordinator、explicit full refresh 和 readiness
+使用同一 expectation；原始 `missing_trading_dates` 继续作为交易所日历证据，publication completeness
+改用 `missing_expected_observation_dates`。readiness 可以在某 dataset 当日合法无 observation 时 READY，
+但 publication watermark 仍取实际观测中的保守最小日期。
+
+artifact logical identity 包含 schema/source/version/dataset/confirmed dates，不含绝对路径、mtime、主机、
+PID、token 或环境值，并进入 operation execution fingerprint。同一内容移动路径保持 identity；版本或
+absence 内容变化会改变 fingerprint，使旧 durable job 由既有 stale-context 门禁拒绝。本阶段不调用
+Tushare `suspend_d`，不自动生成或刷新 artifact，不修改 generation manifest、pointer、Parquet schema
+或 repository layout。

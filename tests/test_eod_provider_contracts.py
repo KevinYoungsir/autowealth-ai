@@ -1235,6 +1235,7 @@ def test_planner_public_signature_has_no_provider_or_repository_dependency() -> 
         "calendar",
         "current_manifest",
         "revision_policy",
+        "observation_expectation",
         "return",
     }
     assert "provider" not in annotations

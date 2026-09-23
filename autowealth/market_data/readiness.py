@@ -11,6 +11,11 @@ from typing import Mapping, Optional, Protocol, Tuple, runtime_checkable
 from autowealth.security import contains_absolute_path, contains_sensitive_value
 
 from .calendar import TradingCalendar
+from .observation import (
+    DatasetObservationExpectation,
+    StrictTradingDayObservationExpectation,
+    is_observation_expected,
+)
 from .schemas import BarFrequency, EODDatasetKey
 
 MAX_EOD_READINESS_DATASETS = 256
@@ -167,6 +172,9 @@ def evaluate_eod_provider_readiness(
     observed_dates: Optional[Mapping[EODDatasetKey, Optional[date]]],
     observed_at: datetime,
     terminal_status: Optional[EODProviderReadinessStatus] = None,
+    observation_expectations: Optional[
+        Mapping[EODDatasetKey, DatasetObservationExpectation]
+    ] = None,
 ) -> EODProviderReadiness:
     """Classify supplied observations without network, persistence or wall-clock guessing."""
 
@@ -176,6 +184,22 @@ def evaluate_eod_provider_readiness(
         raise TypeError("calendar must implement TradingCalendar")
     expected_count = len(scope.datasets)
     expected_date = scope.expected_trade_date
+
+    if observation_expectations is None:
+        expectations = {
+            dataset: StrictTradingDayObservationExpectation() for dataset in scope.datasets
+        }
+    elif (
+        type(observation_expectations) is dict
+        and set(observation_expectations) == set(scope.datasets)
+        and all(
+            isinstance(value, DatasetObservationExpectation)
+            for value in observation_expectations.values()
+        )
+    ):
+        expectations = dict(observation_expectations)
+    else:
+        raise ValueError("observation_expectations must exactly cover the configured scope")
 
     if calendar.is_trading_day(expected_date) is not True:
         return EODProviderReadiness(
@@ -220,23 +244,69 @@ def evaluate_eod_provider_readiness(
     if type(observed_dates) is not dict or set(observed_dates) != set(scope.datasets):
         raise ValueError("observed_dates must exactly cover the configured scope")
     normalized_dates = []
+    required_dates = []
+    stale_thresholds = []
     for dataset in scope.datasets:
         observed = observed_dates[dataset]
         if observed is not None and type(observed) is not date:
             raise TypeError("observed dates must be exact dates or None")
         if observed is not None and observed > expected_date:
             raise ValueError("observed date cannot be after expected_trade_date")
+        expectation = expectations[dataset]
+        if observed is not None and not is_observation_expected(
+            expectation,
+            dataset,
+            observed,
+            calendar,
+        ):
+            raise ValueError("observed date conflicts with confirmed absence evidence")
+        required = expected_date
+        if not is_observation_expected(
+            expectation,
+            dataset,
+            expected_date,
+            calendar,
+        ):
+            for _ in range(366 * 100):
+                required = calendar.previous_trading_day(required)
+                if is_observation_expected(
+                    expectation,
+                    dataset,
+                    required,
+                    calendar,
+                ):
+                    break
+            else:  # pragma: no cover - defensive bound for broken calendar contracts.
+                raise ValueError("no prior expected observation date is available")
+        threshold = required
+        for _ in range(366 * 100):
+            threshold = calendar.previous_trading_day(threshold)
+            if is_observation_expected(
+                expectation,
+                dataset,
+                threshold,
+                calendar,
+            ):
+                break
+        else:  # pragma: no cover - defensive bound for broken calendar contracts.
+            raise ValueError("no prior readiness threshold is available")
         normalized_dates.append(observed)
+        required_dates.append(required)
+        stale_thresholds.append(threshold)
 
-    observed_count = sum(value == expected_date for value in normalized_dates)
+    observed_count = sum(
+        observed == required for observed, required in zip(normalized_dates, required_dates)
+    )
     dated = tuple(value for value in normalized_dates if value is not None)
     watermark = min(dated) if len(dated) == expected_count else None
     if observed_count == expected_count:
         status = EODProviderReadinessStatus.READY
         diagnostic = "configured_scope_ready"
     else:
-        previous_date = calendar.previous_trading_day(expected_date)
-        if any(value < previous_date for value in dated):
+        if any(
+            observed is not None and observed < threshold
+            for observed, threshold in zip(normalized_dates, stale_thresholds)
+        ):
             status = EODProviderReadinessStatus.STALE
             diagnostic = "publication_stale"
         elif observed_count:

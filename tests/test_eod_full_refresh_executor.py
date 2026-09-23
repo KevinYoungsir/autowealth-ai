@@ -297,6 +297,28 @@ class RaisingSleeper:
         raise RuntimeError("sleeper failed")
 
 
+class ConfirmedAbsenceExpectation:
+    def __init__(self, selected: EODDatasetKey, absent: Tuple[date, ...]) -> None:
+        self.selected = selected
+        self.absent = frozenset(absent)
+
+    def expected_observation_dates(self, dataset, requested_range, calendar):
+        if dataset != self.selected:
+            raise ValueError("dataset mismatch")
+        return tuple(
+            value
+            for value in calendar.trading_days(requested_range.start_date, requested_range.end_date)
+            if value not in self.absent
+        )
+
+    def identity_dict(self):
+        return {
+            "version": "full-refresh-test-v1",
+            "dataset": self.selected.to_dict(),
+            "confirmed_absent_dates": sorted(value.isoformat() for value in self.absent),
+        }
+
+
 def make_dataset(
     symbol: str = "600000.SH",
     adjustment: AdjustmentType = AdjustmentType.QFQ,
@@ -923,6 +945,61 @@ def test_missing_required_trading_day_fails_closed() -> None:
     assert repository.publish_count == 0
     assert repository.current is current
     assert lock_manager.release_count == 1
+
+
+def test_full_refresh_accepts_confirmed_absence_but_rejects_true_missing() -> None:
+    selected = make_dataset()
+    requested_range = EODDateRange(DAY_1, DAY_4)
+    current = make_stored(selected, (DAY_1, DAY_3))
+    provider_request = EODProviderRequest(selected, requested_range)
+    expectation = ConfirmedAbsenceExpectation(selected, (DAY_2,))
+
+    valid_repository = FakeRepository(current)
+    valid_chain = FakeChain(
+        make_chain_result(
+            provider_request,
+            make_bars(selected, (DAY_1, DAY_3, DAY_4), offset=20),
+        )
+    )
+    published = execute_real(
+        EODFullRefreshExecutor(
+            valid_repository,
+            valid_chain,
+            StaticCalendar(),
+            RecordingLockManager(),
+            expectation,
+        ),
+        selected,
+        requested_range,
+    )
+    assert published.status is EODFullRefreshStatus.FULL_REFRESH_PUBLISHED
+    assert tuple(bar.trade_date for bar in valid_repository.published_bars) == (
+        DAY_1,
+        DAY_3,
+        DAY_4,
+    )
+
+    missing_repository = FakeRepository(current)
+    missing_chain = FakeChain(
+        make_chain_result(
+            provider_request,
+            make_bars(selected, (DAY_1, DAY_3), offset=20),
+        )
+    )
+    with pytest.raises(EODIncrementalCoordinatorError) as captured:
+        execute_real(
+            EODFullRefreshExecutor(
+                missing_repository,
+                missing_chain,
+                StaticCalendar(),
+                RecordingLockManager(),
+                expectation,
+            ),
+            selected,
+            requested_range,
+        )
+    assert "missing_expected_observations" in captured.value.validation_codes
+    assert missing_repository.publish_count == 0
 
 
 def test_normalization_does_not_hide_duplicate_or_missing_middle_date() -> None:

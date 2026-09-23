@@ -56,6 +56,11 @@ AutoWealth 的生产 EOD runtime 使用部署方显式提供的版本化本地�
 - 完整 `EODDatasetKey`；
 - 有序 `provider_order`。
 
+当 `provider_order` 包含 `tushare_eod_equity` 时，还必须显式提供本地 JSON
+`observation_source`。该路径遵循 `calendar_source` 的本地路径规则，不接受 URI、环境展开、隐式
+发现或用户目录 fallback。AKShare、指数和 legacy 配置省略该字段时继续使用 strict trading-day
+expectation。schema version 保持 2；version 1 的既有五字段配置仍保持 strict 默认且不接受新字段。
+
 配置可选提供严格的 `retry_policy` 和 `rate_limit_policy`。缺省值分别为
 `max_attempts=1` 和 `minimum_interval_seconds=0`，因此旧配置不重试、不等待。启用后，
 单 Provider 的 `max_attempts` 包含第一次调用且上限为 5；退避按
@@ -71,6 +76,7 @@ resilience 字段。version 2 严格允许这两个可选 section，未知字段
 ```text
 YAML configuration
   -> VersionedLocalTradingCalendar
+  -> VersionedLocalObservationExpectation (Tushare equity) or strict default
   -> EODDatasetKey
   -> LocalEODFileRepository
   -> AKShare primary/fallback providers
@@ -84,6 +90,11 @@ YAML configuration
 `build_eod_runtime` 只执行 `VALIDATE + CONSTRUCT`。AKShare 仍在首次显式 `fetch` 时才
 延迟导入；构造 runtime 不会访问网络、创建 generation、写 `current.json` 或调用
 Coordinator `update`。
+
+observation artifact 采用 strict schema version 1，包含 safe source/version、完整
+`EODDatasetKey` 和排序唯一的 ISO `confirmed_absent_dates`。加载时逐项确认日期确为 exchange trading
+day；dataset mismatch、未知字段、重复/乱序日期和 non-trading absence 全部关闭式失败。artifact
+只读且不含 token；composition 不调用 `daily`、`suspend_d` 或任何网络端点。
 
 `build_eod_full_refresh_executor` 可从一个已验证 runtime 和调用方显式提供的同一 dataset
 lock manager 构造独立 full-refresh execution boundary。构造过程同样不读取 current、抓取、
@@ -139,10 +150,15 @@ catalog execution fingerprint 使用 canonical JSON 和 SHA-256，包含：
 - production config schema version；
 - 有序 Provider name/version；
 - retry 与 rate-limit policy。
+- 每个 runtime 的 path-independent observation expectation identity。
 
 指纹不包含 repository path、calendar path、endpoint、mtime、主机名或 PID。同一逻辑部署
 移动到不同挂载路径时 identity 保持不变；日历版本、Provider 版本、dataset、口径或执行策略
 变化时 fingerprint 改变。job execution context 必须与当前 catalog 精确相等。
+
+observation artifact 路径同样不进入指纹；schema/source/version/dataset/confirmed absence 内容进入。
+因此 artifact 仅移动挂载路径时指纹不变，证据版本或内容变化时旧 job 会被既有 execution-context
+校验拒绝。
 
 `EODOperationWorker` 是调用方显式启动的同步 library boundary。每次 claim 前检查 durable
 job repository、执行有界过期 lease recovery，再按 FIFO claim 一项工作。它将 catalog

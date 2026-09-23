@@ -7,6 +7,7 @@ from typing import Optional
 import pytest
 
 from autowealth.market_data.operation_catalog import EODOperationCatalogEntry
+from autowealth.market_data.observation import StrictTradingDayObservationExpectation
 from autowealth.market_data.readiness import (
     EODProviderReadiness,
     EODProviderReadinessProbe,
@@ -106,6 +107,38 @@ def test_partial_configured_scope_is_partial() -> None:
 def test_previous_trading_day_watermark_is_not_ready() -> None:
     result = evaluate({SSE: DAY_2, SZSE: DAY_2})
     assert result.status is EODProviderReadinessStatus.NOT_READY
+    assert result.publication_watermark == DAY_2
+
+
+def test_confirmed_absence_is_ready_with_conservative_watermark() -> None:
+    class D3AbsentExpectation:
+        def expected_observation_dates(self, selected, requested_range, calendar):
+            return tuple(
+                value
+                for value in calendar.trading_days(
+                    requested_range.start_date, requested_range.end_date
+                )
+                if value != DAY_3
+            )
+
+        def identity_dict(self):
+            return {"version": "absence-v1", "dataset": SZSE.to_dict()}
+
+    result = evaluate_eod_provider_readiness(
+        provider_name="test_provider",
+        provider_version="fixture-v1",
+        endpoint_name="daily",
+        scope=scope(),
+        calendar=FakeCalendar(),
+        observed_dates={SSE: DAY_3, SZSE: DAY_2},
+        observed_at=OBSERVED_AT,
+        observation_expectations={
+            SSE: StrictTradingDayObservationExpectation(),
+            SZSE: D3AbsentExpectation(),
+        },
+    )
+    assert result.status is EODProviderReadinessStatus.READY
+    assert result.observed_count == 2
     assert result.publication_watermark == DAY_2
 
 

@@ -14,6 +14,12 @@ from autowealth.security import (
 )
 
 from .calendar import TradingCalendar, validate_trading_days
+from .observation import (
+    DatasetObservationExpectation,
+    StrictTradingDayObservationExpectation,
+    is_observation_expected,
+    validate_expected_observation_dates,
+)
 from .providers import EODProviderRequest, EODRevisionStrategy
 from .schemas import AdjustmentType, EODDatasetKey, EODDateRange
 from .versioning import EODGenerationManifest
@@ -29,6 +35,7 @@ class EODRequestPlanStatus(str, Enum):
     OVERLAP_REFRESH = "overlap_refresh"
     ALREADY_CURRENT = "already_current"
     NO_TRADING_DAYS = "no_trading_days"
+    NO_EXPECTED_OBSERVATIONS = "no_expected_observations"
     FULL_REFRESH_REQUIRED = "full_refresh_required"
 
 
@@ -38,6 +45,7 @@ class EODRequestPlanningErrorCode(str, Enum):
     CURRENT_DATASET_MISMATCH = "current_dataset_mismatch"
     CURRENT_AFTER_EFFECTIVE_END = "current_after_effective_end"
     CURRENT_DATE_NOT_TRADING_DAY = "current_date_not_trading_day"
+    CURRENT_DATE_NOT_EXPECTED_OBSERVATION = "current_date_not_expected_observation"
     INVALID_REVISION_POLICY = "invalid_revision_policy"
     INVALID_CALENDAR = "invalid_calendar"
 
@@ -177,6 +185,7 @@ class EODRequestPlan:
         no_request_statuses = {
             EODRequestPlanStatus.ALREADY_CURRENT,
             EODRequestPlanStatus.NO_TRADING_DAYS,
+            EODRequestPlanStatus.NO_EXPECTED_OBSERVATIONS,
             EODRequestPlanStatus.FULL_REFRESH_REQUIRED,
         }
         if status in fetch_statuses:
@@ -185,7 +194,10 @@ class EODRequestPlan:
         elif status in no_request_statuses and self.provider_request is not None:
             raise ValueError(f"{status.value} must not contain a provider request")
 
-        if status is EODRequestPlanStatus.NO_TRADING_DAYS:
+        if status in (
+            EODRequestPlanStatus.NO_TRADING_DAYS,
+            EODRequestPlanStatus.NO_EXPECTED_OBSERVATIONS,
+        ):
             if self.effective_range is not None:
                 raise ValueError("no_trading_days must not contain an effective range")
         elif self.effective_range is None:
@@ -281,6 +293,7 @@ def plan_eod_request_window(
     calendar: TradingCalendar,
     current_manifest: Optional[EODGenerationManifest] = None,
     revision_policy: Optional[EODRevisionPolicy] = None,
+    observation_expectation: Optional[DatasetObservationExpectation] = None,
 ) -> EODRequestPlan:
     """Plan a deterministic EOD request without Provider or repository access."""
 
@@ -293,6 +306,7 @@ def plan_eod_request_window(
     if revision_policy is not None and type(revision_policy) is not EODRevisionPolicy:
         raise TypeError("revision_policy must be an exact EODRevisionPolicy or None")
     policy = revision_policy or default_eod_revision_policy(dataset)
+    expectation = observation_expectation or StrictTradingDayObservationExpectation()
 
     try:
         trading_days = validate_trading_days(calendar, requested_range)
@@ -311,7 +325,6 @@ def plan_eod_request_window(
             EODRequestPlanStatus.NO_TRADING_DAYS,
         )
 
-    effective_range = EODDateRange(trading_days[0], trading_days[-1])
     if (
         policy.strategy is EODRevisionStrategy.APPEND_ONLY
         and dataset.adjustment_type is not AdjustmentType.NONE
@@ -320,6 +333,30 @@ def plan_eod_request_window(
             EODRequestPlanningErrorCode.INVALID_REVISION_POLICY,
             "Adjusted EOD datasets cannot use append_only revision policy.",
         )
+
+    try:
+        expected_dates = validate_expected_observation_dates(
+            expectation,
+            dataset,
+            requested_range,
+            calendar,
+        )
+    except Exception as exc:
+        raise EODRequestPlanningError(
+            EODRequestPlanningErrorCode.INVALID_CALENDAR,
+            "The observation expectation returned an invalid date sequence.",
+        ) from exc
+
+    if not expected_dates:
+        return _plan(
+            dataset,
+            requested_range,
+            None,
+            policy,
+            EODRequestPlanStatus.NO_EXPECTED_OBSERVATIONS,
+        )
+
+    effective_range = EODDateRange(expected_dates[0], expected_dates[-1])
 
     if current_manifest is None:
         return _plan(
@@ -345,9 +382,32 @@ def plan_eod_request_window(
             EODRequestPlanningErrorCode.CURRENT_DATE_NOT_TRADING_DAY,
             "The current manifest last date is not a recognized trading day.",
         )
+    try:
+        first_expected = is_observation_expected(
+            expectation,
+            dataset,
+            current_manifest.first_trade_date,
+            calendar,
+        )
+        last_expected = is_observation_expected(
+            expectation,
+            dataset,
+            current_manifest.last_trade_date,
+            calendar,
+        )
+    except Exception as exc:
+        raise EODRequestPlanningError(
+            EODRequestPlanningErrorCode.INVALID_CALENDAR,
+            "The observation expectation could not classify current manifest dates.",
+        ) from exc
+    if not first_expected or not last_expected:
+        raise EODRequestPlanningError(
+            EODRequestPlanningErrorCode.CURRENT_DATE_NOT_EXPECTED_OBSERVATION,
+            "The current manifest contains a date with confirmed absence evidence.",
+        )
     if (
         effective_range.contains(current_manifest.last_trade_date)
-        and current_manifest.last_trade_date not in trading_days
+        and current_manifest.last_trade_date not in expected_dates
     ):
         raise EODRequestPlanningError(
             EODRequestPlanningErrorCode.INVALID_CALENDAR,
@@ -384,7 +444,9 @@ def plan_eod_request_window(
         )
 
     if policy.strategy is EODRevisionStrategy.APPEND_ONLY:
-        request_start = next(day for day in trading_days if day > current_manifest.last_trade_date)
+        request_start = next(
+            day for day in expected_dates if day > current_manifest.last_trade_date
+        )
         return _plan(
             dataset,
             requested_range,
@@ -394,7 +456,7 @@ def plan_eod_request_window(
             EODDateRange(request_start, effective_range.end_date),
         )
 
-    existing_days = tuple(day for day in trading_days if day <= current_manifest.last_trade_date)
+    existing_days = tuple(day for day in expected_dates if day <= current_manifest.last_trade_date)
     if existing_days:
         overlap_count = min(policy.overlap_trading_days, len(existing_days))
         request_start = existing_days[-overlap_count]

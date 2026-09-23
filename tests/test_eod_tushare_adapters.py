@@ -11,6 +11,7 @@ import pandas as pd
 import pytest
 
 from autowealth.market_data.provider_chain import EODProviderChain, EODProviderChainError
+from autowealth.market_data.local_observation import VersionedLocalObservationExpectation
 from autowealth.market_data.provider_resilience import (
     EODProviderRetryPolicy,
     NoOpEODProviderRateLimiter,
@@ -134,6 +135,20 @@ def make_provider(
     )
 
 
+def suspension_expectation() -> VersionedLocalObservationExpectation:
+    return VersionedLocalObservationExpectation.from_dict(
+        {
+            "schema_version": 1,
+            "source": "tushare_suspend_d",
+            "version": "test-v1",
+            "dataset": make_dataset().to_dict(),
+            "confirmed_absent_dates": [DAY_2.isoformat()],
+        },
+        FakeCalendar(),
+        expected_dataset=make_dataset(),
+    )
+
+
 def test_valid_response_maps_fields_units_and_stable_order() -> None:
     client = FakeClient(valid_frame())
     result = make_provider(client).fetch(make_request())
@@ -154,6 +169,41 @@ def test_valid_response_maps_fields_units_and_stable_order() -> None:
             "fields": "ts_code,trade_date,open,high,low,close,vol,amount",
         }
     ]
+
+
+def test_confirmed_full_day_suspension_is_complete_without_synthetic_bar() -> None:
+    frame = valid_frame().iloc[[1]].copy()
+    client = FakeClient(frame)
+    provider = TushareEODEquityProvider(
+        FakeCalendar(),
+        token_resolver=lambda: "TEST_FIXTURE_TOKEN",
+        client_factory=lambda token: client,
+        observation_expectation=suspension_expectation(),
+    )
+    result = provider.fetch(make_request())
+    assert result.status is EODProviderResultStatus.SUCCESS
+    assert tuple(bar.trade_date for bar in result.bars) == (DAY_1,)
+    assert any(warning.code == "missing_trading_days" for warning in result.warnings)
+    assert all(bar.trade_date != DAY_2 for bar in result.bars)
+
+
+def test_true_missing_expected_bar_remains_partial() -> None:
+    frame = valid_frame().iloc[[1]].copy()
+    result = make_provider(FakeClient(frame)).fetch(make_request())
+    assert result.status is EODProviderResultStatus.PARTIAL_SUCCESS
+    assert any(warning.code == "missing_trading_days" for warning in result.warnings)
+
+
+def test_bar_on_confirmed_absence_fails_closed() -> None:
+    provider = TushareEODEquityProvider(
+        FakeCalendar(),
+        token_resolver=lambda: "TEST_FIXTURE_TOKEN",
+        client_factory=lambda token: FakeClient(valid_frame()),
+        observation_expectation=suspension_expectation(),
+    )
+    with pytest.raises(EODProviderError) as captured:
+        provider.fetch(make_request())
+    assert captured.value.code is EODProviderErrorCode.MALFORMED_PROVIDER_PAYLOAD
 
 
 def test_extra_columns_are_ignored_without_expanding_eod_bar() -> None:

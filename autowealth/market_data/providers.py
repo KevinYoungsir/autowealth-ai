@@ -16,6 +16,11 @@ from autowealth.security import (
 
 from .calendar import TradingCalendar, validate_trading_days
 from .normalization import normalize_eod_bars
+from .observation import (
+    DatasetObservationExpectation,
+    StrictTradingDayObservationExpectation,
+    validate_expected_observation_dates,
+)
 from .schemas import (
     AdjustmentType,
     AssetType,
@@ -396,15 +401,20 @@ def validate_eod_provider_request(
 def validate_eod_provider_result(
     result: EODProviderResult,
     calendar: TradingCalendar,
+    observation_expectation: Optional[DatasetObservationExpectation] = None,
 ) -> EODProviderResult:
     """Validate, normalize and classify provider bars without performing I/O."""
 
     if type(result) is not EODProviderResult:
         raise TypeError("result must be an exact EODProviderResult")
+    expectation = observation_expectation or StrictTradingDayObservationExpectation()
     try:
-        expected_dates = validate_trading_days(
-            calendar,
+        trading_dates = validate_trading_days(calendar, result.request.requested_range)
+        expected_dates = validate_expected_observation_dates(
+            expectation,
+            result.request.dataset,
             result.request.requested_range,
+            calendar,
         )
     except Exception as exc:
         raise EODProviderError(
@@ -413,7 +423,7 @@ def validate_eod_provider_result(
         ) from exc
 
     if result.status is EODProviderResultStatus.EMPTY:
-        if not expected_dates:
+        if not trading_dates or not expected_dates:
             raise EODProviderError(
                 EODProviderErrorCode.MALFORMED_PROVIDER_PAYLOAD,
                 "An empty provider result cannot represent a range without trading days.",
@@ -433,6 +443,7 @@ def validate_eod_provider_result(
             result.bars,
             calendar,
             result.request.requested_range,
+            observation_expectation=expectation,
         )
     except Exception as exc:
         raise EODProviderError(
@@ -450,7 +461,7 @@ def validate_eod_provider_result(
             "The provider payload failed EOD structure or integrity validation.",
         )
 
-    has_missing_dates = bool(report.missing_trading_dates)
+    has_missing_dates = bool(report.missing_expected_observation_dates)
     if result.status is EODProviderResultStatus.SUCCESS and has_missing_dates:
         raise EODProviderError(
             EODProviderErrorCode.MALFORMED_PROVIDER_PAYLOAD,
@@ -462,11 +473,11 @@ def validate_eod_provider_result(
             "A partial provider result must omit at least one expected trading date.",
         )
     if result.status is EODProviderResultStatus.SUCCESS and any(
-        warning.code == "missing_trading_days" for warning in result.warnings
+        warning.code == "missing_expected_observations" for warning in result.warnings
     ):
         raise EODProviderError(
             EODProviderErrorCode.MALFORMED_PROVIDER_PAYLOAD,
-            "A successful provider result cannot carry a missing-trading-days warning.",
+            "A successful provider result cannot carry a missing-observations warning.",
         )
 
     warnings = _normalized_warnings(result.warnings, report.warnings)

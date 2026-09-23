@@ -41,7 +41,7 @@ def calendar_payload() -> dict[str, object]:
 
 
 def config_payload(provider_order: list[str]) -> dict[str, object]:
-    return {
+    payload = {
         "config_schema_version": 2,
         "repository_root": "repository",
         "calendar_source": "calendar.json",
@@ -62,14 +62,40 @@ def config_payload(provider_order: list[str]) -> dict[str, object]:
         },
         "rate_limit_policy": {"minimum_interval_seconds": 0.0},
     }
+    if TUSHARE_EQUITY_PROVIDER in provider_order:
+        payload["observation_source"] = "observation.json"
+    return payload
 
 
-def write_files(tmp_path: Path, payload: dict[str, object]) -> Path:
+def observation_payload() -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "source": "tushare_suspend_d",
+        "version": "fixture-v1",
+        "dataset": config_payload([])["dataset"],
+        "confirmed_absent_dates": [],
+    }
+
+
+def write_files(
+    tmp_path: Path,
+    payload: dict[str, object],
+    *,
+    selected_observation: dict[str, object] = None,
+) -> Path:
+    tmp_path.mkdir(parents=True, exist_ok=True)
     calendar_path = (tmp_path / "calendar.json").resolve()
     calendar_path.write_text(json.dumps(calendar_payload()), encoding="utf-8")
+    observation_path = (tmp_path / "observation.json").resolve()
+    observation_path.write_text(
+        json.dumps(selected_observation or observation_payload()),
+        encoding="utf-8",
+    )
     selected = dict(payload)
     selected["repository_root"] = str((tmp_path / "repository").resolve())
     selected["calendar_source"] = str(calendar_path)
+    if "observation_source" in selected:
+        selected["observation_source"] = str(observation_path)
     path = tmp_path / "production.yaml"
     path.write_text(yaml.safe_dump(selected, sort_keys=False), encoding="utf-8")
     return path
@@ -130,9 +156,45 @@ def test_tushare_identity_enters_existing_catalog_fingerprint_without_secret(
     assert payload["datasets"][0]["providers"] == [
         {"provider_name": "tushare_eod_equity", "provider_version": "1"}
     ]
+    assert payload["datasets"][0]["observation_expectation"]["version"] == "fixture-v1"
     serialized = json.dumps(payload, sort_keys=True)
     assert "TUSHARE_TOKEN" not in serialized
     assert "SENTINEL_TUSHARE_SECRET" not in serialized
+    assert str(tmp_path) not in serialized
+
+
+def test_observation_fingerprint_is_path_independent_and_content_sensitive(
+    tmp_path: Path,
+) -> None:
+    config_payload_value = config_payload([TUSHARE_EQUITY_PROVIDER])
+    first_config = load_eod_production_config(write_files(tmp_path / "first", config_payload_value))
+    moved_config = load_eod_production_config(write_files(tmp_path / "moved", config_payload_value))
+    changed_observation = observation_payload()
+    changed_observation["version"] = "fixture-v2"
+    changed_config = load_eod_production_config(
+        write_files(
+            tmp_path / "changed",
+            config_payload_value,
+            selected_observation=changed_observation,
+        )
+    )
+
+    def fingerprint(config):
+        return build_eod_operation_catalog(
+            (config,),
+            storage_identities={config.dataset: "cn-sse-equity-600000-none"},
+        ).execution_config_fingerprint
+
+    assert fingerprint(first_config) == fingerprint(moved_config)
+    assert fingerprint(first_config) != fingerprint(changed_config)
+
+
+def test_tushare_config_requires_explicit_observation_source(tmp_path: Path) -> None:
+    payload = config_payload([TUSHARE_EQUITY_PROVIDER])
+    payload.pop("observation_source")
+    with pytest.raises(EODCompositionError) as captured:
+        load_eod_production_config(write_files(tmp_path, payload))
+    assert captured.value.code is (EODCompositionErrorCode.OBSERVATION_EXPECTATION_REQUIRED)
 
 
 def test_example_config_is_tushare_equity_without_credentials() -> None:

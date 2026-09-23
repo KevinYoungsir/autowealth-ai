@@ -9,7 +9,12 @@ from typing import Callable, Optional, Protocol, Tuple
 
 import pandas as pd
 
-from .calendar import TradingCalendar, validate_trading_days
+from .calendar import TradingCalendar
+from .observation import (
+    DatasetObservationExpectation,
+    StrictTradingDayObservationExpectation,
+    validate_expected_observation_dates,
+)
 from .providers import (
     EODProviderCapability,
     EODProviderError,
@@ -185,9 +190,15 @@ def _classify_client_exception(exc: Exception) -> EODProviderError:
 def _expected_trading_days(
     calendar: TradingCalendar,
     request: EODProviderRequest,
+    observation_expectation: DatasetObservationExpectation,
 ) -> Tuple[date, ...]:
     try:
-        expected = validate_trading_days(calendar, request.requested_range)
+        expected = validate_expected_observation_dates(
+            observation_expectation,
+            request.dataset,
+            request.requested_range,
+            calendar,
+        )
     except Exception as exc:
         raise EODProviderError(
             EODProviderErrorCode.MALFORMED_PROVIDER_PAYLOAD,
@@ -310,6 +321,7 @@ class TushareEODEquityProvider:
         *,
         token_resolver: Optional[TokenResolver] = None,
         client_factory: Optional[ClientFactory] = None,
+        observation_expectation: Optional[DatasetObservationExpectation] = None,
     ) -> None:
         if not isinstance(calendar, TradingCalendar):
             raise TypeError("calendar must implement TradingCalendar")
@@ -317,9 +329,13 @@ class TushareEODEquityProvider:
             raise TypeError("token_resolver must be callable or None")
         if client_factory is not None and not callable(client_factory):
             raise TypeError("client_factory must be callable or None")
+        expectation = observation_expectation or StrictTradingDayObservationExpectation()
+        if not isinstance(expectation, DatasetObservationExpectation):
+            raise TypeError("observation_expectation must implement DatasetObservationExpectation")
         self._calendar = calendar
         self._token_resolver = token_resolver or _default_token_resolver
         self._client_factory = client_factory or _default_client_factory
+        self._observation_expectation = expectation
 
     @property
     def capabilities(self) -> Tuple[EODProviderCapability, ...]:
@@ -331,7 +347,11 @@ class TushareEODEquityProvider:
         if type(request) is not EODProviderRequest:
             raise TypeError("request must be an exact EODProviderRequest")
         validate_eod_provider_request(request, self.capabilities)
-        expected_dates = _expected_trading_days(self._calendar, request)
+        expected_dates = _expected_trading_days(
+            self._calendar,
+            request,
+            self._observation_expectation,
+        )
 
         try:
             client = self._client_factory(_token(self._token_resolver))
@@ -360,7 +380,11 @@ class TushareEODEquityProvider:
             status=_result_status(bars, expected_dates),
             bars=bars,
         )
-        return validate_eod_provider_result(result, self._calendar)
+        return validate_eod_provider_result(
+            result,
+            self._calendar,
+            self._observation_expectation,
+        )
 
 
 __all__ = [

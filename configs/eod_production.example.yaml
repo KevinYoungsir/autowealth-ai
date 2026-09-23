@@ -4,6 +4,7 @@
 config_schema_version: 2
 repository_root: data/eod_generations
 calendar_source: data/calendars/cn_a_share_calendar.json
+observation_source: data/observations/600000_sh_tushare_suspend_d.json
 
 dataset:
   market: CN

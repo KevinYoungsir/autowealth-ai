@@ -14,11 +14,12 @@ from autowealth.security import contains_absolute_path, contains_sensitive_value
 
 from .composition import EODProductionConfig, EODRuntimeStack, ProviderFactory, build_eod_runtime
 from .operation_control import eod_calendar_identity
+from .observation import observation_expectation_identity
 from .operations import EODOperationExecutionContext
 from .schemas import EODDatasetKey
 
 EOD_OPERATION_CATALOG_SCHEMA_VERSION = 1
-EOD_RUNTIME_CONTRACT_VERSION = 1
+EOD_RUNTIME_CONTRACT_VERSION = 2
 MAX_EOD_OPERATION_CATALOG_ENTRIES = 256
 _STORAGE_IDENTITY_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,255}$")
 
@@ -76,6 +77,9 @@ class EODOperationCatalogEntry:
             "storage_identity": self.storage_identity,
             "enabled": self.enabled,
             "production_config_schema_version": config.config_schema_version,
+            "observation_expectation": observation_expectation_identity(
+                self.runtime.observation_expectation
+            ),
             "providers": [
                 {"provider_name": name, "provider_version": version}
                 for name, version in self.provider_identities

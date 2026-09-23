@@ -12,6 +12,11 @@ import yaml
 
 from .calendar import TradingCalendar
 from .local_calendar import VersionedLocalTradingCalendar
+from .local_observation import VersionedLocalObservationExpectation
+from .observation import (
+    DatasetObservationExpectation,
+    StrictTradingDayObservationExpectation,
+)
 from .providers import EODProvider, EODProviderCapability
 from .provider_resilience import (
     EODProviderRateLimitPolicy,
@@ -66,7 +71,7 @@ _REQUIRED_CONFIG_FIELDS = frozenset(
         "provider_order",
     }
 )
-_OPTIONAL_CONFIG_FIELDS = frozenset({"retry_policy", "rate_limit_policy"})
+_OPTIONAL_CONFIG_FIELDS = frozenset({"retry_policy", "rate_limit_policy", "observation_source"})
 _CONFIG_FIELDS = _REQUIRED_CONFIG_FIELDS | _OPTIONAL_CONFIG_FIELDS
 _DATASET_FIELDS = frozenset(
     {
@@ -102,6 +107,8 @@ class EODCompositionErrorCode(str, Enum):
     REPOSITORY_INVALID = "repository_invalid"
     PROVIDER_INVALID = "provider_invalid"
     MIXED_EQUITY_UNITS_UNVERIFIED = "mixed_equity_units_unverified"
+    OBSERVATION_EXPECTATION_REQUIRED = "observation_expectation_required"
+    OBSERVATION_INVALID = "observation_invalid"
 
 
 _ERROR_MESSAGES = {
@@ -118,6 +125,10 @@ _ERROR_MESSAGES = {
     EODCompositionErrorCode.MIXED_EQUITY_UNITS_UNVERIFIED: (
         "The configured equity provider chain has incompatible unverified units."
     ),
+    EODCompositionErrorCode.OBSERVATION_EXPECTATION_REQUIRED: (
+        "The configured provider requires an explicit observation source."
+    ),
+    EODCompositionErrorCode.OBSERVATION_INVALID: ("The configured observation source is invalid."),
 }
 
 
@@ -148,6 +159,7 @@ class EODProductionConfig:
     rate_limit_policy: EODProviderRateLimitPolicy = field(
         default_factory=EODProviderRateLimitPolicy
     )
+    observation_source: Optional[Path] = None
 
     def __post_init__(self) -> None:
         if type(self.config_schema_version) is not int or self.config_schema_version not in (
@@ -163,6 +175,14 @@ class EODProductionConfig:
             raise ValueError("repository_root and calendar_source must differ")
         if self.calendar_source.suffix.lower() != ".json":
             raise ValueError("calendar_source must identify a JSON artifact")
+        if self.observation_source is not None:
+            if (
+                not isinstance(self.observation_source, Path)
+                or not self.observation_source.is_absolute()
+                or self.observation_source.suffix.lower() != ".json"
+                or self.observation_source in (self.repository_root, self.calendar_source)
+            ):
+                raise ValueError("observation_source must identify a distinct local JSON artifact")
         if type(self.dataset) is not EODDatasetKey:
             raise TypeError("dataset must be an exact EODDatasetKey")
         if type(self.provider_order) not in (list, tuple):
@@ -199,6 +219,8 @@ class EODProductionConfig:
             TUSHARE_EQUITY_PROVIDER,
         }.issubset(provider_order):
             raise EODCompositionError(EODCompositionErrorCode.MIXED_EQUITY_UNITS_UNVERIFIED)
+        if TUSHARE_EQUITY_PROVIDER in provider_order and self.observation_source is None:
+            raise EODCompositionError(EODCompositionErrorCode.OBSERVATION_EXPECTATION_REQUIRED)
         if (
             self.dataset.asset_type is AssetType.INDEX
             and self.dataset.adjustment_type is not AdjustmentType.NONE
@@ -217,6 +239,9 @@ class EODRuntimeStack:
     providers: Tuple[EODProvider, ...]
     provider_chain: "EODProviderChain"
     coordinator: "EODIncrementalCoordinator"
+    observation_expectation: DatasetObservationExpectation = field(
+        default_factory=StrictTradingDayObservationExpectation
+    )
 
     def __post_init__(self) -> None:
         if type(self.config) is not EODProductionConfig:
@@ -225,6 +250,8 @@ class EODRuntimeStack:
             raise TypeError("calendar must be VersionedLocalTradingCalendar")
         if type(self.providers) is not tuple or not self.providers:
             raise TypeError("providers must be a non-empty exact tuple")
+        if not isinstance(self.observation_expectation, DatasetObservationExpectation):
+            raise TypeError("observation_expectation must implement DatasetObservationExpectation")
 
     @property
     def dataset(self) -> EODDatasetKey:
@@ -285,6 +312,11 @@ def load_eod_production_config(path: Path) -> EODProductionConfig:
             calendar_source=_resolve_local_path(payload["calendar_source"], root),
             dataset=dataset,
             provider_order=tuple(provider_order),
+            observation_source=(
+                None
+                if payload.get("observation_source") is None
+                else _resolve_local_path(payload["observation_source"], root)
+            ),
             retry_policy=_parse_retry_policy(payload.get("retry_policy")),
             rate_limit_policy=_parse_rate_limit_policy(payload.get("rate_limit_policy")),
         )
@@ -305,6 +337,20 @@ def build_eod_runtime(
     if type(config) is not EODProductionConfig:
         raise TypeError("config must be an exact EODProductionConfig")
     calendar = VersionedLocalTradingCalendar.from_file(config.calendar_source)
+    if config.observation_source is None:
+        observation_expectation: DatasetObservationExpectation = (
+            StrictTradingDayObservationExpectation()
+        )
+    else:
+        try:
+            observation_expectation = VersionedLocalObservationExpectation.from_file(
+                config.observation_source,
+                calendar,
+                expected_dataset=config.dataset,
+            )
+        except Exception as exc:
+            error = EODCompositionError(EODCompositionErrorCode.OBSERVATION_INVALID)
+            raise error from exc
 
     try:
         from .repositories import LocalEODFileRepository
@@ -314,7 +360,11 @@ def build_eod_runtime(
         error = EODCompositionError(EODCompositionErrorCode.REPOSITORY_INVALID)
         raise error from exc
 
-    factories = _provider_factories(config.provider_order, provider_factories)
+    factories = _provider_factories(
+        config.provider_order,
+        provider_factories,
+        observation_expectation,
+    )
     providers = []
     try:
         for provider_name in config.provider_order:
@@ -356,7 +406,12 @@ def build_eod_runtime(
 
     from .coordinator import EODIncrementalCoordinator
 
-    coordinator = EODIncrementalCoordinator(repository, provider_chain, calendar)
+    coordinator = EODIncrementalCoordinator(
+        repository,
+        provider_chain,
+        calendar,
+        observation_expectation,
+    )
     return EODRuntimeStack(
         config=config,
         calendar=calendar,
@@ -364,6 +419,7 @@ def build_eod_runtime(
         providers=tuple(providers),
         provider_chain=provider_chain,
         coordinator=coordinator,
+        observation_expectation=observation_expectation,
     )
 
 
@@ -409,6 +465,7 @@ def build_eod_full_refresh_executor(
         runtime.provider_chain,
         runtime.calendar,
         lock_manager,
+        runtime.observation_expectation,
     )
 
 
@@ -432,9 +489,13 @@ def build_eod_repository_maintenance_executor(
 def _provider_factories(
     provider_order: Tuple[str, ...],
     supplied: Optional[Mapping[str, ProviderFactory]],
+    observation_expectation: DatasetObservationExpectation,
 ) -> dict[str, ProviderFactory]:
     if supplied is None:
-        return {name: _default_provider_factory(name) for name in provider_order}
+        return {
+            name: _default_provider_factory(name, observation_expectation)
+            for name in provider_order
+        }
     if type(supplied) is not dict or set(supplied) != set(provider_order):
         raise EODCompositionError(EODCompositionErrorCode.PROVIDER_INVALID)
     factories = dict(supplied)
@@ -443,7 +504,10 @@ def _provider_factories(
     return factories
 
 
-def _default_provider_factory(name: str) -> ProviderFactory:
+def _default_provider_factory(
+    name: str,
+    observation_expectation: DatasetObservationExpectation,
+) -> ProviderFactory:
     from .akshare_adapters import (
         AKShareEODEquityProvider,
         AKShareEODIndexDailyProvider,
@@ -462,6 +526,11 @@ def _default_provider_factory(name: str) -> ProviderFactory:
     except KeyError as exc:  # pragma: no cover - config validation rejects unknown names.
         error = EODCompositionError(EODCompositionErrorCode.PROVIDER_INVALID)
         raise error from exc
+    if name == TUSHARE_EQUITY_PROVIDER:
+        return lambda calendar: provider_type(
+            calendar,
+            observation_expectation=observation_expectation,
+        )
     return provider_type
 
 
