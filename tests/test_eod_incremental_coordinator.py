@@ -211,6 +211,28 @@ class FakeProvider:
         return self.result
 
 
+class ConfirmedAbsenceExpectation:
+    def __init__(self, selected: EODDatasetKey, absent: tuple[date, ...]) -> None:
+        self.selected = selected
+        self.absent = frozenset(absent)
+
+    def expected_observation_dates(self, dataset, requested_range, calendar):
+        if dataset != self.selected:
+            raise ValueError("dataset mismatch")
+        return tuple(
+            value
+            for value in calendar.trading_days(requested_range.start_date, requested_range.end_date)
+            if value not in self.absent
+        )
+
+    def identity_dict(self):
+        return {
+            "version": "coordinator-test-v1",
+            "dataset": self.selected.to_dict(),
+            "confirmed_absent_dates": sorted(value.isoformat() for value in self.absent),
+        }
+
+
 def make_dataset(
     *,
     adjustment: AdjustmentType = AdjustmentType.NONE,
@@ -365,6 +387,88 @@ def test_constructor_accepts_fake_dependencies_without_side_effects() -> None:
     assert coordinator._calendar is calendar
     assert requested_range.start_date == DAY_1
     assert dataset.canonical_symbol == "600000.SH"
+
+
+def test_suspended_target_is_noop_and_post_resumption_progresses() -> None:
+    selected = make_dataset()
+    current = make_stored(selected, (DAY_1,))
+    expectation = ConfirmedAbsenceExpectation(selected, (DAY_2,))
+    no_call_chain = FakeChain(AssertionError("provider must not be called"))
+    no_call_repository = FakeRepository(current)
+    no_op = EODIncrementalCoordinator(
+        no_call_repository,
+        no_call_chain,
+        StaticCalendar(),
+        expectation,
+    ).update(selected, EODDateRange(DAY_2, DAY_2))
+    assert no_op.status is EODIncrementalUpdateStatus.NO_EXPECTED_OBSERVATIONS
+    assert no_call_chain.fetch_count == 0
+    assert no_call_repository.publish_count == 0
+
+    provider_request = EODProviderRequest(selected, EODDateRange(DAY_3, DAY_3))
+    chain = FakeChain(make_chain_result(provider_request, (DAY_3,)))
+    repository = FakeRepository(current)
+    resumed = run_update(
+        EODIncrementalCoordinator(
+            repository,
+            chain,
+            StaticCalendar(),
+            expectation,
+        ),
+        selected,
+        EODDateRange(DAY_1, DAY_3),
+    )
+    assert resumed.status is EODIncrementalUpdateStatus.INCREMENTAL_PUBLISHED
+    assert chain.requests == [provider_request]
+    assert tuple(bar.trade_date for bar in repository.publish_arguments["bars"]) == (DAY_1, DAY_3)
+
+
+def test_candidate_bar_on_confirmed_absence_fails_closed() -> None:
+    selected = make_dataset()
+    expectation = ConfirmedAbsenceExpectation(selected, (DAY_2,))
+    request = EODProviderRequest(selected, EODDateRange(DAY_1, DAY_3))
+    chain = FakeChain(make_chain_result(request, (DAY_1, DAY_2, DAY_3)))
+    repository = FakeRepository()
+    with pytest.raises(EODIncrementalCoordinatorError) as captured:
+        run_update(
+            EODIncrementalCoordinator(
+                repository,
+                chain,
+                StaticCalendar(),
+                expectation,
+            ),
+            selected,
+            EODDateRange(DAY_1, DAY_3),
+        )
+    assert captured.value.code is EODIncrementalCoordinatorErrorCode.VALIDATION_FAILED
+    assert "unexpected_observation" in captured.value.validation_codes
+    assert repository.publish_count == 0
+
+
+def test_overlap_refresh_uses_expected_observation_coverage() -> None:
+    selected = make_dataset()
+    current = make_stored(selected, (DAY_1, DAY_3))
+    expectation = ConfirmedAbsenceExpectation(selected, (DAY_2,))
+    provider_request = EODProviderRequest(selected, EODDateRange(DAY_1, DAY_4))
+    chain = FakeChain(make_chain_result(provider_request, (DAY_1, DAY_3, DAY_4), offset=20))
+    repository = FakeRepository(current)
+    result = run_update(
+        EODIncrementalCoordinator(
+            repository,
+            chain,
+            StaticCalendar(),
+            expectation,
+        ),
+        selected,
+        EODDateRange(DAY_1, DAY_4),
+        revision_policy=EODRevisionPolicy(EODRevisionStrategy.OVERLAP_WINDOW, 2),
+    )
+    assert result.status is EODIncrementalUpdateStatus.OVERLAP_REFRESH_PUBLISHED
+    assert tuple(bar.trade_date for bar in repository.publish_arguments["bars"]) == (
+        DAY_1,
+        DAY_3,
+        DAY_4,
+    )
 
 
 @pytest.mark.parametrize(
@@ -1228,7 +1332,10 @@ def test_initial_missing_trading_date_is_rejected_even_when_report_is_valid() ->
             requested_range,
         )
     assert captured.value.code is EODIncrementalCoordinatorErrorCode.VALIDATION_FAILED
-    assert captured.value.validation_codes == ("missing_trading_days",)
+    assert captured.value.validation_codes == (
+        "missing_expected_observations",
+        "missing_trading_days",
+    )
     assert repository.publish_count == 0
 
 

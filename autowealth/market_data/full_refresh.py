@@ -26,6 +26,7 @@ from .operation_control import (
     run_eod_checkpoint,
 )
 from .normalization import normalize_eod_bars
+from .observation import DatasetObservationExpectation
 from .planning import EODRequestPlan, EODRequestPlanStatus, EODRevisionPolicy
 from .provider_chain import EODProviderAttempt
 from .providers import EODProviderRequest
@@ -381,6 +382,7 @@ class EODFullRefreshExecutor:
         provider_chain: object,
         calendar: TradingCalendar,
         lock_manager: EODDatasetLockManager,
+        observation_expectation: Optional[DatasetObservationExpectation] = None,
     ) -> None:
         if not isinstance(lock_manager, EODDatasetLockManager):
             raise TypeError("lock_manager must implement EODDatasetLockManager")
@@ -388,6 +390,7 @@ class EODFullRefreshExecutor:
             repository,
             provider_chain,
             calendar,
+            observation_expectation,
         )
         self._repository = repository
         self._lock_manager = lock_manager

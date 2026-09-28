@@ -392,7 +392,24 @@ def write_calendar(tmp_path: Path) -> Path:
     return path
 
 
-def catalog(tmp_path: Path, datasets, *, disabled=()) -> EODOperationCatalog:
+class VersionedObservationExpectation:
+    def __init__(self, version: str) -> None:
+        self.version = version
+
+    def expected_observation_dates(self, selected, requested_range, calendar):
+        return calendar.trading_days(requested_range.start_date, requested_range.end_date)
+
+    def identity_dict(self):
+        return {"contract": "test_observation", "version": self.version}
+
+
+def catalog(
+    tmp_path: Path,
+    datasets,
+    *,
+    disabled=(),
+    observation_version="v1",
+) -> EODOperationCatalog:
     calendar = VersionedLocalTradingCalendar.from_file(write_calendar(tmp_path))
     entries = []
     for index, selected in enumerate(datasets):
@@ -406,7 +423,15 @@ def catalog(tmp_path: Path, datasets, *, disabled=()) -> EODOperationCatalog:
             EODProviderRetryPolicy(),
             EODProviderRateLimitPolicy(),
         )
-        runtime = EODRuntimeStack(config, calendar, object(), (provider,), object(), object())
+        runtime = EODRuntimeStack(
+            config,
+            calendar,
+            object(),
+            (provider,),
+            object(),
+            object(),
+            VersionedObservationExpectation(observation_version),
+        )
         entries.append(
             EODOperationCatalogEntry(
                 selected,
@@ -822,6 +847,37 @@ def test_catalog_preflight_unknown_disabled_and_context_mismatch(
         assert repository.get(job.job_id).failure.error_code == expected
         assert repository.get(job.job_id).failure.stage == "catalog"
         assert worker.execution_count == 0
+
+
+def test_observation_identity_change_rejects_stale_job_context(tmp_path: Path) -> None:
+    selected = dataset()
+    submitted_catalog = catalog(
+        tmp_path,
+        (selected,),
+        observation_version="observation-v1",
+    )
+    current_catalog = catalog(
+        tmp_path,
+        (selected,),
+        observation_version="observation-v2",
+    )
+    assert (
+        submitted_catalog.execution_config_fingerprint
+        != current_catalog.execution_config_fingerprint
+    )
+    request = request_for(
+        submitted_catalog,
+        EODOperationType.INCREMENTAL_SINGLE,
+        (selected,),
+    )
+    job = queued_job(request)
+    repository = FakeJobRepository((job,))
+    worker = make_worker(tmp_path, repository, current_catalog)
+    assert worker.run_one().status is EODOperationWorkerStatus.JOB_FAILED
+    failure = repository.get(job.job_id).failure
+    assert failure.error_code == "execution_context_mismatch"
+    assert failure.stage == "catalog"
+    assert worker.execution_count == 0
 
 
 def test_batch_policy_generation_ids_and_started_at_flow_to_domain_request(

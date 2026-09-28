@@ -11,6 +11,12 @@ from .calendar import (
     TradingCalendarContractError,
     validate_trading_days,
 )
+from .observation import (
+    DatasetObservationExpectation,
+    StrictTradingDayObservationExpectation,
+    is_observation_expected,
+    validate_expected_observation_dates,
+)
 from .schemas import (
     EODBar,
     EODDatasetKey,
@@ -48,6 +54,9 @@ class EODValidationReport:
     duplicate_identical_count: int
     duplicate_conflicting_count: int
     missing_trading_dates: Tuple[date, ...]
+    confirmed_absent_dates: Tuple[date, ...] = ()
+    missing_expected_observation_dates: Tuple[date, ...] = ()
+    unexpected_observation_dates: Tuple[date, ...] = ()
 
     def __post_init__(self) -> None:
         if type(self.is_valid) is not bool:
@@ -71,14 +80,21 @@ class EODValidationReport:
                 field_name,
                 _non_negative_integer(getattr(self, field_name), field_name),
             )
-        if type(self.missing_trading_dates) not in (list, tuple):
-            raise TypeError("missing_trading_dates must be an exact list or exact tuple")
-        missing_dates = tuple(self.missing_trading_dates)
-        if any(type(value) is not date for value in missing_dates):
-            raise TypeError("missing_trading_dates must contain exact date values")
-        if tuple(sorted(set(missing_dates))) != missing_dates:
-            raise ValueError("missing_trading_dates must be sorted and unique")
-        object.__setattr__(self, "missing_trading_dates", missing_dates)
+        for field_name in (
+            "missing_trading_dates",
+            "confirmed_absent_dates",
+            "missing_expected_observation_dates",
+            "unexpected_observation_dates",
+        ):
+            values = getattr(self, field_name)
+            if type(values) not in (list, tuple):
+                raise TypeError(f"{field_name} must be an exact list or exact tuple")
+            normalized = tuple(values)
+            if any(type(value) is not date for value in normalized):
+                raise TypeError(f"{field_name} must contain exact date values")
+            if tuple(sorted(set(normalized))) != normalized:
+                raise ValueError(f"{field_name} must be sorted and unique")
+            object.__setattr__(self, field_name, normalized)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -90,6 +106,13 @@ class EODValidationReport:
             "duplicate_identical_count": self.duplicate_identical_count,
             "duplicate_conflicting_count": self.duplicate_conflicting_count,
             "missing_trading_dates": [value.isoformat() for value in self.missing_trading_dates],
+            "confirmed_absent_dates": [value.isoformat() for value in self.confirmed_absent_dates],
+            "missing_expected_observation_dates": [
+                value.isoformat() for value in self.missing_expected_observation_dates
+            ],
+            "unexpected_observation_dates": [
+                value.isoformat() for value in self.unexpected_observation_dates
+            ],
         }
 
     def to_json(self) -> str:
@@ -146,6 +169,7 @@ def validate_eod_batch(
     bars: Sequence[EODBar],
     calendar: TradingCalendar,
     expected_range: Optional[EODDateRange] = None,
+    observation_expectation: Optional[DatasetObservationExpectation] = None,
 ) -> EODValidationReport:
     """Validate EOD rows without mutating, deduplicating, logging, or performing I/O."""
 
@@ -155,6 +179,9 @@ def validate_eod_batch(
         raise TypeError("bars must be an exact list or exact tuple")
     if expected_range is not None and type(expected_range) is not EODDateRange:
         raise TypeError("expected_range must be EODDateRange or None")
+    expectation = observation_expectation or StrictTradingDayObservationExpectation()
+    if not isinstance(expectation, DatasetObservationExpectation):
+        raise TypeError("observation_expectation must implement DatasetObservationExpectation")
 
     batch = tuple(bars)
     errors = []
@@ -271,6 +298,33 @@ def validate_eod_batch(
                         },
                     )
                 )
+            else:
+                try:
+                    expected_observation = is_observation_expected(
+                        expectation,
+                        dataset,
+                        trade_date,
+                        calendar,
+                    )
+                except Exception:
+                    errors.append(
+                        _issue(
+                            "invalid_observation_expectation",
+                            EODWarningSeverity.ERROR,
+                            "The observation expectation could not classify an EOD date.",
+                            {"row_index": index, "trade_date": trade_date.isoformat()},
+                        )
+                    )
+                else:
+                    if not expected_observation:
+                        errors.append(
+                            _issue(
+                                "unexpected_observation",
+                                EODWarningSeverity.ERROR,
+                                "An EOD bar conflicts with confirmed absence evidence.",
+                                {"row_index": index, "trade_date": trade_date.isoformat()},
+                            )
+                        )
 
         invalid_numeric_fields = _numeric_issue_fields(bar)
         if invalid_numeric_fields:
@@ -331,9 +385,26 @@ def validate_eod_batch(
         )
 
     missing_dates: Tuple[date, ...] = ()
+    confirmed_absent_dates: Tuple[date, ...] = ()
+    missing_expected_dates: Tuple[date, ...] = ()
+    unexpected_observation_dates = tuple(
+        sorted(
+            {
+                date.fromisoformat(issue.details["trade_date"])
+                for issue in errors
+                if issue.code == "unexpected_observation"
+            }
+        )
+    )
     if expected_range is not None:
         try:
             expected_dates = validate_trading_days(calendar, expected_range)
+            expected_observation_dates = validate_expected_observation_dates(
+                expectation,
+                dataset,
+                expected_range,
+                calendar,
+            )
         except TradingCalendarContractError as exc:
             errors.append(
                 _issue(
@@ -353,6 +424,13 @@ def validate_eod_batch(
             )
         else:
             missing_dates = tuple(value for value in expected_dates if value not in observed_dates)
+            expected_set = frozenset(expected_observation_dates)
+            confirmed_absent_dates = tuple(
+                value for value in expected_dates if value not in expected_set
+            )
+            missing_expected_dates = tuple(
+                value for value in expected_observation_dates if value not in observed_dates
+            )
             if missing_dates:
                 warnings.append(
                     _issue(
@@ -365,7 +443,6 @@ def validate_eod_batch(
                         },
                     )
                 )
-
     return EODValidationReport(
         is_valid=not errors,
         errors=tuple(errors),
@@ -375,4 +452,7 @@ def validate_eod_batch(
         duplicate_identical_count=identical_count,
         duplicate_conflicting_count=conflicting_count,
         missing_trading_dates=missing_dates,
+        confirmed_absent_dates=confirmed_absent_dates,
+        missing_expected_observation_dates=missing_expected_dates,
+        unexpected_observation_dates=unexpected_observation_dates,
     )

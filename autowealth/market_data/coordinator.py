@@ -23,6 +23,10 @@ from .operation_control import (
     run_eod_checkpoint,
 )
 from .normalization import normalize_eod_bars
+from .observation import (
+    DatasetObservationExpectation,
+    StrictTradingDayObservationExpectation,
+)
 from .planning import (
     EODRequestPlan,
     EODRequestPlanningError,
@@ -74,6 +78,7 @@ _UNCHANGED_STATUSES = frozenset(
     {
         "already_current",
         "no_trading_days",
+        "no_expected_observations",
         "unchanged_content",
     }
 )
@@ -88,6 +93,7 @@ _DRY_RUN_STATUSES = _PLANNED_STATUSES | frozenset(
     {
         "already_current",
         "no_trading_days",
+        "no_expected_observations",
         "full_refresh_required",
     }
 )
@@ -149,6 +155,7 @@ class EODIncrementalUpdateStatus(str, Enum):
     OVERLAP_REFRESH_PUBLISHED = "overlap_refresh_published"
     ALREADY_CURRENT = "already_current"
     NO_TRADING_DAYS = "no_trading_days"
+    NO_EXPECTED_OBSERVATIONS = "no_expected_observations"
     FULL_REFRESH_REQUIRED = "full_refresh_required"
     UNCHANGED_CONTENT = "unchanged_content"
     INITIAL_IMPORT_PLANNED = "initial_import_planned"
@@ -380,6 +387,7 @@ class EODIncrementalCoordinator:
         repository: "EODFileRepository",
         provider_chain: object,
         calendar: TradingCalendar,
+        observation_expectation: Optional[DatasetObservationExpectation] = None,
     ) -> None:
         if not callable(getattr(repository, "load_current", None)) or not callable(
             getattr(repository, "publish", None)
@@ -391,9 +399,13 @@ class EODIncrementalCoordinator:
             raise TypeError("provider_chain must implement fetch and cannot be a coordinator")
         if not isinstance(calendar, TradingCalendar):
             raise TypeError("calendar must implement TradingCalendar")
+        expectation = observation_expectation or StrictTradingDayObservationExpectation()
+        if not isinstance(expectation, DatasetObservationExpectation):
+            raise TypeError("observation_expectation must implement DatasetObservationExpectation")
         self._repository = repository
         self._provider_chain = provider_chain
         self._calendar = calendar
+        self._observation_expectation = expectation
 
     def execute(
         self,
@@ -763,6 +775,7 @@ class EODIncrementalCoordinator:
                 self._calendar,
                 current_manifest,
                 revision_policy,
+                self._observation_expectation,
             )
         except Exception as exc:
             if propagate_unknown and not isinstance(exc, EODRequestPlanningError):
@@ -794,6 +807,9 @@ class EODIncrementalCoordinator:
         return {
             EODRequestPlanStatus.ALREADY_CURRENT: EODIncrementalUpdateStatus.ALREADY_CURRENT,
             EODRequestPlanStatus.NO_TRADING_DAYS: EODIncrementalUpdateStatus.NO_TRADING_DAYS,
+            EODRequestPlanStatus.NO_EXPECTED_OBSERVATIONS: (
+                EODIncrementalUpdateStatus.NO_EXPECTED_OBSERVATIONS
+            ),
             EODRequestPlanStatus.FULL_REFRESH_REQUIRED: (
                 EODIncrementalUpdateStatus.FULL_REFRESH_REQUIRED
             ),
@@ -1068,6 +1084,7 @@ class EODIncrementalCoordinator:
                 candidate,
                 self._calendar,
                 expected_range=None,
+                observation_expectation=self._observation_expectation,
             )
         except Exception as exc:
             if propagate_unknown:
@@ -1098,6 +1115,7 @@ class EODIncrementalCoordinator:
                 coverage_bars,
                 self._calendar,
                 expected_range=effective_range,
+                observation_expectation=self._observation_expectation,
             )
         except Exception as exc:
             if propagate_unknown:
@@ -1147,12 +1165,12 @@ class EODIncrementalCoordinator:
             not report.is_valid
             or report.duplicate_identical_count != 0
             or report.duplicate_conflicting_count != 0
-            or (require_complete_coverage and bool(report.missing_trading_dates))
+            or (require_complete_coverage and bool(report.missing_expected_observation_dates))
         )
         if invalid:
             codes = tuple(issue.code for issue in report.errors + report.warnings)
-            if require_complete_coverage and report.missing_trading_dates:
-                codes += ("missing_trading_days",)
+            if require_complete_coverage and report.missing_expected_observation_dates:
+                codes += ("missing_expected_observations",)
             raise self._error(
                 EODIncrementalCoordinatorErrorCode.VALIDATION_FAILED,
                 "validation",
