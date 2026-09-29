@@ -9,6 +9,11 @@ from typing import Callable, Optional, Protocol, Tuple
 
 import pandas as pd
 
+from .capability_registry import (
+    TUSHARE_EQUITY_PROVIDER,
+    TUSHARE_TOKEN_ENVIRONMENT_VARIABLE,
+    get_eod_capability,
+)
 from .calendar import TradingCalendar
 from .observation import (
     DatasetObservationExpectation,
@@ -22,7 +27,6 @@ from .providers import (
     EODProviderRequest,
     EODProviderResult,
     EODProviderResultStatus,
-    EODRevisionStrategy,
     validate_eod_provider_request,
     validate_eod_provider_result,
 )
@@ -36,7 +40,6 @@ from .schemas import (
 )
 
 _OS = import_module("os")
-TUSHARE_TOKEN_ENVIRONMENT_VARIABLE = "TUSHARE_TOKEN"
 _REQUIRED_COLUMNS = (
     "ts_code",
     "trade_date",
@@ -60,24 +63,7 @@ TokenResolver = Callable[[], str]
 ClientFactory = Callable[[str], _TushareClient]
 
 
-_CAPABILITIES = (
-    EODProviderCapability(
-        Market.CN,
-        Venue.SSE,
-        AssetType.EQUITY,
-        BarFrequency.DAILY,
-        AdjustmentType.NONE,
-        EODRevisionStrategy.APPEND_ONLY,
-    ),
-    EODProviderCapability(
-        Market.CN,
-        Venue.SZSE,
-        AssetType.EQUITY,
-        BarFrequency.DAILY,
-        AdjustmentType.NONE,
-        EODRevisionStrategy.APPEND_ONLY,
-    ),
-)
+_CAPABILITIES = get_eod_capability(TUSHARE_EQUITY_PROVIDER).capabilities
 
 _TEMPORARY_EXCEPTION_TYPES = frozenset(
     {
@@ -311,7 +297,7 @@ def _result_status(
 class TushareEODEquityProvider:
     """Single-endpoint Tushare adapter with lazy credentials and client construction."""
 
-    provider_name = "tushare_eod_equity"
+    provider_name = TUSHARE_EQUITY_PROVIDER
     provider_version = "1"
     endpoint_name = "daily"
 

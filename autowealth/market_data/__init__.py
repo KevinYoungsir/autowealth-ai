@@ -9,6 +9,16 @@ from .calendar import (
     TradingCalendarContractError,
     validate_trading_days,
 )
+from .capability_registry import (
+    DEFAULT_EOD_CAPABILITY_REGISTRY,
+    EOD_CAPABILITY_REGISTRY_SCHEMA_VERSION,
+    EODCapabilityDeclaration,
+    EODCapabilityRegistry,
+    EODCapabilityRegistryError,
+    EODProviderCapabilityDeclaration,
+    build_default_eod_capability_registry,
+    get_eod_capability,
+)
 from .normalization import normalize_canonical_symbol, normalize_eod_bars
 from .observation import (
     DatasetObservationExpectation,
@@ -336,6 +346,12 @@ __all__ = [
     "EODCompositionError",
     "EODCompositionErrorCode",
     "EODDatasetKey",
+    "EOD_CAPABILITY_REGISTRY_SCHEMA_VERSION",
+    "DEFAULT_EOD_CAPABILITY_REGISTRY",
+    "EODCapabilityDeclaration",
+    "EODCapabilityRegistry",
+    "EODCapabilityRegistryError",
+    "EODProviderCapabilityDeclaration",
     "DatasetObservationExpectation",
     "DatasetObservationExpectationContractError",
     "EODDateRange",
@@ -439,6 +455,8 @@ __all__ = [
     "calculate_file_sha256",
     "convert_eod_dataframe_to_bars",
     "default_eod_revision_policy",
+    "build_default_eod_capability_registry",
+    "get_eod_capability",
     "eod_bar_identity",
     "eod_dataset_lock_key",
     "evaluate_eod_provider_readiness",

@@ -11,6 +11,13 @@ from typing import TYPE_CHECKING, Callable, Mapping, Optional, Tuple
 import yaml
 
 from .calendar import TradingCalendar
+from .capability_registry import (
+    DEFAULT_EOD_CAPABILITY_REGISTRY,
+    AKSHARE_EQUITY_PROVIDER,
+    AKSHARE_INDEX_PROVIDER,
+    AKSHARE_INDEX_DAILY_PROVIDER,
+    TUSHARE_EQUITY_PROVIDER,
+)
 from .local_calendar import VersionedLocalTradingCalendar
 from .local_observation import VersionedLocalObservationExpectation
 from .observation import (
@@ -49,18 +56,8 @@ if TYPE_CHECKING:
     from .provider_chain import EODProviderChain
     from .repositories import EODFileRepository
 
-AKSHARE_EQUITY_PROVIDER = "akshare_eod_equity"
-AKSHARE_INDEX_PROVIDER = "akshare_eod_index"
-AKSHARE_INDEX_DAILY_PROVIDER = "akshare_eod_index_daily"
-TUSHARE_EQUITY_PROVIDER = "tushare_eod_equity"
-
 _SUPPORTED_PROVIDER_NAMES = frozenset(
-    {
-        AKSHARE_EQUITY_PROVIDER,
-        AKSHARE_INDEX_PROVIDER,
-        AKSHARE_INDEX_DAILY_PROVIDER,
-        TUSHARE_EQUITY_PROVIDER,
-    }
+    declaration.provider_name for declaration in DEFAULT_EOD_CAPABILITY_REGISTRY.declarations
 )
 _REQUIRED_CONFIG_FIELDS = frozenset(
     {
@@ -197,6 +194,11 @@ class EODProductionConfig:
             raise ValueError("provider_order contains an unsupported provider")
         if len(set(provider_order)) != len(provider_order):
             raise ValueError("provider_order cannot contain duplicates")
+        declarations = tuple(
+            DEFAULT_EOD_CAPABILITY_REGISTRY.lookup(name) for name in provider_order
+        )
+        if any(not declaration.supports(self.dataset) for declaration in declarations):
+            raise ValueError("provider_order is incompatible with the dataset capability")
         if type(self.retry_policy) is not EODProviderRetryPolicy:
             raise TypeError("retry_policy must be an exact EODProviderRetryPolicy")
         if type(self.rate_limit_policy) is not EODProviderRateLimitPolicy:
@@ -207,19 +209,16 @@ class EODProductionConfig:
         ):
             raise ValueError("legacy config cannot enable provider resilience policies")
 
-        allowed = (
-            {AKSHARE_EQUITY_PROVIDER, TUSHARE_EQUITY_PROVIDER}
-            if self.dataset.asset_type is AssetType.EQUITY
-            else {AKSHARE_INDEX_PROVIDER, AKSHARE_INDEX_DAILY_PROVIDER}
-        )
-        if any(name not in allowed for name in provider_order):
-            raise ValueError("provider_order is incompatible with the dataset asset type")
-        if {
-            AKSHARE_EQUITY_PROVIDER,
-            TUSHARE_EQUITY_PROVIDER,
-        }.issubset(provider_order):
+        if (
+            self.dataset.asset_type is AssetType.EQUITY
+            and len(declarations) > 1
+            and any(declaration.unit_verification == "unverified" for declaration in declarations)
+        ):
             raise EODCompositionError(EODCompositionErrorCode.MIXED_EQUITY_UNITS_UNVERIFIED)
-        if TUSHARE_EQUITY_PROVIDER in provider_order and self.observation_source is None:
+        if (
+            any(declaration.observation_source_required for declaration in declarations)
+            and self.observation_source is None
+        ):
             raise EODCompositionError(EODCompositionErrorCode.OBSERVATION_EXPECTATION_REQUIRED)
         if (
             self.dataset.asset_type is AssetType.INDEX
@@ -368,9 +367,12 @@ def build_eod_runtime(
     providers = []
     try:
         for provider_name in config.provider_order:
+            declaration = DEFAULT_EOD_CAPABILITY_REGISTRY.lookup(provider_name)
             provider = factories[provider_name](calendar)
             if getattr(provider, "provider_name", None) != provider_name:
                 raise ValueError("provider identity does not match configuration")
+            if not declaration.supports(config.dataset):
+                raise ValueError("provider capability does not support configuration dataset")
             capabilities = getattr(provider, "capabilities")
             if type(capabilities) not in (list, tuple) or any(
                 type(capability) is not EODProviderCapability for capability in capabilities
