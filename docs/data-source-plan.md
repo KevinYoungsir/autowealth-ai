@@ -410,6 +410,15 @@ Adapter，不隐藏在 primary Adapter 内。
 Adapter 只接受包含市场、交易所、资产类型、canonical symbol、频率和复权口径的
 `EODDatasetKey`，不会接受名称、裸代码或 endpoint 专用代码。
 
+PR5B 增加 provider-neutral capability registry。registry 只保存静态声明：provider
+identity/version、完整 EOD capability、请求粒度、资产和 venue scope、canonical units、
+unit verification state、observation-source requirement 及 credential environment-name
+metadata。registry 的构造、lookup、序列化和 identity calculation 不读取环境变量、路径或
+SDK，不创建 runtime，也不执行 readiness 或 Provider 请求。未知 provider、重复 capability、
+未知 schema/version 和不安全 metadata 都关闭式拒绝；credential value 永远不进入声明或
+identity。当前只注册 `akshare_eod_equity`、`akshare_eod_index`、
+`akshare_eod_index_daily` 和 `tushare_eod_equity`。
+
 两个 Adapter 都支持注入 endpoint callable，以便使用固定 DataFrame 和 fake
 TradingCalendar 完成完全离线的单元测试。未注入 endpoint 时，AKShare 只在首次
 `fetch` 中延迟导入；模块导入和 Adapter 构造均不访问网络。返回的 DataFrame 会被
@@ -427,6 +436,13 @@ TradingCalendar 完成完全离线的单元测试。未注入 endpoint 时，AKS
 AKShare 版本 fixture 或显式 integration 验证，因此当前 Adapter 不声称已完成跨
 endpoint 单位统一。retry、fallback、Provider attempts、coordinator、worker、API、
 部署和真实网络 integration 均不属于本阶段。
+
+registry 将 AKShare equity 与 AKShare index 的源单位标为 `unverified`；Tushare equity
+的 canonical contract 为 `volume=shares`、`amount=CNY_yuan`，并要求显式 observation
+source 与 `TUSHARE_TOKEN` environment-name metadata。composition 从 registry 读取 provider
+兼容性、adjustment/frequency、observation requirement 和单位安全规则，因此 Tushare 与
+AKShare equity 的混合 fallback 继续返回 `mixed_equity_units_unverified`；AKShare-only
+equity、既有 AKShare index 配置和 Tushare production 配置保持兼容。
 
 ## 18. v0.17.0 EOD Provider Chain 与指数 fallback
 

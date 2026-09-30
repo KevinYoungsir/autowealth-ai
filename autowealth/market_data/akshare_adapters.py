@@ -8,6 +8,13 @@ from typing import Callable, Optional, Tuple
 
 import pandas as pd
 
+from .capability_registry import (
+    AKSHARE_EQUITY_PROVIDER,
+    AKSHARE_INDEX_PROVIDER,
+    AKSHARE_INDEX_DAILY_PROVIDER,
+    AKSHARE_INDEX_SYMBOLS,
+    get_eod_capability,
+)
 from .calendar import TradingCalendar, validate_trading_days
 from .dataframe_conversion import (
     _parse_trade_date,
@@ -21,7 +28,6 @@ from .providers import (
     EODProviderRequest,
     EODProviderResult,
     EODProviderResultStatus,
-    EODRevisionStrategy,
     validate_eod_provider_request,
     validate_eod_provider_result,
 )
@@ -57,84 +63,9 @@ _TEMPORARY_ENDPOINT_EXCEPTION_TYPES = frozenset(
     }
 )
 
-_EQUITY_CAPABILITIES = (
-    EODProviderCapability(
-        Market.CN,
-        Venue.SSE,
-        AssetType.EQUITY,
-        BarFrequency.DAILY,
-        AdjustmentType.NONE,
-        EODRevisionStrategy.APPEND_ONLY,
-    ),
-    EODProviderCapability(
-        Market.CN,
-        Venue.SSE,
-        AssetType.EQUITY,
-        BarFrequency.DAILY,
-        AdjustmentType.QFQ,
-        EODRevisionStrategy.FULL_REFRESH_REQUIRED,
-    ),
-    EODProviderCapability(
-        Market.CN,
-        Venue.SSE,
-        AssetType.EQUITY,
-        BarFrequency.DAILY,
-        AdjustmentType.HFQ,
-        EODRevisionStrategy.FULL_REFRESH_REQUIRED,
-    ),
-    EODProviderCapability(
-        Market.CN,
-        Venue.SZSE,
-        AssetType.EQUITY,
-        BarFrequency.DAILY,
-        AdjustmentType.NONE,
-        EODRevisionStrategy.APPEND_ONLY,
-    ),
-    EODProviderCapability(
-        Market.CN,
-        Venue.SZSE,
-        AssetType.EQUITY,
-        BarFrequency.DAILY,
-        AdjustmentType.QFQ,
-        EODRevisionStrategy.FULL_REFRESH_REQUIRED,
-    ),
-    EODProviderCapability(
-        Market.CN,
-        Venue.SZSE,
-        AssetType.EQUITY,
-        BarFrequency.DAILY,
-        AdjustmentType.HFQ,
-        EODRevisionStrategy.FULL_REFRESH_REQUIRED,
-    ),
-)
-
-_INDEX_CAPABILITIES = (
-    EODProviderCapability(
-        Market.CN,
-        Venue.SSE,
-        AssetType.INDEX,
-        BarFrequency.DAILY,
-        AdjustmentType.NONE,
-        EODRevisionStrategy.APPEND_ONLY,
-    ),
-    EODProviderCapability(
-        Market.CN,
-        Venue.SZSE,
-        AssetType.INDEX,
-        BarFrequency.DAILY,
-        AdjustmentType.NONE,
-        EODRevisionStrategy.APPEND_ONLY,
-    ),
-)
-
-_INDEX_SYMBOLS = {
-    "000300.SH": "000300",
-    "000905.SH": "000905",
-    "000852.SH": "000852",
-    "000001.SH": "000001",
-    "399001.SZ": "399001",
-    "399006.SZ": "399006",
-}
+_EQUITY_CAPABILITIES = get_eod_capability(AKSHARE_EQUITY_PROVIDER).capabilities
+_INDEX_CAPABILITIES = get_eod_capability(AKSHARE_INDEX_PROVIDER).capabilities
+_INDEX_SYMBOLS = {symbol: symbol[:6] for symbol in AKSHARE_INDEX_SYMBOLS}
 
 _EQUITY_ADJUSTMENTS = {
     AdjustmentType.NONE: "",
@@ -230,7 +161,7 @@ def _is_temporary_endpoint_failure(exc: Exception) -> bool:
 class AKShareEODEquityProvider:
     """Single-endpoint AKShare adapter for canonical A-share equity EOD bars."""
 
-    provider_name = "akshare_eod_equity"
+    provider_name = AKSHARE_EQUITY_PROVIDER
     provider_version = "1"
     endpoint_name = "stock_zh_a_hist"
 
@@ -323,7 +254,7 @@ class AKShareEODEquityProvider:
 class AKShareEODIndexProvider:
     """Single-endpoint AKShare adapter for supported canonical index EOD bars."""
 
-    provider_name = "akshare_eod_index"
+    provider_name = AKSHARE_INDEX_PROVIDER
     provider_version = "1"
     endpoint_name = "index_zh_a_hist"
 
@@ -415,7 +346,7 @@ class AKShareEODIndexProvider:
 class AKShareEODIndexDailyProvider:
     """Independent fallback adapter for full-history AKShare index daily data."""
 
-    provider_name = "akshare_eod_index_daily"
+    provider_name = AKSHARE_INDEX_DAILY_PROVIDER
     provider_version = "1"
     endpoint_name = "stock_zh_index_daily"
 

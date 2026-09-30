@@ -8,6 +8,9 @@
 ## [未发布]
 
 ### 新增
+- 新增 provider-neutral、无网络且不读取凭据的 EOD Capability Registry，集中声明当前
+  AKShare/Tushare provider 的静态数据集、单位、观察证据与凭据元数据；composition 复用该
+  registry 做兼容性与混合单位关闭式校验，operation fingerprint 与 durable schema 保持不变。
 - 新增 provider-neutral `DatasetObservationExpectation` 与严格交易日默认实现；Tushare
   equity production runtime 必须显式加载版本化、本地只读的 confirmed-absence artifact，
   planning、Provider validation、coordinator、full refresh 与 readiness 复用同一 expectation。
