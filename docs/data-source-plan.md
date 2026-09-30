@@ -669,3 +669,18 @@ PID、token 或环境值，并进入 operation execution fingerprint。同一内
 absence 内容变化会改变 fingerprint，使旧 durable job 由既有 stale-context 门禁拒绝。本阶段不调用
 Tushare `suspend_d`，不自动生成或刷新 artifact，不修改 generation manifest、pointer、Parquet schema
 或 repository layout。
+
+## 26. PR5C EOD Data Quality Evidence Layer
+
+`quality_evidence.py` 只消费调用方已经取得的观察日期、单位、freshness 和能力证据，生成不可变的
+`DataQualityEvidence`。它必须调用 PR5A 的 `DatasetObservationExpectation`，并要求调用方提供的
+expected dates 与 expectation 根据交易日历计算出的 required dates 完全一致；已确认的合法 absence
+因此从 required set 中移除，不通过独立的 legal-gap 参数绕过缺口。证据以排序后的 JSON 计算稳定
+SHA-256 identity；source fingerprint 也必须是标准小写 SHA-256 identity，不包含时间戳、UUID、随机值、
+凭据或路径。完整且所有单位已验证的证据为 `PASS`；未知缺失、单位未验证或不匹配、未知 provider、
+能力不兼容、无效观察或过期证据均关闭式为 `FAIL`。无 required observations 且无 extra observations
+时覆盖率为 `1.0` 并可为 `PASS`。
+
+该层复用 `DatasetObservationExpectation` 和静态 capability registry，不执行 Provider、retry、fallback、
+ingestion、scheduling 或 persistence，也不改变 manifest、pointer、Parquet、durable job 或既有
+operation fingerprint。
