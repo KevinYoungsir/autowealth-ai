@@ -8,6 +8,11 @@
 ## [未发布]
 
 ### 新增
+- 新增 provider-neutral、确定性的 `DataQualityEvidence`，记录 EOD 完整性、观察覆盖、freshness、
+  单位和 capability 证据；required dates 实际复用 PR5A expectation，合法 absence 从 required set
+  移除；freshness 缺省为 `unknown`，缺少新鲜度证据不得为 `PASS`，显式 unit `mismatch` 原样保留；
+  未知缺失、未验证单位和不兼容证据关闭式标记为 `FAIL`，不访问 Provider、网络或凭据，
+  也不改变既有 schema 与 operation fingerprint。
 - 新增 provider-neutral、无网络且不读取凭据的 EOD Capability Registry，集中声明当前
   AKShare/Tushare provider 的静态数据集、单位、观察证据与凭据元数据；composition 复用该
   registry 做兼容性与混合单位关闭式校验，operation fingerprint 与 durable schema 保持不变。
