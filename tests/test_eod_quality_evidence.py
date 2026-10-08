@@ -77,9 +77,10 @@ class ConfirmedAbsenceExpectation:
 
 
 CALENDAR = StaticCalendar(DATES)
+OMIT_FRESHNESS = object()
 
 
-def make(**changes):
+def make(*, freshness_status="fresh", **changes):
     values = {
         "provider_id": "tushare_eod_equity",
         "dataset_id": DATASET,
@@ -92,8 +93,63 @@ def make(**changes):
         "observation_calendar": CALENDAR,
         "observation_expectation": StrictTradingDayObservationExpectation(),
     }
+    if freshness_status is not OMIT_FRESHNESS:
+        values["freshness_status"] = freshness_status
     values.update(changes)
     return generate_quality_evidence(**values)
+
+
+@pytest.mark.parametrize(
+    "freshness, expected_status, expected_state",
+    [
+        pytest.param(OMIT_FRESHNESS, "unknown", FAIL, id="F01-omitted"),
+        pytest.param("unknown", "unknown", FAIL, id="F02-unknown"),
+        pytest.param("stale", "stale", FAIL, id="F03-stale"),
+        pytest.param("fresh", "fresh", PASS, id="F04-fresh"),
+    ],
+)
+def test_freshness_requires_explicit_fresh_evidence(freshness, expected_status, expected_state):
+    evidence = make(freshness_status=freshness)
+    assert evidence.coverage_ratio == 1.0
+    assert evidence.freshness_status == expected_status
+    assert evidence.quality_state == expected_state
+    assert json.loads(evidence.to_json())["freshness_status"] == expected_status
+
+
+@pytest.mark.parametrize(
+    "provider, supplied_unit, expected_unit, expected_state",
+    [
+        pytest.param("akshare_eod_equity", "mismatch", "mismatch", FAIL, id="U01-mismatch"),
+        pytest.param("akshare_eod_equity", "unverified", "unverified", FAIL, id="U02-unverified"),
+        pytest.param("akshare_eod_equity", "verified", "unverified", FAIL, id="U03-no-upgrade"),
+        pytest.param("tushare_eod_equity", "verified", "verified", PASS, id="U04-verified"),
+        pytest.param("tushare_eod_equity", "mismatch", "mismatch", FAIL, id="verified-mismatch"),
+        pytest.param(
+            "tushare_eod_equity", "unverified", "unverified", FAIL, id="verified-downgrade"
+        ),
+        pytest.param("unknown_provider", "mismatch", "mismatch", FAIL, id="unknown-mismatch"),
+    ],
+)
+def test_unit_evidence_preserves_conflicts_without_upgrading_contracts(
+    provider, supplied_unit, expected_unit, expected_state
+):
+    evidence = make(provider_id=provider, unit_status=supplied_unit)
+    assert evidence.unit_status == expected_unit
+    assert evidence.quality_state == expected_state
+    assert evidence.to_dict()["unit_status"] == expected_unit
+    assert json.loads(evidence.to_json())["unit_status"] == expected_unit
+    assert replace(evidence) == evidence
+
+
+@pytest.mark.parametrize("freshness", ["unknown", "stale", "fresh"])
+@pytest.mark.parametrize("unit", ["mismatch", "unverified", "verified"])
+def test_freshness_and_units_cannot_bypass_each_other(freshness, unit):
+    evidence = make(freshness_status=freshness, unit_status=unit)
+    expected_state = PASS if freshness == "fresh" and unit == "verified" else FAIL
+    assert evidence.freshness_status == freshness
+    assert evidence.unit_status == unit
+    assert evidence.quality_state == expected_state
+    assert json.loads(evidence.to_json())["quality_state"] == expected_state
 
 
 def test_complete_evidence_is_deterministic_and_serializable():

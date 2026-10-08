@@ -273,7 +273,7 @@ def generate_quality_evidence(
     source_fingerprint: str,
     observation_calendar: TradingCalendar,
     observation_expectation: DatasetObservationExpectation,
-    freshness_status: str = "fresh",
+    freshness_status: str = "unknown",
     unit_status: Optional[str] = None,
     observation_status: str = "valid",
     capability_status: Optional[str] = None,
@@ -335,7 +335,11 @@ def generate_quality_evidence(
         unit = _status(unit_status, _UNIT_STATES, "unit_status")
         if declaration is None and unit == "verified":
             unit = "unknown"
-        elif declaration is not None and declaration.unit_verification != "verified":
+        elif (
+            declaration is not None
+            and declaration.unit_verification != "verified"
+            and unit == "verified"
+        ):
             unit = "unverified"
     state = _quality_state(
         len(missing), len(extra), freshness_status, unit, observation_status, capability

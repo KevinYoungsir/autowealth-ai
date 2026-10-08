@@ -677,7 +677,10 @@ Tushare `suspend_d`，不自动生成或刷新 artifact，不修改 generation m
 expected dates 与 expectation 根据交易日历计算出的 required dates 完全一致；已确认的合法 absence
 因此从 required set 中移除，不通过独立的 legal-gap 参数绕过缺口。证据以排序后的 JSON 计算稳定
 SHA-256 identity；source fingerprint 也必须是标准小写 SHA-256 identity，不包含时间戳、UUID、随机值、
-凭据或路径。完整且所有单位已验证的证据为 `PASS`；未知缺失、单位未验证或不匹配、未知 provider、
+凭据或路径。完整、显式 `fresh` 且所有单位已验证的证据为 `PASS`；freshness 缺省为 `unknown`，
+缺少新鲜度证据不得判定为 `PASS`，也不从 observation coverage 推断 `fresh`。
+显式 unit `mismatch` 原样保留到序列化输出；未验证的 provider contract 不得升级为 `verified`。
+未知缺失、单位未验证或不匹配、未知 provider、
 能力不兼容、无效观察或过期证据均关闭式为 `FAIL`。无 required observations 且无 extra observations
 时覆盖率为 `1.0` 并可为 `PASS`。
 
